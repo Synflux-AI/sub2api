@@ -3199,6 +3199,14 @@ export default {
         webSearchEnabled: 'Enabled',
         webSearchDisabled: 'Disabled',
       },
+      customHeaders: {
+        label: 'Custom Outbound Headers (Advanced)',
+        hint: 'When enabled, these headers are merged into every upstream request from this account. Disabled by default; use only if you need to inject corporate-proxy auth or other custom routing headers.',
+        keyPlaceholder: 'Header name (e.g. X-Custom-Auth)',
+        valuePlaceholder: 'Header value',
+        addRow: 'Add header',
+        protectedWarning: 'Some entries match protected headers (Host, Content-Length, hop-by-hop) and will be silently skipped at request time.'
+      },
       modelRestriction: 'Model Restriction (Optional)',
       modelWhitelist: 'Model Whitelist',
       modelMapping: 'Model Mapping',

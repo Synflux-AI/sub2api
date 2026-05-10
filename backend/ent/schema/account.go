@@ -86,6 +86,20 @@ func (Account) Fields() []ent.Field {
 			Default(func() map[string]any { return map[string]any{} }).
 			SchemaType(map[string]string{dialect.Postgres: "jsonb"}),
 
+		// custom_headers_enabled: 是否启用自定义出站请求头（高级模式开关）
+		// 默认关闭；开启后，custom_headers 中配置的键值对会在每次向上游发起请求时合并到 request.Header
+		field.Bool("custom_headers_enabled").
+			Default(false).
+			Comment("Whether to merge custom_headers into outbound upstream requests (advanced mode)."),
+
+		// custom_headers: 自定义出站请求头键值对（高级模式）
+		// 仅当 custom_headers_enabled=true 时生效；存储为 JSONB 的 string-to-string 映射
+		// 安全：Host / Content-Length / 一系列 hop-by-hop 头会被强制忽略
+		field.JSON("custom_headers", map[string]string{}).
+			Default(func() map[string]string { return map[string]string{} }).
+			SchemaType(map[string]string{dialect.Postgres: "jsonb"}).
+			Comment("Custom outbound headers as key-value pairs (string -> string)."),
+
 		// proxy_id: 关联的代理配置 ID（可选）
 		// 用于需要通过特定代理访问 API 的场景
 		field.Int64("proxy_id").

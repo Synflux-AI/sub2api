@@ -37,6 +37,10 @@ type Account struct {
 	Credentials map[string]interface{} `json:"credentials,omitempty"`
 	// Extra holds the value of the "extra" field.
 	Extra map[string]interface{} `json:"extra,omitempty"`
+	// Whether to merge custom_headers into outbound upstream requests (advanced mode).
+	CustomHeadersEnabled bool `json:"custom_headers_enabled,omitempty"`
+	// Custom outbound headers as key-value pairs (string -> string).
+	CustomHeaders map[string]string `json:"custom_headers,omitempty"`
 	// ProxyID holds the value of the "proxy_id" field.
 	ProxyID *int64 `json:"proxy_id,omitempty"`
 	// Concurrency holds the value of the "concurrency" field.
@@ -139,9 +143,9 @@ func (*Account) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
-		case account.FieldCredentials, account.FieldExtra:
+		case account.FieldCredentials, account.FieldExtra, account.FieldCustomHeaders:
 			values[i] = new([]byte)
-		case account.FieldAutoPauseOnExpired, account.FieldSchedulable:
+		case account.FieldCustomHeadersEnabled, account.FieldAutoPauseOnExpired, account.FieldSchedulable:
 			values[i] = new(sql.NullBool)
 		case account.FieldRateMultiplier:
 			values[i] = new(sql.NullFloat64)
@@ -230,6 +234,20 @@ func (_m *Account) assignValues(columns []string, values []any) error {
 			} else if value != nil && len(*value) > 0 {
 				if err := json.Unmarshal(*value, &_m.Extra); err != nil {
 					return fmt.Errorf("unmarshal field extra: %w", err)
+				}
+			}
+		case account.FieldCustomHeadersEnabled:
+			if value, ok := values[i].(*sql.NullBool); !ok {
+				return fmt.Errorf("unexpected type %T for field custom_headers_enabled", values[i])
+			} else if value.Valid {
+				_m.CustomHeadersEnabled = value.Bool
+			}
+		case account.FieldCustomHeaders:
+			if value, ok := values[i].(*[]byte); !ok {
+				return fmt.Errorf("unexpected type %T for field custom_headers", values[i])
+			} else if value != nil && len(*value) > 0 {
+				if err := json.Unmarshal(*value, &_m.CustomHeaders); err != nil {
+					return fmt.Errorf("unmarshal field custom_headers: %w", err)
 				}
 			}
 		case account.FieldProxyID:
@@ -445,6 +463,12 @@ func (_m *Account) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("extra=")
 	builder.WriteString(fmt.Sprintf("%v", _m.Extra))
+	builder.WriteString(", ")
+	builder.WriteString("custom_headers_enabled=")
+	builder.WriteString(fmt.Sprintf("%v", _m.CustomHeadersEnabled))
+	builder.WriteString(", ")
+	builder.WriteString("custom_headers=")
+	builder.WriteString(fmt.Sprintf("%v", _m.CustomHeaders))
 	builder.WriteString(", ")
 	if v := _m.ProxyID; v != nil {
 		builder.WriteString("proxy_id=")

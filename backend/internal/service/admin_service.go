@@ -259,12 +259,16 @@ type UpdateGroupInput struct {
 }
 
 type CreateAccountInput struct {
-	Name               string
-	Notes              *string
-	Platform           string
-	Type               string
-	Credentials        map[string]any
-	Extra              map[string]any
+	Name        string
+	Notes       *string
+	Platform    string
+	Type        string
+	Credentials map[string]any
+	Extra       map[string]any
+	// CustomHeadersEnabled 高级模式开关；nil 表示不在请求中提供（默认关闭）。
+	CustomHeadersEnabled *bool
+	// CustomHeaders 自定义出站请求头键值对；nil/空表示不配置。
+	CustomHeaders      map[string]string
 	ProxyID            *int64
 	Concurrency        int
 	Priority           int
@@ -281,11 +285,15 @@ type CreateAccountInput struct {
 }
 
 type UpdateAccountInput struct {
-	Name                  string
-	Notes                 *string
-	Type                  string // Account type: oauth, setup-token, apikey
-	Credentials           map[string]any
-	Extra                 map[string]any
+	Name        string
+	Notes       *string
+	Type        string // Account type: oauth, setup-token, apikey
+	Credentials map[string]any
+	Extra       map[string]any
+	// CustomHeadersEnabled 高级模式开关；nil 表示请求中未提供（保持当前值）。
+	CustomHeadersEnabled *bool
+	// CustomHeaders 自定义出站请求头键值对；nil 表示请求中未提供（保持当前值）。
+	CustomHeaders         map[string]string
 	ProxyID               *int64
 	Concurrency           *int     // 使用指针区分"未提供"和"设置为0"
 	Priority              *int     // 使用指针区分"未提供"和"设置为0"
@@ -2374,17 +2382,21 @@ func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccou
 	}
 
 	account := &Account{
-		Name:        input.Name,
-		Notes:       normalizeAccountNotes(input.Notes),
-		Platform:    input.Platform,
-		Type:        input.Type,
-		Credentials: input.Credentials,
-		Extra:       input.Extra,
-		ProxyID:     input.ProxyID,
-		Concurrency: input.Concurrency,
-		Priority:    input.Priority,
-		Status:      StatusActive,
-		Schedulable: true,
+		Name:          input.Name,
+		Notes:         normalizeAccountNotes(input.Notes),
+		Platform:      input.Platform,
+		Type:          input.Type,
+		Credentials:   input.Credentials,
+		Extra:         input.Extra,
+		CustomHeaders: sanitizeCustomHeaders(input.CustomHeaders),
+		ProxyID:       input.ProxyID,
+		Concurrency:   input.Concurrency,
+		Priority:      input.Priority,
+		Status:        StatusActive,
+		Schedulable:   true,
+	}
+	if input.CustomHeadersEnabled != nil {
+		account.CustomHeadersEnabled = *input.CustomHeadersEnabled
 	}
 	// 预计算固定时间重置的下次重置时间
 	if account.Extra != nil {
@@ -2498,6 +2510,13 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 			return nil, err
 		}
 		ComputeQuotaResetAt(account.Extra)
+	}
+	if input.CustomHeadersEnabled != nil {
+		account.CustomHeadersEnabled = *input.CustomHeadersEnabled
+	}
+	// CustomHeaders 使用 map：nil 表示请求未提供（保持当前值），非 nil（包括空 map）表示显式覆盖。
+	if input.CustomHeaders != nil {
+		account.CustomHeaders = sanitizeCustomHeaders(input.CustomHeaders)
 	}
 	if input.ProxyID != nil {
 		// 0 表示清除代理（前端发送 0 而不是 null 来表达清除意图）

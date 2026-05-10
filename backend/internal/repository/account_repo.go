@@ -88,6 +88,8 @@ func (r *accountRepository) Create(ctx context.Context, account *service.Account
 		SetType(account.Type).
 		SetCredentials(normalizeJSONMap(account.Credentials)).
 		SetExtra(normalizeJSONMap(account.Extra)).
+		SetCustomHeadersEnabled(account.CustomHeadersEnabled).
+		SetCustomHeaders(normalizeStringMap(account.CustomHeaders)).
 		SetConcurrency(account.Concurrency).
 		SetPriority(account.Priority).
 		SetStatus(account.Status).
@@ -325,6 +327,8 @@ func (r *accountRepository) Update(ctx context.Context, account *service.Account
 		SetType(account.Type).
 		SetCredentials(normalizeJSONMap(account.Credentials)).
 		SetExtra(normalizeJSONMap(account.Extra)).
+		SetCustomHeadersEnabled(account.CustomHeadersEnabled).
+		SetCustomHeaders(normalizeStringMap(account.CustomHeaders)).
 		SetConcurrency(account.Concurrency).
 		SetPriority(account.Priority).
 		SetStatus(account.Status).
@@ -1729,6 +1733,8 @@ func accountEntityToService(m *dbent.Account) *service.Account {
 		Type:                    m.Type,
 		Credentials:             copyJSONMap(m.Credentials),
 		Extra:                   copyJSONMap(m.Extra),
+		CustomHeadersEnabled:    m.CustomHeadersEnabled,
+		CustomHeaders:           copyStringMap(m.CustomHeaders),
 		ProxyID:                 m.ProxyID,
 		Concurrency:             m.Concurrency,
 		Priority:                m.Priority,
@@ -1758,6 +1764,24 @@ func normalizeJSONMap(in map[string]any) map[string]any {
 		return map[string]any{}
 	}
 	return in
+}
+
+func normalizeStringMap(in map[string]string) map[string]string {
+	if in == nil {
+		return map[string]string{}
+	}
+	return in
+}
+
+func copyStringMap(in map[string]string) map[string]string {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
 }
 
 func copyJSONMap(in map[string]any) map[string]any {

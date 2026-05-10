@@ -123,6 +123,7 @@ func (s *GatewayService) ForwardAsResponses(
 	}
 
 	// 11. Send request
+	account.ApplyCustomHeaders(upstreamReq)
 	resp, err := s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
 	if err != nil {
 		if resp != nil && resp.Body != nil {

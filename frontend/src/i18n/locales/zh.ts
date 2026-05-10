@@ -3344,6 +3344,14 @@ export default {
         webSearchEnabled: '开启',
         webSearchDisabled: '关闭',
       },
+      customHeaders: {
+        label: '自定义出站请求头（高级模式）',
+        hint: '开启后，下方配置的键值对会在该账号每次向上游发起请求时合并到 HTTP Header。默认关闭，仅在需要注入企业代理鉴权或自定义路由 header 时使用。',
+        keyPlaceholder: '请求头名称（例如 X-Custom-Auth）',
+        valuePlaceholder: '请求头值',
+        addRow: '新增请求头',
+        protectedWarning: '部分键名属于受保护头（Host / Content-Length / 逐跳头），实际请求时会被自动忽略。'
+      },
       modelRestriction: '模型限制（可选）',
       modelWhitelist: '模型白名单',
       modelMapping: '模型映射',

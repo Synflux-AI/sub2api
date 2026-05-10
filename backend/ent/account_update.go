@@ -131,6 +131,26 @@ func (_u *AccountUpdate) SetExtra(v map[string]interface{}) *AccountUpdate {
 	return _u
 }
 
+// SetCustomHeadersEnabled sets the "custom_headers_enabled" field.
+func (_u *AccountUpdate) SetCustomHeadersEnabled(v bool) *AccountUpdate {
+	_u.mutation.SetCustomHeadersEnabled(v)
+	return _u
+}
+
+// SetNillableCustomHeadersEnabled sets the "custom_headers_enabled" field if the given value is not nil.
+func (_u *AccountUpdate) SetNillableCustomHeadersEnabled(v *bool) *AccountUpdate {
+	if v != nil {
+		_u.SetCustomHeadersEnabled(*v)
+	}
+	return _u
+}
+
+// SetCustomHeaders sets the "custom_headers" field.
+func (_u *AccountUpdate) SetCustomHeaders(v map[string]string) *AccountUpdate {
+	_u.mutation.SetCustomHeaders(v)
+	return _u
+}
+
 // SetProxyID sets the "proxy_id" field.
 func (_u *AccountUpdate) SetProxyID(v int64) *AccountUpdate {
 	_u.mutation.SetProxyID(v)
@@ -705,6 +725,12 @@ func (_u *AccountUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	if value, ok := _u.mutation.Extra(); ok {
 		_spec.SetField(account.FieldExtra, field.TypeJSON, value)
 	}
+	if value, ok := _u.mutation.CustomHeadersEnabled(); ok {
+		_spec.SetField(account.FieldCustomHeadersEnabled, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.CustomHeaders(); ok {
+		_spec.SetField(account.FieldCustomHeaders, field.TypeJSON, value)
+	}
 	if value, ok := _u.mutation.Concurrency(); ok {
 		_spec.SetField(account.FieldConcurrency, field.TypeInt, value)
 	}
@@ -1055,6 +1081,26 @@ func (_u *AccountUpdateOne) SetCredentials(v map[string]interface{}) *AccountUpd
 // SetExtra sets the "extra" field.
 func (_u *AccountUpdateOne) SetExtra(v map[string]interface{}) *AccountUpdateOne {
 	_u.mutation.SetExtra(v)
+	return _u
+}
+
+// SetCustomHeadersEnabled sets the "custom_headers_enabled" field.
+func (_u *AccountUpdateOne) SetCustomHeadersEnabled(v bool) *AccountUpdateOne {
+	_u.mutation.SetCustomHeadersEnabled(v)
+	return _u
+}
+
+// SetNillableCustomHeadersEnabled sets the "custom_headers_enabled" field if the given value is not nil.
+func (_u *AccountUpdateOne) SetNillableCustomHeadersEnabled(v *bool) *AccountUpdateOne {
+	if v != nil {
+		_u.SetCustomHeadersEnabled(*v)
+	}
+	return _u
+}
+
+// SetCustomHeaders sets the "custom_headers" field.
+func (_u *AccountUpdateOne) SetCustomHeaders(v map[string]string) *AccountUpdateOne {
+	_u.mutation.SetCustomHeaders(v)
 	return _u
 }
 
@@ -1661,6 +1707,12 @@ func (_u *AccountUpdateOne) sqlSave(ctx context.Context) (_node *Account, err er
 	}
 	if value, ok := _u.mutation.Extra(); ok {
 		_spec.SetField(account.FieldExtra, field.TypeJSON, value)
+	}
+	if value, ok := _u.mutation.CustomHeadersEnabled(); ok {
+		_spec.SetField(account.FieldCustomHeadersEnabled, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.CustomHeaders(); ok {
+		_spec.SetField(account.FieldCustomHeaders, field.TypeJSON, value)
 	}
 	if value, ok := _u.mutation.Concurrency(); ok {
 		_spec.SetField(account.FieldConcurrency, field.TypeInt, value)

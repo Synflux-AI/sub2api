@@ -206,6 +206,8 @@ func AccountFromServiceShallow(a *service.Account) *Account {
 		Type:                    a.Type,
 		Credentials:             a.Credentials,
 		Extra:                   a.Extra,
+		CustomHeadersEnabled:    a.CustomHeadersEnabled,
+		CustomHeaders:           a.CustomHeaders,
 		ProxyID:                 a.ProxyID,
 		Concurrency:             a.Concurrency,
 		LoadFactor:              a.LoadFactor,

@@ -801,6 +801,10 @@ export interface Account {
     model_rate_limits?: Record<string, { rate_limited_at: string; rate_limit_reset_at: string }>
     antigravity_credits_overages?: Record<string, { activated_at: string; active_until: string }>
   } & Record<string, unknown>)
+  // Advanced mode: custom outbound HTTP headers merged into upstream requests.
+  // Disabled by default; UI surfaces these via a collapsible advanced panel.
+  custom_headers_enabled?: boolean
+  custom_headers?: Record<string, string>
   proxy_id: number | null
   concurrency: number
   load_factor?: number | null
@@ -986,6 +990,8 @@ export interface CreateAccountRequest {
   type: AccountType
   credentials: Record<string, unknown>
   extra?: Record<string, unknown>
+  custom_headers_enabled?: boolean
+  custom_headers?: Record<string, string>
   proxy_id?: number | null
   concurrency?: number
   load_factor?: number | null
@@ -1003,6 +1009,8 @@ export interface UpdateAccountRequest {
   type?: AccountType
   credentials?: Record<string, unknown>
   extra?: Record<string, unknown>
+  custom_headers_enabled?: boolean
+  custom_headers?: Record<string, string>
   proxy_id?: number | null
   concurrency?: number
   load_factor?: number | null

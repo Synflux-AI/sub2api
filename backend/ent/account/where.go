@@ -90,6 +90,11 @@ func Type(v string) predicate.Account {
 	return predicate.Account(sql.FieldEQ(FieldType, v))
 }
 
+// CustomHeadersEnabled applies equality check predicate on the "custom_headers_enabled" field. It's identical to CustomHeadersEnabledEQ.
+func CustomHeadersEnabled(v bool) predicate.Account {
+	return predicate.Account(sql.FieldEQ(FieldCustomHeadersEnabled, v))
+}
+
 // ProxyID applies equality check predicate on the "proxy_id" field. It's identical to ProxyIDEQ.
 func ProxyID(v int64) predicate.Account {
 	return predicate.Account(sql.FieldEQ(FieldProxyID, v))
@@ -583,6 +588,16 @@ func TypeEqualFold(v string) predicate.Account {
 // TypeContainsFold applies the ContainsFold predicate on the "type" field.
 func TypeContainsFold(v string) predicate.Account {
 	return predicate.Account(sql.FieldContainsFold(FieldType, v))
+}
+
+// CustomHeadersEnabledEQ applies the EQ predicate on the "custom_headers_enabled" field.
+func CustomHeadersEnabledEQ(v bool) predicate.Account {
+	return predicate.Account(sql.FieldEQ(FieldCustomHeadersEnabled, v))
+}
+
+// CustomHeadersEnabledNEQ applies the NEQ predicate on the "custom_headers_enabled" field.
+func CustomHeadersEnabledNEQ(v bool) predicate.Account {
+	return predicate.Account(sql.FieldNEQ(FieldCustomHeadersEnabled, v))
 }
 
 // ProxyIDEQ applies the EQ predicate on the "proxy_id" field.

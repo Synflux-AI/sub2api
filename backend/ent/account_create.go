@@ -111,6 +111,26 @@ func (_c *AccountCreate) SetExtra(v map[string]interface{}) *AccountCreate {
 	return _c
 }
 
+// SetCustomHeadersEnabled sets the "custom_headers_enabled" field.
+func (_c *AccountCreate) SetCustomHeadersEnabled(v bool) *AccountCreate {
+	_c.mutation.SetCustomHeadersEnabled(v)
+	return _c
+}
+
+// SetNillableCustomHeadersEnabled sets the "custom_headers_enabled" field if the given value is not nil.
+func (_c *AccountCreate) SetNillableCustomHeadersEnabled(v *bool) *AccountCreate {
+	if v != nil {
+		_c.SetCustomHeadersEnabled(*v)
+	}
+	return _c
+}
+
+// SetCustomHeaders sets the "custom_headers" field.
+func (_c *AccountCreate) SetCustomHeaders(v map[string]string) *AccountCreate {
+	_c.mutation.SetCustomHeaders(v)
+	return _c
+}
+
 // SetProxyID sets the "proxy_id" field.
 func (_c *AccountCreate) SetProxyID(v int64) *AccountCreate {
 	_c.mutation.SetProxyID(v)
@@ -477,6 +497,17 @@ func (_c *AccountCreate) defaults() error {
 		v := account.DefaultExtra()
 		_c.mutation.SetExtra(v)
 	}
+	if _, ok := _c.mutation.CustomHeadersEnabled(); !ok {
+		v := account.DefaultCustomHeadersEnabled
+		_c.mutation.SetCustomHeadersEnabled(v)
+	}
+	if _, ok := _c.mutation.CustomHeaders(); !ok {
+		if account.DefaultCustomHeaders == nil {
+			return fmt.Errorf("ent: uninitialized account.DefaultCustomHeaders (forgotten import ent/runtime?)")
+		}
+		v := account.DefaultCustomHeaders()
+		_c.mutation.SetCustomHeaders(v)
+	}
 	if _, ok := _c.mutation.Concurrency(); !ok {
 		v := account.DefaultConcurrency
 		_c.mutation.SetConcurrency(v)
@@ -541,6 +572,12 @@ func (_c *AccountCreate) check() error {
 	}
 	if _, ok := _c.mutation.Extra(); !ok {
 		return &ValidationError{Name: "extra", err: errors.New(`ent: missing required field "Account.extra"`)}
+	}
+	if _, ok := _c.mutation.CustomHeadersEnabled(); !ok {
+		return &ValidationError{Name: "custom_headers_enabled", err: errors.New(`ent: missing required field "Account.custom_headers_enabled"`)}
+	}
+	if _, ok := _c.mutation.CustomHeaders(); !ok {
+		return &ValidationError{Name: "custom_headers", err: errors.New(`ent: missing required field "Account.custom_headers"`)}
 	}
 	if _, ok := _c.mutation.Concurrency(); !ok {
 		return &ValidationError{Name: "concurrency", err: errors.New(`ent: missing required field "Account.concurrency"`)}
@@ -632,6 +669,14 @@ func (_c *AccountCreate) createSpec() (*Account, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.Extra(); ok {
 		_spec.SetField(account.FieldExtra, field.TypeJSON, value)
 		_node.Extra = value
+	}
+	if value, ok := _c.mutation.CustomHeadersEnabled(); ok {
+		_spec.SetField(account.FieldCustomHeadersEnabled, field.TypeBool, value)
+		_node.CustomHeadersEnabled = value
+	}
+	if value, ok := _c.mutation.CustomHeaders(); ok {
+		_spec.SetField(account.FieldCustomHeaders, field.TypeJSON, value)
+		_node.CustomHeaders = value
 	}
 	if value, ok := _c.mutation.Concurrency(); ok {
 		_spec.SetField(account.FieldConcurrency, field.TypeInt, value)
@@ -915,6 +960,30 @@ func (u *AccountUpsert) SetExtra(v map[string]interface{}) *AccountUpsert {
 // UpdateExtra sets the "extra" field to the value that was provided on create.
 func (u *AccountUpsert) UpdateExtra() *AccountUpsert {
 	u.SetExcluded(account.FieldExtra)
+	return u
+}
+
+// SetCustomHeadersEnabled sets the "custom_headers_enabled" field.
+func (u *AccountUpsert) SetCustomHeadersEnabled(v bool) *AccountUpsert {
+	u.Set(account.FieldCustomHeadersEnabled, v)
+	return u
+}
+
+// UpdateCustomHeadersEnabled sets the "custom_headers_enabled" field to the value that was provided on create.
+func (u *AccountUpsert) UpdateCustomHeadersEnabled() *AccountUpsert {
+	u.SetExcluded(account.FieldCustomHeadersEnabled)
+	return u
+}
+
+// SetCustomHeaders sets the "custom_headers" field.
+func (u *AccountUpsert) SetCustomHeaders(v map[string]string) *AccountUpsert {
+	u.Set(account.FieldCustomHeaders, v)
+	return u
+}
+
+// UpdateCustomHeaders sets the "custom_headers" field to the value that was provided on create.
+func (u *AccountUpsert) UpdateCustomHeaders() *AccountUpsert {
+	u.SetExcluded(account.FieldCustomHeaders)
 	return u
 }
 
@@ -1416,6 +1485,34 @@ func (u *AccountUpsertOne) SetExtra(v map[string]interface{}) *AccountUpsertOne 
 func (u *AccountUpsertOne) UpdateExtra() *AccountUpsertOne {
 	return u.Update(func(s *AccountUpsert) {
 		s.UpdateExtra()
+	})
+}
+
+// SetCustomHeadersEnabled sets the "custom_headers_enabled" field.
+func (u *AccountUpsertOne) SetCustomHeadersEnabled(v bool) *AccountUpsertOne {
+	return u.Update(func(s *AccountUpsert) {
+		s.SetCustomHeadersEnabled(v)
+	})
+}
+
+// UpdateCustomHeadersEnabled sets the "custom_headers_enabled" field to the value that was provided on create.
+func (u *AccountUpsertOne) UpdateCustomHeadersEnabled() *AccountUpsertOne {
+	return u.Update(func(s *AccountUpsert) {
+		s.UpdateCustomHeadersEnabled()
+	})
+}
+
+// SetCustomHeaders sets the "custom_headers" field.
+func (u *AccountUpsertOne) SetCustomHeaders(v map[string]string) *AccountUpsertOne {
+	return u.Update(func(s *AccountUpsert) {
+		s.SetCustomHeaders(v)
+	})
+}
+
+// UpdateCustomHeaders sets the "custom_headers" field to the value that was provided on create.
+func (u *AccountUpsertOne) UpdateCustomHeaders() *AccountUpsertOne {
+	return u.Update(func(s *AccountUpsert) {
+		s.UpdateCustomHeaders()
 	})
 }
 
@@ -2138,6 +2235,34 @@ func (u *AccountUpsertBulk) SetExtra(v map[string]interface{}) *AccountUpsertBul
 func (u *AccountUpsertBulk) UpdateExtra() *AccountUpsertBulk {
 	return u.Update(func(s *AccountUpsert) {
 		s.UpdateExtra()
+	})
+}
+
+// SetCustomHeadersEnabled sets the "custom_headers_enabled" field.
+func (u *AccountUpsertBulk) SetCustomHeadersEnabled(v bool) *AccountUpsertBulk {
+	return u.Update(func(s *AccountUpsert) {
+		s.SetCustomHeadersEnabled(v)
+	})
+}
+
+// UpdateCustomHeadersEnabled sets the "custom_headers_enabled" field to the value that was provided on create.
+func (u *AccountUpsertBulk) UpdateCustomHeadersEnabled() *AccountUpsertBulk {
+	return u.Update(func(s *AccountUpsert) {
+		s.UpdateCustomHeadersEnabled()
+	})
+}
+
+// SetCustomHeaders sets the "custom_headers" field.
+func (u *AccountUpsertBulk) SetCustomHeaders(v map[string]string) *AccountUpsertBulk {
+	return u.Update(func(s *AccountUpsert) {
+		s.SetCustomHeaders(v)
+	})
+}
+
+// UpdateCustomHeaders sets the "custom_headers" field to the value that was provided on create.
+func (u *AccountUpsertBulk) UpdateCustomHeaders() *AccountUpsertBulk {
+	return u.Update(func(s *AccountUpsert) {
+		s.UpdateCustomHeaders()
 	})
 }
 

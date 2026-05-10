@@ -33,6 +33,10 @@ const (
 	FieldCredentials = "credentials"
 	// FieldExtra holds the string denoting the extra field in the database.
 	FieldExtra = "extra"
+	// FieldCustomHeadersEnabled holds the string denoting the custom_headers_enabled field in the database.
+	FieldCustomHeadersEnabled = "custom_headers_enabled"
+	// FieldCustomHeaders holds the string denoting the custom_headers field in the database.
+	FieldCustomHeaders = "custom_headers"
 	// FieldProxyID holds the string denoting the proxy_id field in the database.
 	FieldProxyID = "proxy_id"
 	// FieldConcurrency holds the string denoting the concurrency field in the database.
@@ -121,6 +125,8 @@ var Columns = []string{
 	FieldType,
 	FieldCredentials,
 	FieldExtra,
+	FieldCustomHeadersEnabled,
+	FieldCustomHeaders,
 	FieldProxyID,
 	FieldConcurrency,
 	FieldLoadFactor,
@@ -182,6 +188,10 @@ var (
 	DefaultCredentials func() map[string]interface{}
 	// DefaultExtra holds the default value on creation for the "extra" field.
 	DefaultExtra func() map[string]interface{}
+	// DefaultCustomHeadersEnabled holds the default value on creation for the "custom_headers_enabled" field.
+	DefaultCustomHeadersEnabled bool
+	// DefaultCustomHeaders holds the default value on creation for the "custom_headers" field.
+	DefaultCustomHeaders func() map[string]string
 	// DefaultConcurrency holds the default value on creation for the "concurrency" field.
 	DefaultConcurrency int
 	// DefaultPriority holds the default value on creation for the "priority" field.
@@ -241,6 +251,11 @@ func ByPlatform(opts ...sql.OrderTermOption) OrderOption {
 // ByType orders the results by the type field.
 func ByType(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldType, opts...).ToFunc()
+}
+
+// ByCustomHeadersEnabled orders the results by the custom_headers_enabled field.
+func ByCustomHeadersEnabled(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldCustomHeadersEnabled, opts...).ToFunc()
 }
 
 // ByProxyID orders the results by the proxy_id field.

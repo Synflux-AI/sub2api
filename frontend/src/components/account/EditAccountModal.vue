@@ -1287,6 +1287,16 @@
         <p class="input-hint">{{ t('admin.accounts.expiresAtHint') }}</p>
       </div>
 
+      <!-- 高级模式：自定义出站请求头（所有账号类型可用，默认关闭） -->
+      <div class="border-t border-gray-200 pt-4 dark:border-dark-600">
+        <CustomHeadersEditor
+          :enabled="customHeadersEnabled"
+          :headers="customHeadersMap"
+          @update:enabled="customHeadersEnabled = $event"
+          @update:headers="customHeadersMap = $event"
+        />
+      </div>
+
       <!-- OpenAI 自动透传开关（OAuth/API Key） -->
       <div
         v-if="account?.platform === 'openai' && (account?.type === 'oauth' || account?.type === 'apikey')"
@@ -2190,6 +2200,7 @@ import Icon from '@/components/icons/Icon.vue'
 import ProxySelector from '@/components/common/ProxySelector.vue'
 import GroupSelector from '@/components/common/GroupSelector.vue'
 import ModelWhitelistSelector from '@/components/account/ModelWhitelistSelector.vue'
+import CustomHeadersEditor from '@/components/account/CustomHeadersEditor.vue'
 import QuotaLimitCard from '@/components/account/QuotaLimitCard.vue'
 import { applyInterceptWarmup } from '@/components/account/credentialsBuilder'
 import { formatDateTime, formatDateTimeLocalInput, parseDateTimeLocalInput } from '@/utils/format'
@@ -2327,6 +2338,8 @@ const sessionIdMaskingEnabled = ref(false)
 const cacheTTLOverrideEnabled = ref(false)
 const cacheTTLOverrideTarget = ref<string>('5m')
 const customBaseUrlEnabled = ref(false)
+const customHeadersEnabled = ref(false)
+const customHeadersMap = ref<Record<string, string>>({})
 const customBaseUrl = ref('')
 
 // OpenAI 自动透传开关（OAuth/API Key）
@@ -2563,6 +2576,10 @@ const syncFormFromAccount = (newAccount: Account | null) => {
     : 'active'
   form.group_ids = newAccount.group_ids || []
   form.expires_at = newAccount.expires_at ?? null
+
+  // Load advanced-mode custom outbound headers (applies to all account types)
+  customHeadersEnabled.value = newAccount.custom_headers_enabled === true
+  customHeadersMap.value = { ...(newAccount.custom_headers || {}) }
 
   // Load intercept warmup requests setting (applies to all account types)
   const credentials = newAccount.credentials as Record<string, unknown> | undefined
@@ -3329,6 +3346,12 @@ const handleSubmit = async () => {
       updatePayload.load_factor = 0
     }
     updatePayload.auto_pause_on_expired = autoPauseOnExpired.value
+    // 高级模式：自定义出站请求头。
+    // 关闭时显式发送空 map 确保清空后端存储；开启时发送当前 map（可为空）。
+    updatePayload.custom_headers_enabled = customHeadersEnabled.value
+    updatePayload.custom_headers = customHeadersEnabled.value
+      ? { ...customHeadersMap.value }
+      : {}
 
     // For apikey type, handle credentials update
     if (props.account.type === 'apikey') {

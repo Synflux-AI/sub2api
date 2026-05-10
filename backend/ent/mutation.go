@@ -2284,6 +2284,8 @@ type AccountMutation struct {
 	_type                     *string
 	credentials               *map[string]interface{}
 	extra                     *map[string]interface{}
+	custom_headers_enabled    *bool
+	custom_headers            *map[string]string
 	concurrency               *int
 	addconcurrency            *int
 	load_factor               *int
@@ -2766,6 +2768,78 @@ func (m *AccountMutation) OldExtra(ctx context.Context) (v map[string]interface{
 // ResetExtra resets all changes to the "extra" field.
 func (m *AccountMutation) ResetExtra() {
 	m.extra = nil
+}
+
+// SetCustomHeadersEnabled sets the "custom_headers_enabled" field.
+func (m *AccountMutation) SetCustomHeadersEnabled(b bool) {
+	m.custom_headers_enabled = &b
+}
+
+// CustomHeadersEnabled returns the value of the "custom_headers_enabled" field in the mutation.
+func (m *AccountMutation) CustomHeadersEnabled() (r bool, exists bool) {
+	v := m.custom_headers_enabled
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCustomHeadersEnabled returns the old "custom_headers_enabled" field's value of the Account entity.
+// If the Account object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AccountMutation) OldCustomHeadersEnabled(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCustomHeadersEnabled is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCustomHeadersEnabled requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCustomHeadersEnabled: %w", err)
+	}
+	return oldValue.CustomHeadersEnabled, nil
+}
+
+// ResetCustomHeadersEnabled resets all changes to the "custom_headers_enabled" field.
+func (m *AccountMutation) ResetCustomHeadersEnabled() {
+	m.custom_headers_enabled = nil
+}
+
+// SetCustomHeaders sets the "custom_headers" field.
+func (m *AccountMutation) SetCustomHeaders(value map[string]string) {
+	m.custom_headers = &value
+}
+
+// CustomHeaders returns the value of the "custom_headers" field in the mutation.
+func (m *AccountMutation) CustomHeaders() (r map[string]string, exists bool) {
+	v := m.custom_headers
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCustomHeaders returns the old "custom_headers" field's value of the Account entity.
+// If the Account object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AccountMutation) OldCustomHeaders(ctx context.Context) (v map[string]string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCustomHeaders is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCustomHeaders requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCustomHeaders: %w", err)
+	}
+	return oldValue.CustomHeaders, nil
+}
+
+// ResetCustomHeaders resets all changes to the "custom_headers" field.
+func (m *AccountMutation) ResetCustomHeaders() {
+	m.custom_headers = nil
 }
 
 // SetProxyID sets the "proxy_id" field.
@@ -3871,7 +3945,7 @@ func (m *AccountMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *AccountMutation) Fields() []string {
-	fields := make([]string, 0, 28)
+	fields := make([]string, 0, 30)
 	if m.created_at != nil {
 		fields = append(fields, account.FieldCreatedAt)
 	}
@@ -3898,6 +3972,12 @@ func (m *AccountMutation) Fields() []string {
 	}
 	if m.extra != nil {
 		fields = append(fields, account.FieldExtra)
+	}
+	if m.custom_headers_enabled != nil {
+		fields = append(fields, account.FieldCustomHeadersEnabled)
+	}
+	if m.custom_headers != nil {
+		fields = append(fields, account.FieldCustomHeaders)
 	}
 	if m.proxy != nil {
 		fields = append(fields, account.FieldProxyID)
@@ -3982,6 +4062,10 @@ func (m *AccountMutation) Field(name string) (ent.Value, bool) {
 		return m.Credentials()
 	case account.FieldExtra:
 		return m.Extra()
+	case account.FieldCustomHeadersEnabled:
+		return m.CustomHeadersEnabled()
+	case account.FieldCustomHeaders:
+		return m.CustomHeaders()
 	case account.FieldProxyID:
 		return m.ProxyID()
 	case account.FieldConcurrency:
@@ -4047,6 +4131,10 @@ func (m *AccountMutation) OldField(ctx context.Context, name string) (ent.Value,
 		return m.OldCredentials(ctx)
 	case account.FieldExtra:
 		return m.OldExtra(ctx)
+	case account.FieldCustomHeadersEnabled:
+		return m.OldCustomHeadersEnabled(ctx)
+	case account.FieldCustomHeaders:
+		return m.OldCustomHeaders(ctx)
 	case account.FieldProxyID:
 		return m.OldProxyID(ctx)
 	case account.FieldConcurrency:
@@ -4156,6 +4244,20 @@ func (m *AccountMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetExtra(v)
+		return nil
+	case account.FieldCustomHeadersEnabled:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCustomHeadersEnabled(v)
+		return nil
+	case account.FieldCustomHeaders:
+		v, ok := value.(map[string]string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCustomHeaders(v)
 		return nil
 	case account.FieldProxyID:
 		v, ok := value.(int64)
@@ -4509,6 +4611,12 @@ func (m *AccountMutation) ResetField(name string) error {
 		return nil
 	case account.FieldExtra:
 		m.ResetExtra()
+		return nil
+	case account.FieldCustomHeadersEnabled:
+		m.ResetCustomHeadersEnabled()
+		return nil
+	case account.FieldCustomHeaders:
+		m.ResetCustomHeaders()
 		return nil
 	case account.FieldProxyID:
 		m.ResetProxyID()
