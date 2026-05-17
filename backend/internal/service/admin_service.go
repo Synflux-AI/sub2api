@@ -197,6 +197,7 @@ type CreateGroupInput struct {
 	ImagePrice2K         *float64
 	ImagePrice4K         *float64
 	ClaudeCodeOnly       bool   // 仅允许 Claude Code 客户端
+	CodexCLIOnly         bool   // 仅允许 Codex 官方客户端（OpenAI 平台）
 	FallbackGroupID      *int64 // 降级分组 ID
 	// 无效请求兜底分组 ID（仅 anthropic 平台使用）
 	FallbackGroupIDOnInvalidRequest *int64
@@ -237,6 +238,7 @@ type UpdateGroupInput struct {
 	ImagePrice2K         *float64
 	ImagePrice4K         *float64
 	ClaudeCodeOnly       *bool  // 仅允许 Claude Code 客户端
+	CodexCLIOnly         *bool  // 仅允许 Codex 官方客户端（OpenAI 平台）
 	FallbackGroupID      *int64 // 降级分组 ID
 	// 无效请求兜底分组 ID（仅 anthropic 平台使用）
 	FallbackGroupIDOnInvalidRequest *int64
@@ -1686,6 +1688,7 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 		ImagePrice2K:                    imagePrice2K,
 		ImagePrice4K:                    imagePrice4K,
 		ClaudeCodeOnly:                  input.ClaudeCodeOnly,
+		CodexCLIOnly:                    input.CodexCLIOnly,
 		FallbackGroupID:                 input.FallbackGroupID,
 		FallbackGroupIDOnInvalidRequest: fallbackOnInvalidRequest,
 		ModelRouting:                    input.ModelRouting,
@@ -1883,6 +1886,10 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 	// Claude Code 客户端限制
 	if input.ClaudeCodeOnly != nil {
 		group.ClaudeCodeOnly = *input.ClaudeCodeOnly
+	}
+	// Codex 客户端限制
+	if input.CodexCLIOnly != nil {
+		group.CodexCLIOnly = *input.CodexCLIOnly
 	}
 	if input.FallbackGroupID != nil {
 		// 校验降级分组

@@ -960,6 +960,59 @@
           </div>
         </div>
 
+        <!-- Codex 客户端限制（仅 openai 平台） -->
+        <div v-if="createForm.platform === 'openai'" class="border-t pt-4">
+          <div class="mb-1.5 flex items-center gap-1">
+            <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+              {{ t("admin.groups.codexCLI.title") }}
+            </label>
+            <div class="group relative inline-flex">
+              <Icon
+                name="questionCircle"
+                size="sm"
+                :stroke-width="2"
+                class="cursor-help text-gray-400 transition-colors hover:text-primary-500 dark:text-gray-500 dark:hover:text-primary-400"
+              />
+              <div
+                class="pointer-events-none absolute bottom-full left-0 z-50 mb-2 w-72 opacity-0 transition-all duration-200 group-hover:pointer-events-auto group-hover:opacity-100"
+              >
+                <div class="rounded-lg bg-gray-900 p-3 text-white shadow-lg dark:bg-gray-800">
+                  <p class="text-xs leading-relaxed text-gray-300">
+                    {{ t("admin.groups.codexCLI.tooltip") }}
+                  </p>
+                  <div class="absolute -bottom-1.5 left-3 h-3 w-3 rotate-45 bg-gray-900 dark:bg-gray-800"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="flex items-center gap-3">
+            <button
+              type="button"
+              @click="createForm.codex_cli_only = !createForm.codex_cli_only"
+              :class="[
+                'relative inline-flex h-6 w-11 items-center rounded-full transition-colors',
+                createForm.codex_cli_only
+                  ? 'bg-primary-500'
+                  : 'bg-gray-300 dark:bg-dark-600',
+              ]"
+            >
+              <span
+                :class="[
+                  'inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform',
+                  createForm.codex_cli_only ? 'translate-x-6' : 'translate-x-1',
+                ]"
+              />
+            </button>
+            <span class="text-sm text-gray-500 dark:text-gray-400">
+              {{
+                createForm.codex_cli_only
+                  ? t("admin.groups.codexCLI.enabled")
+                  : t("admin.groups.codexCLI.disabled")
+              }}
+            </span>
+          </div>
+        </div>
+
         <!-- OpenAI Messages 调度配置（仅 openai 平台） -->
         <div
           v-if="createForm.platform === 'openai'"
@@ -2141,6 +2194,59 @@
           </div>
         </div>
 
+        <!-- Codex 客户端限制（仅 openai 平台） -->
+        <div v-if="editForm.platform === 'openai'" class="border-t pt-4">
+          <div class="mb-1.5 flex items-center gap-1">
+            <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+              {{ t("admin.groups.codexCLI.title") }}
+            </label>
+            <div class="group relative inline-flex">
+              <Icon
+                name="questionCircle"
+                size="sm"
+                :stroke-width="2"
+                class="cursor-help text-gray-400 transition-colors hover:text-primary-500 dark:text-gray-500 dark:hover:text-primary-400"
+              />
+              <div
+                class="pointer-events-none absolute bottom-full left-0 z-50 mb-2 w-72 opacity-0 transition-all duration-200 group-hover:pointer-events-auto group-hover:opacity-100"
+              >
+                <div class="rounded-lg bg-gray-900 p-3 text-white shadow-lg dark:bg-gray-800">
+                  <p class="text-xs leading-relaxed text-gray-300">
+                    {{ t("admin.groups.codexCLI.tooltip") }}
+                  </p>
+                  <div class="absolute -bottom-1.5 left-3 h-3 w-3 rotate-45 bg-gray-900 dark:bg-gray-800"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="flex items-center gap-3">
+            <button
+              type="button"
+              @click="editForm.codex_cli_only = !editForm.codex_cli_only"
+              :class="[
+                'relative inline-flex h-6 w-11 items-center rounded-full transition-colors',
+                editForm.codex_cli_only
+                  ? 'bg-primary-500'
+                  : 'bg-gray-300 dark:bg-dark-600',
+              ]"
+            >
+              <span
+                :class="[
+                  'inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform',
+                  editForm.codex_cli_only ? 'translate-x-6' : 'translate-x-1',
+                ]"
+              />
+            </button>
+            <span class="text-sm text-gray-500 dark:text-gray-400">
+              {{
+                editForm.codex_cli_only
+                  ? t("admin.groups.codexCLI.enabled")
+                  : t("admin.groups.codexCLI.disabled")
+              }}
+            </span>
+          </div>
+        </div>
+
         <!-- OpenAI Messages 调度配置（仅 openai 平台） -->
         <div
           v-if="editForm.platform === 'openai'"
@@ -3120,6 +3226,8 @@ const createForm = reactive({
   claude_code_only: false,
   fallback_group_id: null as number | null,
   fallback_group_id_on_invalid_request: null as number | null,
+  // Codex 客户端限制（仅 openai 平台使用）
+  codex_cli_only: false,
   // OpenAI Messages 调度配置（仅 openai 平台使用）
   allow_messages_dispatch: false,
   opus_mapped_model: createMessagesDispatchDefaults.opus_mapped_model,
@@ -3405,6 +3513,8 @@ const editForm = reactive({
   claude_code_only: false,
   fallback_group_id: null as number | null,
   fallback_group_id_on_invalid_request: null as number | null,
+  // Codex 客户端限制（仅 openai 平台使用）
+  codex_cli_only: false,
   // OpenAI Messages 调度配置（仅 openai 平台使用）
   allow_messages_dispatch: false,
   default_mapped_model: '',
@@ -3648,6 +3758,7 @@ const closeCreateModal = () => {
   createForm.image_price_2k = null;
   createForm.image_price_4k = null;
   createForm.claude_code_only = false;
+  createForm.codex_cli_only = false;
   createForm.fallback_group_id = null;
   createForm.fallback_group_id_on_invalid_request = null;
   resetMessagesDispatchFormState(createForm);
@@ -3767,6 +3878,7 @@ const handleEdit = async (group: AdminGroup) => {
   editForm.image_price_2k = group.image_price_2k;
   editForm.image_price_4k = group.image_price_4k;
   editForm.claude_code_only = group.claude_code_only || false;
+  editForm.codex_cli_only = group.codex_cli_only || false;
   editForm.fallback_group_id = group.fallback_group_id;
   editForm.fallback_group_id_on_invalid_request =
     group.fallback_group_id_on_invalid_request;

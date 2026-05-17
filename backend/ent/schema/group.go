@@ -101,6 +101,11 @@ func (Group) Fields() []ent.Field {
 		field.Bool("claude_code_only").
 			Default(false).
 			Comment("是否仅允许 Claude Code 客户端"),
+
+		// Codex 客户端限制 (added by migration 137)
+		field.Bool("codex_cli_only").
+			Default(false).
+			Comment("是否仅允许 Codex 官方客户端（OpenAI 平台使用）"),
 		field.Int64("fallback_group_id").
 			Optional().
 			Nillable().

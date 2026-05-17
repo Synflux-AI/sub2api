@@ -2078,6 +2078,12 @@ export default {
         fallbackHint: 'Non-Claude Code requests will use this group. Leave empty to reject directly.',
         noFallback: 'No Fallback (Reject)'
       },
+      codexCLI: {
+        title: 'Codex Client Restriction',
+        tooltip: 'When enabled, this group only allows official OpenAI Codex clients (codex-tui, codex_vscode, Codex Desktop, etc.). Non-Codex requests will be rejected.',
+        enabled: 'Codex Clients Only',
+        disabled: 'Allow All Clients'
+      },
       openaiMessages: {
         title: 'OpenAI Messages Dispatch',
         allowDispatch: 'Allow /v1/messages dispatch',

@@ -2007,6 +2007,21 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		return nil, errors.New("codex_cli_only restriction: only codex official clients are allowed")
 	}
 
+	// 分组级 Codex 客户端限制：仅允许 Codex 官方客户端访问此分组
+	if groupKey := getAPIKeyFromContext(c); groupKey != nil && groupKey.Group != nil && groupKey.Group.CodexCLIOnly {
+		ua := c.GetHeader("User-Agent")
+		originator := c.GetHeader("originator")
+		if !openai.IsCodexOfficialClientByHeaders(ua, originator) && !(s.cfg != nil && s.cfg.Gateway.ForceCodexCLI) {
+			c.JSON(http.StatusForbidden, gin.H{
+				"error": gin.H{
+					"type":    "permission_error",
+					"message": "This group is restricted to Codex official clients only",
+				},
+			})
+			return nil, errors.New("group codex_cli_only restriction: only codex official clients are allowed")
+		}
+	}
+
 	originalBody := body
 	reqModel, reqStream, promptCacheKey := extractOpenAIRequestMetaFromBody(body)
 	originalModel := reqModel

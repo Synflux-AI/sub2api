@@ -2162,6 +2162,13 @@ export default {
         fallbackHint: '非 Claude Code 请求将使用此分组，留空则直接拒绝',
         noFallback: '不降级（直接拒绝）'
       },
+      codexCLI: {
+        title: 'Codex 客户端限制',
+        tooltip:
+          '启用后，此分组仅允许 OpenAI Codex 官方客户端访问（包括 codex-tui、codex_vscode、Codex Desktop 等）。非 Codex 客户端请求将被拒绝。',
+        enabled: '仅限 Codex 客户端',
+        disabled: '允许所有客户端'
+      },
       openaiMessages: {
         title: 'OpenAI Messages 调度配置',
         allowDispatch: '允许 /v1/messages 调度',
