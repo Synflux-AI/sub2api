@@ -5113,7 +5113,8 @@ export default {
           sustained: '连续样本数（每分钟）',
           cooldown: '冷却期（分钟）',
           enabled: '启用',
-          notifyEmail: '发送邮件通知'
+          notifyEmail: '发送邮件通知',
+          notifyLark: '发送 Lark（飞书）通知'
         },
         validation: {
           title: '请先修正以下问题',
@@ -5226,6 +5227,43 @@ export default {
           cronFormat: 'Cron 表达式格式可能不正确（至少应包含 5 段）',
           digestMinCountRange: '错误摘要最小数量必须为 ≥ 0 的数字',
           accountHealthThresholdRange: '账号健康错误率阈值必须在 0 到 100 之间'
+        }
+      },
+      lark: {
+        title: 'Lark（飞书）通知',
+        description: '通过 Webhook 或 App API 将运维告警和账号异常推送到飞书机器人。',
+        globalEnabled: '启用 Lark 通知',
+        mode: '推送方式',
+        modeWebhook: 'Webhook（自定义机器人）',
+        modeApp: 'App API',
+        webhookURL: 'Webhook 地址',
+        webhookURLPlaceholder: 'https://open.feishu.cn/open-apis/bot/v2/hook/...',
+        webhookHint: '在飞书群中创建自定义机器人，并将 Webhook 地址粘贴至此。',
+        appHint: '在飞书开发者后台创建自建应用并授予消息发送权限。',
+        receiveID: '接收方 ID',
+        receiveIDPlaceholder: 'oc_xxxxxxxx 或 ou_xxxxxxxx',
+        receiveIDType: '接收方 ID 类型',
+        alertTitle: '告警通知',
+        alertHint: '启用后，已开启"Lark 推送"的告警规则触发时将发送卡片消息。',
+        configured: '已配置',
+        notConfigured: '未配置',
+        loading: '加载中...',
+        noData: '暂无 Lark 通知配置',
+        loadFailed: '加载 Lark 通知配置失败',
+        saveSuccess: 'Lark 通知配置已保存',
+        saveFailed: '保存 Lark 通知配置失败',
+        test: '测试',
+        testConnectivity: '测试连通性',
+        testing: '测试中...',
+        testSuccess: '测试消息发送成功',
+        testFailed: '测试消息发送失败',
+        validation: {
+          title: '请修复以下问题',
+          invalid: 'Lark 通知配置无效',
+          webhookRequired: 'Webhook 模式下必须填写 Webhook 地址',
+          appIDRequired: 'App API 模式下必须填写 App ID',
+          appSecretRequired: 'App API 模式下必须填写 App Secret',
+          receiveIDRequired: 'App API 模式下必须填写接收方 ID'
         }
       },
       settings: {

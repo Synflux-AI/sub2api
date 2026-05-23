@@ -701,6 +701,7 @@ export interface AlertRule {
   severity: OpsSeverity
   cooldown_minutes: number
   notify_email: boolean
+  notify_lark: boolean
   filters?: Record<string, any>
   created_at?: string
   updated_at?: string
@@ -745,6 +746,20 @@ export interface EmailNotificationConfig {
     account_health_enabled: boolean
     account_health_schedule: string
     account_health_error_rate_threshold: number
+  }
+}
+
+export interface LarkNotificationConfig {
+  enabled: boolean
+  mode: 'webhook' | 'app'
+  webhook_url: string
+  app_id: string
+  app_secret: string
+  receive_id: string
+  receive_id_type: 'chat_id' | 'open_id' | 'user_id' | 'union_id'
+  alert: {
+    enabled: boolean
+    min_severity: AlertSeverity | ''
   }
 }
 
@@ -1211,6 +1226,22 @@ export async function updateEmailNotificationConfig(config: EmailNotificationCon
   return data
 }
 
+// Lark (Feishu) notification config
+export async function getLarkNotificationConfig(): Promise<LarkNotificationConfig> {
+  const { data } = await apiClient.get<LarkNotificationConfig>('/admin/ops/lark-notification/config')
+  return data
+}
+
+export async function updateLarkNotificationConfig(config: Partial<LarkNotificationConfig>): Promise<LarkNotificationConfig> {
+  const { data } = await apiClient.put<LarkNotificationConfig>('/admin/ops/lark-notification/config', config)
+  return data
+}
+
+export async function testLarkNotification(cfg?: Partial<LarkNotificationConfig>): Promise<{ status: string }> {
+  const { data } = await apiClient.post<{ status: string }>('/admin/ops/lark-notification/test', cfg ?? {})
+  return data
+}
+
 // Runtime settings (DB-backed)
 export async function getAlertRuntimeSettings(): Promise<OpsAlertRuntimeSettings> {
   const { data } = await apiClient.get<OpsAlertRuntimeSettings>('/admin/ops/runtime/alert')
@@ -1313,6 +1344,9 @@ export const opsAPI = {
   createAlertSilence,
   getEmailNotificationConfig,
   updateEmailNotificationConfig,
+  getLarkNotificationConfig,
+  updateLarkNotificationConfig,
+  testLarkNotification,
   getAlertRuntimeSettings,
   updateAlertRuntimeSettings,
   getRuntimeLogConfig,

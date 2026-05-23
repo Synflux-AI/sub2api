@@ -6,7 +6,7 @@ import { opsAPI } from '@/api/admin/ops'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Select from '@/components/common/Select.vue'
 import Toggle from '@/components/common/Toggle.vue'
-import type { OpsAlertRuntimeSettings, EmailNotificationConfig, AlertSeverity, OpsAdvancedSettings, OpsMetricThresholds } from '../types'
+import type { OpsAlertRuntimeSettings, EmailNotificationConfig, LarkNotificationConfig, AlertSeverity, OpsAdvancedSettings, OpsMetricThresholds } from '../types'
 
 const { t } = useI18n()
 const appStore = useAppStore()
@@ -27,6 +27,8 @@ const saving = ref(false)
 const runtimeSettings = ref<OpsAlertRuntimeSettings | null>(null)
 // 邮件通知配置
 const emailConfig = ref<EmailNotificationConfig | null>(null)
+// Lark 通知配置
+const larkConfig = ref<LarkNotificationConfig | null>(null)
 // 高级设置
 const advancedSettings = ref<OpsAdvancedSettings | null>(null)
 // 指标阈值配置
@@ -41,14 +43,16 @@ const metricThresholds = ref<OpsMetricThresholds>({
 async function loadAllSettings() {
   loading.value = true
   try {
-    const [runtime, email, advanced, thresholds] = await Promise.all([
+    const [runtime, email, lark, advanced, thresholds] = await Promise.all([
       opsAPI.getAlertRuntimeSettings(),
       opsAPI.getEmailNotificationConfig(),
+      opsAPI.getLarkNotificationConfig(),
       opsAPI.getAdvancedSettings(),
       opsAPI.getMetricThresholds()
     ])
     runtimeSettings.value = runtime
     emailConfig.value = email
+    larkConfig.value = lark
     advancedSettings.value = advanced
     // 如果后端返回了阈值，使用后端的值；否则保持默认值
     if (thresholds && Object.keys(thresholds).length > 0) {
@@ -84,6 +88,34 @@ const severityOptions: Array<{ value: AlertSeverity | ''; label: string }> = [
   { value: 'critical', label: t('common.critical') },
   { value: 'warning', label: t('common.warning') },
   { value: 'info', label: t('common.info') }
+]
+
+// Lark test
+const larkTesting = ref(false)
+async function testLarkConfig() {
+  if (!larkConfig.value) return
+  larkTesting.value = true
+  try {
+    await opsAPI.testLarkNotification(larkConfig.value)
+    appStore.showSuccess(t('admin.ops.lark.testSuccess'))
+  } catch (err: any) {
+    appStore.showError(err?.response?.data?.detail || err?.message || t('admin.ops.lark.testFailed'))
+  } finally {
+    larkTesting.value = false
+  }
+}
+
+// Lark mode options
+const larkModeOptions = [
+  { value: 'webhook', label: t('admin.ops.lark.modeWebhook') },
+  { value: 'app', label: t('admin.ops.lark.modeApp') }
+]
+
+const larkReceiveIDTypeOptions = [
+  { value: 'chat_id', label: 'chat_id' },
+  { value: 'open_id', label: 'open_id' },
+  { value: 'user_id', label: 'user_id' },
+  { value: 'union_id', label: 'union_id' }
 ]
 
 // 验证邮箱
@@ -185,6 +217,7 @@ async function saveAllSettings() {
     await Promise.all([
       runtimeSettings.value ? opsAPI.updateAlertRuntimeSettings(runtimeSettings.value) : Promise.resolve(),
       emailConfig.value ? opsAPI.updateEmailNotificationConfig(emailConfig.value) : Promise.resolve(),
+      larkConfig.value ? opsAPI.updateLarkNotificationConfig(larkConfig.value) : Promise.resolve(),
       advancedSettings.value ? opsAPI.updateAdvancedSettings(advancedSettings.value) : Promise.resolve(),
       opsAPI.updateMetricThresholds(metricThresholds.value)
     ])
@@ -206,7 +239,7 @@ async function saveAllSettings() {
       {{ t('common.loading') }}
     </div>
 
-    <div v-else-if="runtimeSettings && emailConfig && advancedSettings" class="space-y-6">
+    <div v-else-if="runtimeSettings && emailConfig && advancedSettings" class="space-y-6"><!-- larkConfig loaded separately -->
       <!-- 验证错误 -->
       <div v-if="!validation.valid" class="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-900/50 dark:bg-amber-900/20 dark:text-amber-200">
         <div class="font-bold">{{ t('admin.ops.settings.validation.title') }}</div>
@@ -334,6 +367,73 @@ async function saveAllSettings() {
             </div>
             <div v-if="emailConfig.report.weekly_summary_enabled">
               <input v-model="emailConfig.report.weekly_summary_schedule" type="text" class="input" placeholder="0 9 * * 1" />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Lark 通知配置 -->
+      <div v-if="larkConfig" class="rounded-2xl bg-gray-50 p-4 dark:bg-dark-700/50">
+        <div class="mb-3 flex items-center justify-between">
+          <h4 class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('admin.ops.lark.title') }}</h4>
+          <button
+            class="flex items-center gap-1.5 rounded-lg bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-sm ring-1 ring-gray-900/10 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-dark-700 dark:text-gray-300 dark:ring-dark-600 dark:hover:bg-dark-600"
+            :disabled="larkTesting"
+            @click="testLarkConfig"
+          >
+            <svg v-if="larkTesting" class="h-3 w-3 animate-spin" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+            {{ larkTesting ? t('admin.ops.lark.testing') : t('admin.ops.lark.testConnectivity') }}
+          </button>
+        </div>
+        <div class="space-y-4">
+          <div class="flex items-center justify-between">
+            <label class="font-medium text-gray-900 dark:text-white">{{ t('admin.ops.lark.globalEnabled') }}</label>
+            <Toggle v-model="larkConfig.enabled" />
+          </div>
+
+          <div v-if="larkConfig.enabled" class="space-y-4">
+            <div>
+              <label class="input-label">{{ t('admin.ops.lark.mode') }}</label>
+              <Select v-model="larkConfig.mode" :options="larkModeOptions" />
+            </div>
+
+            <div v-if="larkConfig.mode === 'webhook'">
+              <label class="input-label">{{ t('admin.ops.lark.webhookURL') }}</label>
+              <input v-model="larkConfig.webhook_url" type="url" class="input" :placeholder="t('admin.ops.lark.webhookURLPlaceholder')" />
+            </div>
+
+            <template v-if="larkConfig.mode === 'app'">
+              <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+                <div>
+                  <label class="input-label">App ID</label>
+                  <input v-model="larkConfig.app_id" type="text" class="input" placeholder="cli_xxxxxxxx" />
+                </div>
+                <div>
+                  <label class="input-label">App Secret</label>
+                  <input v-model="larkConfig.app_secret" type="password" class="input" placeholder="••••••••" />
+                </div>
+                <div>
+                  <label class="input-label">{{ t('admin.ops.lark.receiveID') }}</label>
+                  <input v-model="larkConfig.receive_id" type="text" class="input" :placeholder="t('admin.ops.lark.receiveIDPlaceholder')" />
+                </div>
+                <div>
+                  <label class="input-label">{{ t('admin.ops.lark.receiveIDType') }}</label>
+                  <Select v-model="larkConfig.receive_id_type" :options="larkReceiveIDTypeOptions" />
+                </div>
+              </div>
+            </template>
+
+            <div class="border-t border-gray-200 pt-3 dark:border-dark-600">
+              <div class="flex items-center justify-between">
+                <label class="font-medium text-gray-900 dark:text-white">{{ t('admin.ops.lark.alertTitle') }}</label>
+                <Toggle v-model="larkConfig.alert.enabled" />
+              </div>
+              <div v-if="larkConfig.alert.enabled" class="mt-3">
+                <label class="input-label">{{ t('admin.ops.email.minSeverity') }}</label>
+                <Select v-model="larkConfig.alert.min_severity" :options="severityOptions" />
+              </div>
             </div>
           </div>
         </div>

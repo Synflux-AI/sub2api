@@ -4950,7 +4950,8 @@ export default {
           sustained: 'Sustained (samples)',
           cooldown: 'Cooldown (minutes)',
           enabled: 'Enabled',
-          notifyEmail: 'Send email notifications'
+          notifyEmail: 'Send email notifications',
+          notifyLark: 'Send Lark (Feishu) notifications'
         },
         validation: {
           title: 'Please fix the following issues',
@@ -5063,6 +5064,43 @@ export default {
           cronFormat: 'Cron expression format looks invalid (expected at least 5 parts)',
           digestMinCountRange: 'Min errors for digest must be a number ≥ 0',
           accountHealthThresholdRange: 'Account health threshold must be between 0 and 100'
+        }
+      },
+      lark: {
+        title: 'Lark (Feishu) Notifications',
+        description: 'Push ops alerts and account anomalies to a Lark bot via webhook or App API.',
+        globalEnabled: 'Enable Lark Notifications',
+        mode: 'Mode',
+        modeWebhook: 'Webhook (Custom Bot)',
+        modeApp: 'App API',
+        webhookURL: 'Webhook URL',
+        webhookURLPlaceholder: 'https://open.feishu.cn/open-apis/bot/v2/hook/...',
+        webhookHint: 'Create a custom bot in a Lark group and paste the webhook URL here.',
+        appHint: 'Create a self-built app in the Lark developer console and grant messaging permissions.',
+        receiveID: 'Receive ID',
+        receiveIDPlaceholder: 'oc_xxxxxxxx or ou_xxxxxxxx',
+        receiveIDType: 'Receive ID Type',
+        alertTitle: 'Alert Notifications',
+        alertHint: 'When enabled, triggered ops alert rules with "Notify Lark" turned on will push card messages.',
+        configured: 'Configured',
+        notConfigured: 'Not configured',
+        loading: 'Loading...',
+        noData: 'No Lark notification config',
+        loadFailed: 'Failed to load Lark notification config',
+        saveSuccess: 'Lark notification config saved',
+        saveFailed: 'Failed to save Lark notification config',
+        test: 'Test',
+        testConnectivity: 'Test Connectivity',
+        testing: 'Testing...',
+        testSuccess: 'Test message sent successfully',
+        testFailed: 'Test message failed',
+        validation: {
+          title: 'Please fix the following issues',
+          invalid: 'Invalid Lark notification config',
+          webhookRequired: 'Webhook URL is required when mode is Webhook',
+          appIDRequired: 'App ID is required when mode is App API',
+          appSecretRequired: 'App Secret is required when mode is App API',
+          receiveIDRequired: 'Receive ID is required when mode is App API'
         }
       },
       settings: {
