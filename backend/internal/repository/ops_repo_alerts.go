@@ -30,6 +30,7 @@ SELECT
   sustained_minutes,
   cooldown_minutes,
   COALESCE(notify_email, true),
+  COALESCE(notify_lark, false),
   filters,
   last_triggered_at,
   created_at,
@@ -61,6 +62,7 @@ ORDER BY id DESC`
 			&rule.SustainedMinutes,
 			&rule.CooldownMinutes,
 			&rule.NotifyEmail,
+			&rule.NotifyLark,
 			&filtersRaw,
 			&lastTriggeredAt,
 			&rule.CreatedAt,
@@ -112,11 +114,12 @@ INSERT INTO ops_alert_rules (
   sustained_minutes,
   cooldown_minutes,
   notify_email,
+  notify_lark,
   filters,
   created_at,
   updated_at
 ) VALUES (
-  $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NOW(),NOW()
+  $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,NOW(),NOW()
 )
 RETURNING
   id,
@@ -131,6 +134,7 @@ RETURNING
   sustained_minutes,
   cooldown_minutes,
   COALESCE(notify_email, true),
+  COALESCE(notify_lark, false),
   filters,
   last_triggered_at,
   created_at,
@@ -154,6 +158,7 @@ RETURNING
 		input.SustainedMinutes,
 		input.CooldownMinutes,
 		input.NotifyEmail,
+		input.NotifyLark,
 		filtersArg,
 	).Scan(
 		&out.ID,
@@ -168,6 +173,7 @@ RETURNING
 		&out.SustainedMinutes,
 		&out.CooldownMinutes,
 		&out.NotifyEmail,
+		&out.NotifyLark,
 		&filtersRaw,
 		&lastTriggeredAt,
 		&out.CreatedAt,
@@ -219,7 +225,8 @@ SET
   sustained_minutes = $10,
   cooldown_minutes = $11,
   notify_email = $12,
-  filters = $13,
+  notify_lark = $13,
+  filters = $14,
   updated_at = NOW()
 WHERE id = $1
 RETURNING
@@ -235,6 +242,7 @@ RETURNING
   sustained_minutes,
   cooldown_minutes,
   COALESCE(notify_email, true),
+  COALESCE(notify_lark, false),
   filters,
   last_triggered_at,
   created_at,
@@ -259,6 +267,7 @@ RETURNING
 		input.SustainedMinutes,
 		input.CooldownMinutes,
 		input.NotifyEmail,
+		input.NotifyLark,
 		filtersArg,
 	).Scan(
 		&out.ID,
@@ -273,6 +282,7 @@ RETURNING
 		&out.SustainedMinutes,
 		&out.CooldownMinutes,
 		&out.NotifyEmail,
+		&out.NotifyLark,
 		&filtersRaw,
 		&lastTriggeredAt,
 		&out.CreatedAt,
@@ -351,6 +361,7 @@ SELECT
   fired_at,
   resolved_at,
   email_sent,
+  lark_sent,
   created_at
 FROM ops_alert_events
 ` + where + `
@@ -383,6 +394,7 @@ LIMIT ` + limitArg
 			&ev.FiredAt,
 			&resolvedAt,
 			&ev.EmailSent,
+			&ev.LarkSent,
 			&ev.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -435,6 +447,7 @@ SELECT
   fired_at,
   resolved_at,
   email_sent,
+  lark_sent,
   created_at
 FROM ops_alert_events
 WHERE id = $1`
@@ -472,6 +485,7 @@ SELECT
   fired_at,
   resolved_at,
   email_sent,
+  lark_sent,
   created_at
 FROM ops_alert_events
 WHERE rule_id = $1 AND status = $2
@@ -511,6 +525,7 @@ SELECT
   fired_at,
   resolved_at,
   email_sent,
+  lark_sent,
   created_at
 FROM ops_alert_events
 WHERE rule_id = $1
@@ -554,9 +569,10 @@ INSERT INTO ops_alert_events (
   fired_at,
   resolved_at,
   email_sent,
+  lark_sent,
   created_at
 ) VALUES (
-  $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW()
+  $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NOW()
 )
 RETURNING
   id,
@@ -571,6 +587,7 @@ RETURNING
   fired_at,
   resolved_at,
   email_sent,
+  lark_sent,
   created_at`
 
 	row := r.db.QueryRowContext(
@@ -587,6 +604,7 @@ RETURNING
 		event.FiredAt,
 		opsNullTime(event.ResolvedAt),
 		event.EmailSent,
+		event.LarkSent,
 	)
 	return scanOpsAlertEvent(row)
 }
@@ -775,6 +793,7 @@ func scanOpsAlertEvent(row opsAlertEventRow) (*service.OpsAlertEvent, error) {
 		&ev.FiredAt,
 		&resolvedAt,
 		&ev.EmailSent,
+		&ev.LarkSent,
 		&ev.CreatedAt,
 	); err != nil {
 		return nil, err
