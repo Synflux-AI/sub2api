@@ -196,9 +196,6 @@ func TestMaybeBuildWeChatOAuthRequiredResponse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if resp == nil {
-		t.Fatal("expected oauth_required response, got nil")
-	}
 	if resp.ResultType != payment.CreatePaymentResultOAuthRequired {
 		t.Fatalf("result type = %q, want %q", resp.ResultType, payment.CreatePaymentResultOAuthRequired)
 	}
@@ -309,9 +306,6 @@ func TestMaybeBuildWeChatOAuthRequiredResponseFallsBackToConfiguredLegacySigning
 	}, 12.5, 12.88, 0.03)
 	if err != nil {
 		t.Fatalf("expected nil error, got %v", err)
-	}
-	if resp == nil {
-		t.Fatal("expected oauth-required response, got nil")
 	}
 	if resp.ResultType != payment.CreatePaymentResultOAuthRequired {
 		t.Fatalf("result type = %q, want %q", resp.ResultType, payment.CreatePaymentResultOAuthRequired)
