@@ -299,6 +299,7 @@ func TestCheckUserPlatformQuotaEligibility_WindowExpiredRefreshesCache(t *testin
 	refreshed := cache.getEntry()
 	if refreshed == nil {
 		t.Fatal("窗口过期后 cache entry 不应为 nil(应被 SetCache 覆盖,而非 Delete)")
+		return
 	}
 	if refreshed.DailyUsageUSD != 0 {
 		t.Errorf("刷新后 DailyUsageUSD = %v, want 0", refreshed.DailyUsageUSD)

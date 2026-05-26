@@ -131,6 +131,7 @@ func TestSanitizeCustomHeaders(t *testing.T) {
 	got := sanitizeCustomHeaders(in)
 	if got == nil {
 		t.Fatalf("expected non-nil for non-nil input")
+		return
 	}
 	if got["X-A"] != "v1" || got["X-B"] != "v2" {
 		t.Errorf("unexpected map: %v", got)

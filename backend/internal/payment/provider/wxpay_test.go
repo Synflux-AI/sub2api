@@ -328,6 +328,7 @@ func TestNewWxpay(t *testing.T) {
 			}
 			if got == nil {
 				t.Fatal("expected non-nil Wxpay instance")
+				return
 			}
 			if got.instanceID != "test-instance" {
 				t.Errorf("instanceID = %q, want %q", got.instanceID, "test-instance")

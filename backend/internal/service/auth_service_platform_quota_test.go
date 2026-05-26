@@ -130,6 +130,7 @@ func TestResolveSignupGrantPlan_GlobalQuotaLoadedBeforeAuthSource(t *testing.T) 
 	q := plan.PlatformQuotas["anthropic"]
 	if q == nil {
 		t.Fatal("expected anthropic quota to be set")
+		return
 	}
 	if q.DailyLimitUSD == nil || *q.DailyLimitUSD != 10 {
 		t.Errorf("expected anthropic daily=10, got %v", q.DailyLimitUSD)

@@ -291,6 +291,7 @@ func TestNewClient_无代理(t *testing.T) {
 	}
 	if client == nil {
 		t.Fatal("NewClient 返回 nil")
+		return
 	}
 	if client.httpClient == nil {
 		t.Fatal("httpClient 为 nil")
@@ -311,6 +312,7 @@ func TestNewClient_有代理(t *testing.T) {
 	}
 	if client == nil {
 		t.Fatal("NewClient 返回 nil")
+		return
 	}
 	if client.httpClient.Transport == nil {
 		t.Fatal("有代理时 Transport 不应为 nil")
@@ -1337,6 +1339,7 @@ func TestClient_LoadCodeAssist_Success_RealCall(t *testing.T) {
 	// 验证原始 JSON map
 	if rawResp == nil {
 		t.Fatal("rawResp 不应为 nil")
+		return
 	}
 	if rawResp["cloudaicompanionProject"] != "test-project-123" {
 		t.Errorf("rawResp cloudaicompanionProject 不匹配: got %v", rawResp["cloudaicompanionProject"])
@@ -1556,6 +1559,7 @@ func TestClient_FetchAvailableModels_Success_RealCall(t *testing.T) {
 	// 验证原始 JSON map
 	if rawResp == nil {
 		t.Fatal("rawResp 不应为 nil")
+		return
 	}
 	if rawResp["models"] == nil {
 		t.Error("rawResp models 不应为 nil")

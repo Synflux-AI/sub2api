@@ -35,6 +35,7 @@ func TestOpsServiceListSystemLogs_DefaultClampAndSuccess(t *testing.T) {
 	}
 	if gotFilter == nil {
 		t.Fatalf("expected repository to receive filter")
+		return
 	}
 	if gotFilter.Page != 1 || gotFilter.PageSize != 200 {
 		t.Fatalf("filter normalized unexpectedly: page=%d pageSize=%d", gotFilter.Page, gotFilter.PageSize)
@@ -116,6 +117,7 @@ func TestOpsServiceCleanupSystemLogs_SuccessAndAudit(t *testing.T) {
 	}
 	if audit == nil {
 		t.Fatalf("expected cleanup audit")
+		return
 	}
 	if !strings.Contains(audit.Conditions, `"client_request_id":"creq-1"`) {
 		t.Fatalf("audit conditions should include client_request_id: %s", audit.Conditions)

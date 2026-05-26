@@ -135,6 +135,7 @@ func TestNewURLAvailability(t *testing.T) {
 	ua := NewURLAvailability(5 * time.Minute)
 	if ua == nil {
 		t.Fatal("NewURLAvailability 返回 nil")
+		return
 	}
 	if ua.ttl != 5*time.Minute {
 		t.Errorf("TTL 不匹配: got %v, want 5m", ua.ttl)
@@ -301,6 +302,7 @@ func TestNewSessionStore(t *testing.T) {
 
 	if store == nil {
 		t.Fatal("NewSessionStore 返回 nil")
+		return
 	}
 	if store.sessions == nil {
 		t.Error("sessions map 不应为 nil")
