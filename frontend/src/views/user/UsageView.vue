@@ -246,6 +246,7 @@
                     <span class="font-medium text-sky-600 dark:text-sky-400">{{
                       formatCacheTokens(row.cache_read_tokens)
                     }}</span>
+                    <span v-if="calcCacheHitRate(row) !== null" class="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">{{ calcCacheHitRate(row)!.toFixed(1) }}%</span>
                   </div>
                   <!-- Cache Write -->
                   <div v-if="row.cache_creation_tokens > 0" class="inline-flex items-center gap-1">
@@ -413,6 +414,10 @@
             <span class="text-gray-400">{{ t('usage.totalTokens') }}</span>
             <span class="font-semibold text-blue-400">{{ ((tokenTooltipData?.input_tokens || 0) + (tokenTooltipData?.output_tokens || 0) + (tokenTooltipData?.cache_creation_tokens || 0) + (tokenTooltipData?.cache_read_tokens || 0)).toLocaleString() }}</span>
           </div>
+          <div v-if="tokenTooltipData && calcCacheHitRate(tokenTooltipData) !== null" class="flex items-center justify-between gap-6">
+            <span class="text-gray-400">{{ t('usage.cacheHitRate') }}</span>
+            <span class="font-semibold text-emerald-400">{{ calcCacheHitRate(tokenTooltipData)!.toFixed(1) }}%</span>
+          </div>
         </div>
         <!-- Tooltip Arrow (left side) -->
         <div
@@ -554,7 +559,7 @@ import type { UsageLog, ApiKey, UsageQueryParams, UsageStatsResponse } from '@/t
 import type { Column } from '@/components/common/types'
 import { formatDateTime, formatReasoningEffort } from '@/utils/format'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
-import { formatCacheTokens, formatMultiplier } from '@/utils/formatters'
+import { formatCacheTokens, formatMultiplier, calcCacheHitRate } from '@/utils/formatters'
 import { formatTokenPricePerMillion } from '@/utils/usagePricing'
 import { getUsageServiceTierLabel } from '@/utils/usageServiceTier'
 import { resolveUsageRequestType } from '@/utils/usageRequestType'

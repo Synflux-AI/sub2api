@@ -1,4 +1,19 @@
 /**
+ * 计算缓存命中率（%）
+ * 公式：cache_read / (input + cache_read + cache_creation)
+ * Claude 和 OpenAI 都已在存库前将 input_tokens 排除缓存部分，公式统一。
+ */
+export function calcCacheHitRate(row: {
+  input_tokens: number
+  cache_read_tokens: number
+  cache_creation_tokens: number
+}): number | null {
+  const total = row.input_tokens + row.cache_read_tokens + row.cache_creation_tokens
+  if (total <= 0 || row.cache_read_tokens <= 0) return null
+  return (row.cache_read_tokens / total) * 100
+}
+
+/**
  * 格式化缓存 token 数量（1K/1M 缩写）
  */
 export function formatCacheTokens(tokens: number): string {
