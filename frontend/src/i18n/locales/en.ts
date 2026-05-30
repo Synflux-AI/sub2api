@@ -4027,6 +4027,8 @@ export default {
         accumulatedTokens: 'Accumulated Tokens',
         totalTokens: '30-Day Total',
         dailyAvgTokens: 'Daily Average',
+        cacheRead: 'Cache Read',
+        cacheCreation: 'Cache Created',
         performance: 'Performance',
         avgResponseTime: 'Avg Response',
         daysActive: 'Days Active',

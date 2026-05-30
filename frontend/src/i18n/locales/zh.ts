@@ -4153,6 +4153,8 @@ export default {
         accumulatedTokens: '累计 Token',
         totalTokens: '30天总计',
         dailyAvgTokens: '日均 Token',
+        cacheRead: '缓存读取',
+        cacheCreation: '缓存创建',
         performance: '性能',
         avgResponseTime: '平均响应',
         daysActive: '活跃天数',

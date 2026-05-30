@@ -316,6 +316,42 @@
                   formatTokens(Math.round(stats.summary.avg_daily_tokens))
                 }}</span>
               </div>
+              <!-- Cache breakdown (from model stats aggregation) -->
+              <template v-if="cacheStats.totalCacheRead > 0">
+                <div class="border-t border-gray-100 pt-2 dark:border-gray-700">
+                  <div class="flex items-center justify-between">
+                    <span class="text-xs text-gray-500 dark:text-gray-400">{{
+                      t('admin.accounts.stats.cacheRead')
+                    }}</span>
+                    <span class="text-sm font-semibold text-sky-600 dark:text-sky-400">{{
+                      formatTokens(cacheStats.totalCacheRead)
+                    }}</span>
+                  </div>
+                  <div v-if="cacheStats.totalCacheCreation > 0" class="flex items-center justify-between">
+                    <span class="text-xs text-gray-500 dark:text-gray-400">{{
+                      t('admin.accounts.stats.cacheCreation')
+                    }}</span>
+                    <span class="text-sm font-semibold text-amber-600 dark:text-amber-400">{{
+                      formatTokens(cacheStats.totalCacheCreation)
+                    }}</span>
+                  </div>
+                  <div class="flex items-center justify-between">
+                    <span class="text-xs font-medium text-gray-600 dark:text-gray-300">{{
+                      t('usage.cacheHitRate')
+                    }}</span>
+                    <span class="text-sm font-bold text-emerald-600 dark:text-emerald-400">{{
+                      cacheStats.hitRate.toFixed(1)
+                    }}%</span>
+                  </div>
+                  <!-- Visual hit rate bar -->
+                  <div class="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-gray-100 dark:bg-gray-700">
+                    <div
+                      class="h-full rounded-full bg-emerald-500 transition-all"
+                      :style="{ width: cacheStats.hitRate.toFixed(1) + '%' }"
+                    ></div>
+                  </div>
+                </div>
+              </template>
             </div>
           </div>
 
@@ -498,6 +534,25 @@ const stats = ref<AccountUsageStatsResponse | null>(null)
 // Dark mode detection
 const isDarkMode = computed(() => {
   return document.documentElement.classList.contains('dark')
+})
+
+// Aggregate cache stats from model-level data (no backend change needed)
+const cacheStats = computed(() => {
+  const models = stats.value?.models || []
+  let totalInput = 0
+  let totalCacheRead = 0
+  let totalCacheCreation = 0
+  for (const m of models) {
+    totalInput += m.input_tokens || 0
+    totalCacheRead += m.cache_read_tokens || 0
+    totalCacheCreation += m.cache_creation_tokens || 0
+  }
+  const total = totalInput + totalCacheRead + totalCacheCreation
+  return {
+    totalCacheRead,
+    totalCacheCreation,
+    hitRate: total > 0 && totalCacheRead > 0 ? (totalCacheRead / total) * 100 : 0
+  }
 })
 
 // Chart colors
