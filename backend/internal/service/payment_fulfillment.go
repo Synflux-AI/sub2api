@@ -315,23 +315,43 @@ func (s *PaymentService) markCompleted(ctx context.Context, o *dbent.PaymentOrde
 }
 
 func (s *PaymentService) dispatchPaymentFulfillmentNotification(o *dbent.PaymentOrder, auditAction string) {
-	if s == nil || s.notificationEmailService == nil || o == nil {
+	if s == nil || o == nil {
 		return
 	}
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), emailSendTimeout)
 		defer cancel()
-		var err error
-		switch auditAction {
-		case "RECHARGE_SUCCESS":
-			err = s.sendBalanceRechargeSuccessNotification(ctx, o)
-		case "SUBSCRIPTION_SUCCESS":
-			err = s.sendSubscriptionPurchaseSuccessNotification(ctx, o)
-		default:
-			return
+
+		if s.notificationEmailService != nil {
+			var err error
+			switch auditAction {
+			case "RECHARGE_SUCCESS":
+				err = s.sendBalanceRechargeSuccessNotification(ctx, o)
+			case "SUBSCRIPTION_SUCCESS":
+				err = s.sendSubscriptionPurchaseSuccessNotification(ctx, o)
+			}
+			if err != nil {
+				slog.Warn("payment fulfillment notification email failed", "order_id", o.ID, "action", auditAction, "err", err.Error())
+			}
 		}
-		if err != nil {
-			slog.Warn("payment fulfillment notification email failed", "order_id", o.ID, "action", auditAction, "err", err.Error())
+
+		if s.larkService != nil && s.opsService != nil {
+			larkCfg, cfgErr := s.opsService.GetLarkNotificationConfig(ctx)
+			if cfgErr == nil && larkCfg != nil && larkCfg.Enabled {
+				info := &PaymentOrderNotifyInfo{
+					OrderID:     o.ID,
+					UserEmail:   o.UserEmail,
+					UserName:    o.UserName,
+					OrderType:   o.OrderType,
+					Amount:      o.Amount,
+					PayAmount:   o.PayAmount,
+					PaymentType: o.PaymentType,
+					CompletedAt: time.Now(),
+				}
+				if err := s.larkService.SendPaymentOrderCard(ctx, larkCfg, info); err != nil {
+					slog.Warn("payment fulfillment lark notification failed", "order_id", o.ID, "action", auditAction, "err", err.Error())
+				}
+			}
 		}
 	}()
 }

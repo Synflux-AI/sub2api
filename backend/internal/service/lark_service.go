@@ -46,7 +46,28 @@ func NewLarkService() *LarkService {
 	}
 }
 
+// PaymentOrderNotifyInfo holds the data needed to build a payment order notification card.
+type PaymentOrderNotifyInfo struct {
+	OrderID     int64
+	UserEmail   string
+	UserName    string
+	OrderType   string // "balance" or "subscription"
+	Amount      float64
+	PayAmount   float64
+	PaymentType string
+	CompletedAt time.Time
+}
+
 // ========== Public send methods ==========
+
+// SendPaymentOrderCard sends a payment order completion notification as an interactive card.
+func (s *LarkService) SendPaymentOrderCard(ctx context.Context, cfg *OpsLarkNotificationConfig, order *PaymentOrderNotifyInfo) error {
+	if s == nil || cfg == nil || !cfg.Enabled || order == nil {
+		return nil
+	}
+	card := buildPaymentOrderCard(order)
+	return s.sendCard(ctx, cfg, card)
+}
 
 // SendAlertCard sends an ops alert as a Lark interactive card.
 func (s *LarkService) SendAlertCard(ctx context.Context, cfg *OpsLarkNotificationConfig, rule *OpsAlertRule, event *OpsAlertEvent) error {
@@ -416,6 +437,71 @@ func buildAccountAnomalyCard(accountName, platform, status, reason string) map[s
 				"tag": "note",
 				"elements": []any{
 					map[string]any{"tag": "plain_text", "content": "sub2api account monitor"},
+				},
+			},
+		},
+	}
+}
+
+func buildPaymentOrderCard(o *PaymentOrderNotifyInfo) map[string]any {
+	orderTypeLabel := "Balance Recharge"
+	if o.OrderType == "subscription" {
+		orderTypeLabel = "Subscription Purchase"
+	}
+	displayName := o.UserName
+	if displayName == "" {
+		displayName = o.UserEmail
+	}
+	completedAt := o.CompletedAt.UTC().Format("2006-01-02 15:04:05 UTC")
+
+	return map[string]any{
+		"config": map[string]any{"wide_screen_mode": true},
+		"header": map[string]any{
+			"title":    map[string]any{"tag": "plain_text", "content": fmt.Sprintf("[Payment] %s", orderTypeLabel)},
+			"template": "green",
+		},
+		"elements": []any{
+			map[string]any{
+				"tag": "div",
+				"fields": []any{
+					map[string]any{
+						"is_short": true,
+						"text":     map[string]any{"tag": "lark_md", "content": fmt.Sprintf("**Order ID**\n%d", o.OrderID)},
+					},
+					map[string]any{
+						"is_short": true,
+						"text":     map[string]any{"tag": "lark_md", "content": fmt.Sprintf("**Type**\n%s", orderTypeLabel)},
+					},
+					map[string]any{
+						"is_short": true,
+						"text":     map[string]any{"tag": "lark_md", "content": fmt.Sprintf("**User**\n%s", displayName)},
+					},
+					map[string]any{
+						"is_short": true,
+						"text":     map[string]any{"tag": "lark_md", "content": fmt.Sprintf("**Payment**\n%s", o.PaymentType)},
+					},
+					map[string]any{
+						"is_short": true,
+						"text":     map[string]any{"tag": "lark_md", "content": fmt.Sprintf("**Amount**\n%.2f", o.Amount)},
+					},
+					map[string]any{
+						"is_short": true,
+						"text":     map[string]any{"tag": "lark_md", "content": fmt.Sprintf("**Paid**\n%.2f", o.PayAmount)},
+					},
+				},
+			},
+			map[string]any{
+				"tag": "div",
+				"text": map[string]any{
+					"tag":     "lark_md",
+					"content": fmt.Sprintf("**Completed At**\n%s", completedAt),
+				},
+			},
+			map[string]any{"tag": "hr"},
+			map[string]any{
+				"tag": "note",
+				"elements": []any{
+					map[string]any{"tag": "plain_text", "content": "sub2api payment notify"},
 				},
 			},
 		},
