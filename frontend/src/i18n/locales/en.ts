@@ -849,7 +849,6 @@ export default {
     description: 'View and analyze your API usage history',
     costDetails: 'Cost Breakdown',
     tokenDetails: 'Token Breakdown',
-    cacheHitRate: 'Cache Hit Rate',
     cacheTtlOverriddenHint: 'Cache TTL Override enabled',
     cacheTtlOverriddenLabel: 'TTL Override',
     cacheTtlOverridden5m: 'Billed as 5m',
