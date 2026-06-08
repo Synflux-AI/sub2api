@@ -28,10 +28,12 @@ type Account struct {
 	CustomHeadersEnabled bool
 	// CustomHeaders 自定义出站请求头键值对，仅当 CustomHeadersEnabled=true 时合并到上游请求中。
 	// 受保护的 header（Host / Content-Length / hop-by-hop）会在合并时被过滤。
-	CustomHeaders map[string]string
-	ProxyID       *int64
-	Concurrency   int
-	Priority      int
+	CustomHeaders           map[string]string
+	ProxyID                 *int64
+	ProxyFallbackOriginID   *int64
+	ProxyFallbackOriginName *string // 仅展示用
+	Concurrency             int
+	Priority                int
 	// RateMultiplier 账号计费倍率（>=0，允许 0 表示该账号计费为 0）。
 	// 使用指针用于兼容旧版本调度缓存（Redis）中缺字段的情况：nil 表示按 1.0 处理。
 	RateMultiplier     *float64
