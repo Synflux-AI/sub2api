@@ -984,6 +984,7 @@ export default {
       time: '时间', model: '模型', endpoint: '端点', status: '状态码',
       category: '分类', platform: '平台', message: '错误信息',
       keyName: 'Key 名称', keyDeleted: '已删除', allKeys: '全部 Key',
+      clientIp: '客户端 IP', userAgent: 'User-Agent',
       modelPlaceholder: '搜索模型', allCategories: '全部分类',
       empty: '暂无错误请求', failedToLoad: '加载错误请求失败',
       categories: {
@@ -995,6 +996,8 @@ export default {
         title: '错误请求详情',
         responseBody: '上游响应内容',
         upstreamStatus: '上游状态码',
+        clientIp: '客户端 IP',
+        userAgent: 'User-Agent',
         loadFailed: '加载详情失败，请稍后重试',
       },
     },
@@ -5033,6 +5036,8 @@ export default {
         status: '状态码',
         message: '响应内容',
         latency: '请求时长',
+        clientIp: '客户端 IP',
+        userAgent: 'User-Agent',
         action: '操作',
         noErrors: '该窗口内暂无错误。',
         grp: 'GRP：',
@@ -5160,7 +5165,9 @@ export default {
         apiKeyPrefix: 'Key 前缀',
         attemptedKeyPrefix: '尝试的 Key 前缀',
         deletedKeyOwner: '已删除 Key 所有者',
-        keyDeletedBadge: 'Key 已删除'
+        keyDeletedBadge: 'Key 已删除',
+        clientIp: '客户端 IP',
+        userAgent: 'User-Agent'
       },
       requestDetails: {
         title: '请求明细',

@@ -48,6 +48,8 @@
             <th class="px-4 py-2 text-left">{{ t('usage.errors.endpoint') }}</th>
             <th class="px-4 py-2 text-left">{{ t('usage.errors.status') }}</th>
             <th class="px-4 py-2 text-left">{{ t('usage.errors.category') }}</th>
+            <th class="px-4 py-2 text-left">{{ t('usage.errors.clientIp') }}</th>
+            <th class="px-4 py-2 text-left">{{ t('usage.errors.userAgent') }}</th>
             <th class="px-4 py-2 text-left">{{ t('usage.errors.message') }}</th>
             <th class="px-4 py-2 text-left">{{ t('usage.errors.platform') }}</th>
             <th class="px-4 py-2 text-left">{{ t('usage.errors.time') }}</th>
@@ -71,12 +73,14 @@
             <td class="px-4 py-2">{{ row.inbound_endpoint || '-' }}</td>
             <td class="px-4 py-2"><span class="badge" :class="statusClass(row.status_code)">{{ row.status_code || '-' }}</span></td>
             <td class="px-4 py-2">{{ t('usage.errors.categories.' + row.category) }}</td>
+            <td class="whitespace-nowrap px-4 py-2 font-mono text-xs">{{ row.client_ip || '-' }}</td>
+            <td class="px-4 py-2 max-w-[200px] truncate font-mono text-xs" :title="row.user_agent">{{ row.user_agent || '-' }}</td>
             <td class="px-4 py-2 max-w-[280px] truncate" :title="row.message">{{ row.message || '-' }}</td>
             <td class="px-4 py-2">{{ row.platform || '-' }}</td>
             <td class="px-4 py-2">{{ formatDateTime(row.created_at) }}</td>
           </tr>
           <tr v-if="!loading && rows.length === 0">
-            <td colspan="8" class="px-4 py-8 text-center text-gray-400">{{ t('usage.errors.empty') }}</td>
+            <td colspan="10" class="px-4 py-8 text-center text-gray-400">{{ t('usage.errors.empty') }}</td>
           </tr>
         </tbody>
       </table>

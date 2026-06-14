@@ -980,6 +980,7 @@ export default {
       time: 'Time', model: 'Model', endpoint: 'Endpoint', status: 'Status',
       category: 'Category', platform: 'Platform', message: 'Message',
       keyName: 'Key Name', keyDeleted: 'Deleted', allKeys: 'All keys',
+      clientIp: 'Client IP', userAgent: 'User-Agent',
       modelPlaceholder: 'Search model', allCategories: 'All categories',
       empty: 'No error requests', failedToLoad: 'Failed to load error requests',
       categories: {
@@ -991,6 +992,8 @@ export default {
         title: 'Error Request Detail',
         responseBody: 'Response Body',
         upstreamStatus: 'Upstream Status',
+        clientIp: 'Client IP',
+        userAgent: 'User-Agent',
         loadFailed: 'Failed to load detail, please try again',
       },
     },
@@ -4874,6 +4877,8 @@ export default {
         message: 'Message',
         latency: 'Request Duration',
         action: 'Action',
+        clientIp: 'Client IP',
+        userAgent: 'User-Agent',
         noErrors: 'No errors in this window.',
         grp: 'GRP:',
         acc: 'ACC:',
@@ -5000,7 +5005,9 @@ export default {
         apiKeyPrefix: 'Key Prefix',
         attemptedKeyPrefix: 'Attempted Key Prefix',
         deletedKeyOwner: 'Deleted Key Owner',
-        keyDeletedBadge: 'Key Deleted'
+        keyDeletedBadge: 'Key Deleted',
+        clientIp: 'Client IP',
+        userAgent: 'User-Agent'
       },
       requestDetails: {
         title: 'Request Details',

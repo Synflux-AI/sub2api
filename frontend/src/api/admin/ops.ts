@@ -932,6 +932,7 @@ export interface OpsErrorLog {
   group_name: string
 
   client_ip?: string | null
+  user_agent?: string
   request_path?: string
   stream?: boolean
 
@@ -945,7 +946,6 @@ export interface OpsErrorLog {
 
 export interface OpsErrorDetail extends OpsErrorLog {
   error_body: string
-  user_agent: string
 
   // Upstream context (optional; enriched by gateway services)
   upstream_status_code?: number | null

@@ -241,6 +241,7 @@ SELECT
   COALESCE(e.requested_model, ''),
   COALESCE(e.upstream_model, ''),
   e.request_type,
+  COALESCE(e.user_agent, ''),
   COALESCE(ak.name, ''),
   ak.deleted_at,
   COALESCE(e.deleted_key_name, '')
@@ -312,6 +313,7 @@ LIMIT $` + itoa(len(args)+1) + ` OFFSET $` + itoa(len(args)+2)
 			&item.RequestedModel,
 			&item.UpstreamModel,
 			&requestType,
+			&item.UserAgent,
 			&apiKeyName,
 			&apiKeyDeletedAt,
 			&deletedKeyName,

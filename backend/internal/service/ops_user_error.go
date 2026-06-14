@@ -3,9 +3,8 @@ package service
 import "time"
 
 // UserErrorRequest 是面向终端用户的"错误请求"精简脱敏视图（白名单）。
-// 严禁包含 client_ip / user_agent / account / api_key_prefix / upstream_endpoint /
-// user_email 等敏感或内部字段。注：message（网关标准化错误描述）与 key_name
-// （用户自有 API Key 名称，KeysView 中本就可见）经产品决策对该用户开放；
+// 注：message（网关标准化错误描述）与 key_name（用户自有 API Key 名称）经产品决策对该用户开放；
+// client_ip / user_agent 供用户定位自身请求来源；
 // error_body 仅在详情接口（GetUserErrorRequestDetail）按归属校验后返回。
 type UserErrorRequest struct {
 	ID              int64     `json:"id"`
@@ -16,8 +15,10 @@ type UserErrorRequest struct {
 	Category        string    `json:"category"`
 	Platform        string    `json:"platform"`
 	Message         string    `json:"message"`
-	KeyName         string    `json:"key_name"`
-	KeyDeleted      bool      `json:"key_deleted"`
+	KeyName    string  `json:"key_name"`
+	KeyDeleted bool    `json:"key_deleted"`
+	ClientIP   *string `json:"client_ip,omitempty"`
+	UserAgent  string  `json:"user_agent,omitempty"`
 }
 
 // UserErrorRequestList 是用户错误请求分页结果。
@@ -95,14 +96,15 @@ func ToUserErrorRequest(e *OpsErrorLog) *UserErrorRequest {
 		Category:        MapUserErrorCategory(e.Phase, e.Type),
 		Platform:        e.Platform,
 		Message:         e.Message,
-		KeyName:         e.APIKeyName,
-		KeyDeleted:      e.APIKeyDeleted,
+		KeyName:    e.APIKeyName,
+		KeyDeleted: e.APIKeyDeleted,
+		ClientIP:   e.ClientIP,
+		UserAgent:  e.UserAgent,
 	}
 }
 
 // UserErrorRequestDetail 是错误请求详情的脱敏视图(点击单行查看)。
-// 在 UserErrorRequest 基础上额外暴露 error_body(上游错误响应正文)与 upstream_status_code;
-// 仍严禁任何内部/敏感字段。
+// 在 UserErrorRequest 基础上额外暴露 error_body、upstream_status_code 与 user_agent。
 type UserErrorRequestDetail struct {
 	UserErrorRequest
 	ErrorBody          string `json:"error_body"`

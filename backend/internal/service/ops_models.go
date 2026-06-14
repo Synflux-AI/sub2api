@@ -56,6 +56,7 @@ type OpsErrorLog struct {
 	GroupName   string `json:"group_name"`
 
 	ClientIP    *string `json:"client_ip"`
+	UserAgent   string  `json:"user_agent,omitempty"`
 	RequestPath string  `json:"request_path"`
 	Stream      bool    `json:"stream"`
 

@@ -1635,11 +1635,14 @@ export interface UserErrorRequest {
   message: string
   key_name: string
   key_deleted: boolean
+  client_ip?: string | null
+  user_agent?: string
 }
 
 export interface UserErrorRequestDetail extends UserErrorRequest {
   error_body: string
   upstream_status_code?: number
+  user_agent?: string
 }
 
 export interface UserErrorListParams {

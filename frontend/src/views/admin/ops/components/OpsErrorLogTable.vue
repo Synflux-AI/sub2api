@@ -42,6 +42,12 @@
                 {{ t('admin.ops.errorLog.status') }}
               </th>
               <th class="border-b border-gray-200 px-4 py-2.5 text-left text-[11px] font-bold uppercase tracking-wider text-gray-500 dark:border-dark-700 dark:text-dark-400">
+                {{ t('admin.ops.errorLog.clientIp') }}
+              </th>
+              <th class="border-b border-gray-200 px-4 py-2.5 text-left text-[11px] font-bold uppercase tracking-wider text-gray-500 dark:border-dark-700 dark:text-dark-400">
+                {{ t('admin.ops.errorLog.userAgent') }}
+              </th>
+              <th class="border-b border-gray-200 px-4 py-2.5 text-left text-[11px] font-bold uppercase tracking-wider text-gray-500 dark:border-dark-700 dark:text-dark-400">
                 {{ t('admin.ops.errorLog.message') }}
               </th>
               <th class="border-b border-gray-200 px-4 py-2.5 text-right text-[11px] font-bold uppercase tracking-wider text-gray-500 dark:border-dark-700 dark:text-dark-400">
@@ -51,7 +57,7 @@
           </thead>
           <tbody class="divide-y divide-gray-100 dark:divide-dark-700">
             <tr v-if="rows.length === 0">
-              <td colspan="12" class="py-12 text-center text-sm text-gray-400 dark:text-dark-500">
+              <td colspan="14" class="py-12 text-center text-sm text-gray-400 dark:text-dark-500">
                 {{ t('admin.ops.errorLog.noErrors') }}
               </td>
             </tr>
@@ -192,6 +198,21 @@
                   >
                     {{ formatRequestType(log.request_type) }}
                   </span>
+                </div>
+              </td>
+
+              <!-- Client IP -->
+              <td class="whitespace-nowrap px-4 py-2">
+                <span class="font-mono text-xs text-gray-700 dark:text-gray-300">{{ log.client_ip || '-' }}</span>
+              </td>
+
+              <!-- User-Agent -->
+              <td class="px-4 py-2">
+                <div class="max-w-[200px]">
+                  <el-tooltip v-if="log.user_agent" :content="log.user_agent" placement="top" :show-after="300">
+                    <span class="truncate font-mono text-[11px] text-gray-600 dark:text-gray-400">{{ log.user_agent }}</span>
+                  </el-tooltip>
+                  <span v-else class="text-xs text-gray-400">-</span>
                 </div>
               </td>
 

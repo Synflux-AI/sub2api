@@ -53,6 +53,17 @@
           <span class="font-medium text-gray-500 dark:text-dark-400">{{ t('usage.errors.detail.upstreamStatus') }}</span>
           <p class="mt-0.5 text-gray-900 dark:text-dark-100">{{ detail.upstream_status_code }}</p>
         </div>
+        <!-- Client IP -->
+        <div v-if="detail.client_ip">
+          <span class="font-medium text-gray-500 dark:text-dark-400">{{ t('usage.errors.detail.clientIp') }}</span>
+          <p class="mt-0.5 font-mono text-gray-900 dark:text-dark-100">{{ detail.client_ip }}</p>
+        </div>
+      </div>
+
+      <!-- User-Agent -->
+      <div v-if="detail.user_agent">
+        <span class="font-medium text-gray-500 dark:text-dark-400">{{ t('usage.errors.detail.userAgent') }}</span>
+        <p class="mt-0.5 break-all font-mono text-xs text-gray-900 dark:text-dark-100">{{ detail.user_agent }}</p>
       </div>
 
       <!-- Message -->
