@@ -121,10 +121,10 @@ func TestToUserErrorRequestDetail_WhitelistAndRedacts(t *testing.T) {
 			UserID:           &uid,
 			UserEmail:        "secret@example.com",
 			ClientIP:         func() *string { s := "1.2.3.4"; return &s }(),
+			UserAgent:        "Mozilla/5.0 secret-agent",
 			UpstreamEndpoint: "https://api.openai.com/v1/chat/completions",
 		},
 		ErrorBody:          `{"error":{"message":"upstream failed","type":"server_error"}}`,
-		UserAgent:          "Mozilla/5.0 secret-agent",
 		UpstreamStatusCode: &upstreamStatus,
 	}
 
@@ -147,13 +147,21 @@ func TestToUserErrorRequestDetail_WhitelistAndRedacts(t *testing.T) {
 		t.Errorf("UpstreamStatusCode mismatch")
 	}
 
-	// 序列化后不含敏感字段
+	// client_ip 和 user_agent 现已对用户开放，验证正常返回
+	if out.ClientIP == nil || *out.ClientIP != "1.2.3.4" {
+		t.Errorf("want client_ip=1.2.3.4, got %v", out.ClientIP)
+	}
+	if out.UserAgent != "Mozilla/5.0 secret-agent" {
+		t.Errorf("want user_agent=%q, got %q", "Mozilla/5.0 secret-agent", out.UserAgent)
+	}
+
+	// 序列化后不含真正敏感字段（user_email、upstream_endpoint 仍受限）
 	b, err := json.Marshal(out)
 	if err != nil {
 		t.Fatalf("json.Marshal failed: %v", err)
 	}
 	raw := string(b)
-	for _, forbidden := range []string{"user_email", "client_ip", "upstream_endpoint", "user_agent"} {
+	for _, forbidden := range []string{"user_email", "upstream_endpoint"} {
 		if strings.Contains(raw, forbidden) {
 			t.Errorf("sensitive field %q leaked in JSON output: %s", forbidden, raw)
 		}
