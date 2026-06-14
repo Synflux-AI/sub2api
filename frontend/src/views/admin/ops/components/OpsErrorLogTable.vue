@@ -207,13 +207,11 @@
               </td>
 
               <!-- User-Agent -->
-              <td class="px-4 py-2">
-                <div class="max-w-[200px]">
-                  <el-tooltip v-if="log.user_agent" :content="log.user_agent" placement="top" :show-after="300">
-                    <span class="truncate font-mono text-[11px] text-gray-600 dark:text-gray-400">{{ log.user_agent }}</span>
-                  </el-tooltip>
-                  <span v-else class="text-xs text-gray-400">-</span>
-                </div>
+              <td class="px-4 py-2 max-w-[200px]">
+                <el-tooltip v-if="log.user_agent" :content="log.user_agent" placement="top" :show-after="300">
+                  <span class="block truncate font-mono text-[11px] text-gray-600 dark:text-gray-400">{{ log.user_agent }}</span>
+                </el-tooltip>
+                <span v-else class="text-xs text-gray-400">-</span>
               </td>
 
               <!-- Message (Response Content) -->

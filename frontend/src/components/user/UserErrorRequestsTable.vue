@@ -74,7 +74,7 @@
             <td class="px-4 py-2"><span class="badge" :class="statusClass(row.status_code)">{{ row.status_code || '-' }}</span></td>
             <td class="px-4 py-2">{{ t('usage.errors.categories.' + row.category) }}</td>
             <td class="whitespace-nowrap px-4 py-2 font-mono text-xs">{{ row.client_ip || '-' }}</td>
-            <td class="px-4 py-2 max-w-[200px] truncate font-mono text-xs" :title="row.user_agent">{{ row.user_agent || '-' }}</td>
+            <td class="px-4 py-2 max-w-[200px]"><span class="block truncate font-mono text-xs" :title="row.user_agent">{{ row.user_agent || '-' }}</span></td>
             <td class="px-4 py-2 max-w-[280px] truncate" :title="row.message">{{ row.message || '-' }}</td>
             <td class="px-4 py-2">{{ row.platform || '-' }}</td>
             <td class="px-4 py-2">{{ formatDateTime(row.created_at) }}</td>
