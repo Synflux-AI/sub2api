@@ -1401,6 +1401,44 @@ func (s *UsageLogRepoSuite) TestGetUsageTrendWithFilters_HourlyGranularity() {
 	s.Require().Len(trend, 2)
 }
 
+func (s *UsageLogRepoSuite) TestGetUsageTrendByModelWithFilters() {
+	user := mustCreateUser(s.T(), s.client, &service.User{Email: "trendbymodel@test.com"})
+	apiKey := mustCreateApiKey(s.T(), s.client, &service.APIKey{UserID: user.ID, Key: "sk-trendbymodel", Name: "k"})
+	account := mustCreateAccount(s.T(), s.client, &service.Account{Name: "acc-trendbymodel"})
+
+	base := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
+	// 同一天两个模型 + 次日一个模型 => 期望 3 行 (date×model)
+	mk := func(model string, in, out int, cost float64, at time.Time) {
+		_, err := s.repo.Create(s.ctx, &service.UsageLog{
+			UserID: user.ID, APIKeyID: apiKey.ID, AccountID: account.ID,
+			Model: model, InputTokens: in, OutputTokens: out, TotalCost: cost, ActualCost: cost, CreatedAt: at,
+		})
+		s.Require().NoError(err)
+	}
+	mk("claude-3-opus", 10, 20, 0.5, base)
+	mk("gpt-4o", 5, 10, 0.2, base.Add(1*time.Hour))
+	mk("claude-3-opus", 15, 25, 0.6, base.Add(24*time.Hour))
+
+	startTime := base.Add(-1 * time.Hour)
+	endTime := base.Add(48 * time.Hour)
+
+	rows, err := s.repo.GetUsageTrendByModelWithFilters(s.ctx, startTime, endTime, "day", user.ID, 0, 0, 0, "", nil, nil, nil)
+	s.Require().NoError(err, "GetUsageTrendByModelWithFilters user filter")
+	s.Require().Len(rows, 3)
+	for _, r := range rows {
+		s.Require().NotEmpty(r.Model)
+		s.Require().NotEmpty(r.Date)
+	}
+
+	// 模型过滤后只剩该模型的两天
+	rows, err = s.repo.GetUsageTrendByModelWithFilters(s.ctx, startTime, endTime, "day", user.ID, 0, 0, 0, "claude-3-opus", nil, nil, nil)
+	s.Require().NoError(err, "GetUsageTrendByModelWithFilters model filter")
+	s.Require().Len(rows, 2)
+	for _, r := range rows {
+		s.Require().Equal("claude-3-opus", r.Model)
+	}
+}
+
 // --- GetModelStatsWithFilters ---
 
 func (s *UsageLogRepoSuite) TestGetModelStatsWithFilters() {

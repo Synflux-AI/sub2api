@@ -2349,6 +2349,10 @@ func (r *stubUsageLogRepo) GetUsageTrendWithFilters(ctx context.Context, startTi
 	return nil, errors.New("not implemented")
 }
 
+func (r *stubUsageLogRepo) GetUsageTrendByModelWithFilters(ctx context.Context, startTime, endTime time.Time, granularity string, userID, apiKeyID, accountID, groupID int64, model string, requestType *int16, stream *bool, billingType *int8) ([]usagestats.TrendModelDataPoint, error) {
+	return nil, errors.New("not implemented")
+}
+
 func (r *stubUsageLogRepo) GetModelStatsWithFilters(ctx context.Context, startTime, endTime time.Time, userID, apiKeyID, accountID, groupID int64, requestType *int16, stream *bool, billingType *int8) ([]usagestats.ModelStat, error) {
 	return nil, errors.New("not implemented")
 }

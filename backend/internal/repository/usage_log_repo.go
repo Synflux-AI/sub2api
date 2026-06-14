@@ -2239,6 +2239,9 @@ func (r *usageLogRepository) GetGeminiUsageTotalsBatch(ctx context.Context, acco
 // TrendDataPoint represents a single point in trend data
 type TrendDataPoint = usagestats.TrendDataPoint
 
+// TrendModelDataPoint represents a trend point broken down by model
+type TrendModelDataPoint = usagestats.TrendModelDataPoint
+
 // ModelStat represents usage statistics for a single model
 type ModelStat = usagestats.ModelStat
 
@@ -3081,6 +3084,74 @@ func (r *usageLogRepository) GetUsageTrendWithFilters(ctx context.Context, start
 	}()
 
 	results, err = scanTrendRows(rows)
+	if err != nil {
+		return nil, err
+	}
+	return results, nil
+}
+
+// GetUsageTrendByModelWithFilters returns trend data broken down by model
+// (one row per date+model). It mirrors GetUsageTrendWithFilters' filtering but
+// adds the model dimension; the pre-aggregated fast path is skipped because the
+// aggregate tables have no per-model granularity.
+func (r *usageLogRepository) GetUsageTrendByModelWithFilters(ctx context.Context, startTime, endTime time.Time, granularity string, userID, apiKeyID, accountID, groupID int64, model string, requestType *int16, stream *bool, billingType *int8) (results []TrendModelDataPoint, err error) {
+	dateFormat := safeDateFormat(granularity)
+
+	query := fmt.Sprintf(`
+		SELECT
+			TO_CHAR(created_at, '%s') as date,
+			model,
+			COUNT(*) as requests,
+			COALESCE(SUM(input_tokens), 0) as input_tokens,
+			COALESCE(SUM(output_tokens), 0) as output_tokens,
+			COALESCE(SUM(cache_creation_tokens), 0) as cache_creation_tokens,
+			COALESCE(SUM(cache_read_tokens), 0) as cache_read_tokens,
+			COALESCE(SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens), 0) as total_tokens,
+			COALESCE(SUM(total_cost), 0) as cost,
+			COALESCE(SUM(actual_cost), 0) as actual_cost
+		FROM usage_logs
+		WHERE created_at >= $1 AND created_at < $2
+	`, dateFormat)
+
+	args := []any{startTime, endTime}
+	if userID > 0 {
+		query += fmt.Sprintf(" AND user_id = $%d", len(args)+1)
+		args = append(args, userID)
+	}
+	if apiKeyID > 0 {
+		query += fmt.Sprintf(" AND api_key_id = $%d", len(args)+1)
+		args = append(args, apiKeyID)
+	}
+	if accountID > 0 {
+		query += fmt.Sprintf(" AND account_id = $%d", len(args)+1)
+		args = append(args, accountID)
+	}
+	if groupID > 0 {
+		query += fmt.Sprintf(" AND group_id = $%d", len(args)+1)
+		args = append(args, groupID)
+	}
+	query, args = appendRawUsageLogModelQueryFilter(query, args, model)
+	query, args = appendRequestTypeOrStreamQueryFilter(query, args, requestType, stream)
+	if billingType != nil {
+		query += fmt.Sprintf(" AND billing_type = $%d", len(args)+1)
+		args = append(args, int16(*billingType))
+	}
+	query += " GROUP BY date, model ORDER BY date ASC, model ASC"
+
+	rows, err := r.sql.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		// 保持主错误优先；仅在无错误时回传 Close 失败。
+		// 同时清空返回值，避免误用不完整结果。
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = closeErr
+			results = nil
+		}
+	}()
+
+	results, err = scanTrendModelRows(rows)
 	if err != nil {
 		return nil, err
 	}
@@ -4472,6 +4543,32 @@ func scanTrendRows(rows *sql.Rows) ([]TrendDataPoint, error) {
 		var row TrendDataPoint
 		if err := rows.Scan(
 			&row.Date,
+			&row.Requests,
+			&row.InputTokens,
+			&row.OutputTokens,
+			&row.CacheCreationTokens,
+			&row.CacheReadTokens,
+			&row.TotalTokens,
+			&row.Cost,
+			&row.ActualCost,
+		); err != nil {
+			return nil, err
+		}
+		results = append(results, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return results, nil
+}
+
+func scanTrendModelRows(rows *sql.Rows) ([]TrendModelDataPoint, error) {
+	results := make([]TrendModelDataPoint, 0)
+	for rows.Next() {
+		var row TrendModelDataPoint
+		if err := rows.Scan(
+			&row.Date,
+			&row.Model,
 			&row.Requests,
 			&row.InputTokens,
 			&row.OutputTokens,

@@ -316,6 +316,24 @@ func (s *UsageService) GetUserUsageTrendByUserID(ctx context.Context, userID int
 	return trend, nil
 }
 
+// GetUserUsageTrendByModelByUserID returns per-user usage trend broken down by model.
+func (s *UsageService) GetUserUsageTrendByModelByUserID(ctx context.Context, userID int64, startTime, endTime time.Time, granularity string) ([]usagestats.TrendModelDataPoint, error) {
+	trend, err := s.usageRepo.GetUsageTrendByModelWithFilters(ctx, startTime, endTime, granularity, userID, 0, 0, 0, "", nil, nil, nil)
+	if err != nil {
+		return nil, fmt.Errorf("get user usage trend by model: %w", err)
+	}
+	return trend, nil
+}
+
+// GetAPIKeyUsageTrendByModel returns a user's API key daily usage trend broken down by model.
+func (s *UsageService) GetAPIKeyUsageTrendByModel(ctx context.Context, userID, apiKeyID int64, startTime, endTime time.Time, granularity string) ([]usagestats.TrendModelDataPoint, error) {
+	trend, err := s.usageRepo.GetUsageTrendByModelWithFilters(ctx, startTime, endTime, granularity, userID, apiKeyID, 0, 0, "", nil, nil, nil)
+	if err != nil {
+		return nil, fmt.Errorf("get api key usage trend by model: %w", err)
+	}
+	return trend, nil
+}
+
 // GetUserModelStats returns per-user model usage stats.
 func (s *UsageService) GetUserModelStats(ctx context.Context, userID int64, startTime, endTime time.Time) ([]usagestats.ModelStat, error) {
 	stats, err := s.usageRepo.GetUserModelStats(ctx, userID, startTime, endTime)
@@ -335,8 +353,8 @@ func (s *UsageService) GetAPIKeyModelStats(ctx context.Context, apiKeyID int64, 
 }
 
 // GetAPIKeyDailyUsage returns daily usage stats for a user's API key.
-func (s *UsageService) GetAPIKeyDailyUsage(ctx context.Context, userID, apiKeyID int64, startTime, endTime time.Time) ([]usagestats.APIKeyDailyUsagePoint, error) {
-	trend, err := s.usageRepo.GetUsageTrendWithFilters(ctx, startTime, endTime, "day", userID, apiKeyID, 0, 0, "", nil, nil, nil)
+func (s *UsageService) GetAPIKeyDailyUsage(ctx context.Context, userID, apiKeyID int64, startTime, endTime time.Time, granularity string) ([]usagestats.APIKeyDailyUsagePoint, error) {
+	trend, err := s.usageRepo.GetUsageTrendWithFilters(ctx, startTime, endTime, granularity, userID, apiKeyID, 0, 0, "", nil, nil, nil)
 	if err != nil {
 		return nil, fmt.Errorf("get api key daily usage: %w", err)
 	}

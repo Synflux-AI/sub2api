@@ -92,6 +92,21 @@ type TrendDataPoint struct {
 	ActualCost          float64 `json:"actual_cost"` // 实际扣除
 }
 
+// TrendModelDataPoint represents a single trend point broken down by model.
+// It is a TrendDataPoint with an extra Model dimension (one row per date+model).
+type TrendModelDataPoint struct {
+	Date                string  `json:"date"`
+	Model               string  `json:"model"`
+	Requests            int64   `json:"requests"`
+	InputTokens         int64   `json:"input_tokens"`
+	OutputTokens        int64   `json:"output_tokens"`
+	CacheCreationTokens int64   `json:"cache_creation_tokens"`
+	CacheReadTokens     int64   `json:"cache_read_tokens"`
+	TotalTokens         int64   `json:"total_tokens"`
+	Cost                float64 `json:"cost"`        // 标准计费
+	ActualCost          float64 `json:"actual_cost"` // 实际扣除
+}
+
 // ModelStat represents usage statistics for a single model
 type ModelStat struct {
 	Model               string  `json:"model"`

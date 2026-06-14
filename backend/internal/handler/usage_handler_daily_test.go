@@ -17,14 +17,16 @@ import (
 
 type dailyUsageRepoStub struct {
 	service.UsageLogRepository
-	trend []usagestats.TrendDataPoint
+	trend        []usagestats.TrendDataPoint
+	trendByModel []usagestats.TrendModelDataPoint
 
-	called      bool
-	startTime   time.Time
-	endTime     time.Time
-	granularity string
-	userID      int64
-	apiKeyID    int64
+	called        bool
+	byModelCalled bool
+	startTime     time.Time
+	endTime       time.Time
+	granularity   string
+	userID        int64
+	apiKeyID      int64
 }
 
 func (s *dailyUsageRepoStub) GetUsageTrendWithFilters(
@@ -44,6 +46,25 @@ func (s *dailyUsageRepoStub) GetUsageTrendWithFilters(
 	s.userID = userID
 	s.apiKeyID = apiKeyID
 	return s.trend, nil
+}
+
+func (s *dailyUsageRepoStub) GetUsageTrendByModelWithFilters(
+	ctx context.Context,
+	startTime, endTime time.Time,
+	granularity string,
+	userID, apiKeyID, accountID, groupID int64,
+	model string,
+	requestType *int16,
+	stream *bool,
+	billingType *int8,
+) ([]usagestats.TrendModelDataPoint, error) {
+	s.byModelCalled = true
+	s.startTime = startTime
+	s.endTime = endTime
+	s.granularity = granularity
+	s.userID = userID
+	s.apiKeyID = apiKeyID
+	return s.trendByModel, nil
 }
 
 type dailyUsageAPIKeyRepoStub struct {
@@ -79,6 +100,14 @@ type dailyUsageHandlerResponse struct {
 	Data struct {
 		Items []usagestats.APIKeyDailyUsagePoint `json:"items"`
 		Days  int                                `json:"days"`
+	} `json:"data"`
+}
+
+type dailyUsageByModelHandlerResponse struct {
+	Code int `json:"code"`
+	Data struct {
+		Items []usagestats.TrendModelDataPoint `json:"items"`
+		Days  int                              `json:"days"`
 	} `json:"data"`
 }
 
@@ -141,6 +170,38 @@ func TestGetMyAPIKeyDailyUsageReturnsEmptyData(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
 	require.Equal(t, 30, got.Data.Days)
 	require.Empty(t, got.Data.Items)
+}
+
+func TestGetMyAPIKeyDailyUsageGroupByModel(t *testing.T) {
+	usageRepo := &dailyUsageRepoStub{
+		trendByModel: []usagestats.TrendModelDataPoint{
+			{Date: "2026-05-19", Model: "claude-3-opus", Requests: 2, TotalTokens: 30, ActualCost: 0.4},
+			{Date: "2026-05-19", Model: "gpt-4o", Requests: 1, TotalTokens: 10, ActualCost: 0.1},
+		},
+	}
+	apiKeyRepo := &dailyUsageAPIKeyRepoStub{
+		keys: map[int64]*service.APIKey{
+			7: {ID: 7, UserID: 42, Status: service.StatusAPIKeyActive},
+		},
+	}
+	router := newDailyUsageTestRouter(usageRepo, apiKeyRepo, 42)
+
+	req := httptest.NewRequest(http.MethodGet, "/user/api-keys/7/usage/daily?days=7&group_by=model", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.True(t, usageRepo.byModelCalled)
+	require.False(t, usageRepo.called)
+	require.Equal(t, "day", usageRepo.granularity)
+	require.Equal(t, int64(42), usageRepo.userID)
+	require.Equal(t, int64(7), usageRepo.apiKeyID)
+
+	var got dailyUsageByModelHandlerResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+	require.Len(t, got.Data.Items, 2)
+	require.Equal(t, "claude-3-opus", got.Data.Items[0].Model)
+	require.Equal(t, "gpt-4o", got.Data.Items[1].Model)
 }
 
 func TestGetMyAPIKeyDailyUsageAggregatesByDayForOwnedKey(t *testing.T) {

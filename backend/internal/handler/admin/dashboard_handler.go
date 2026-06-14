@@ -250,6 +250,22 @@ func (h *DashboardHandler) GetUsageTrend(c *gin.Context) {
 		}
 	}
 
+	// group_by=model 返回按天×模型的明细行(每行带 model),默认行为不变;该路径不走快照缓存。
+	if c.Query("group_by") == "model" {
+		trend, err := h.dashboardService.GetUsageTrendByModelWithFilters(c.Request.Context(), startTime, endTime, granularity, userID, apiKeyID, accountID, groupID, model, requestType, stream, billingType)
+		if err != nil {
+			response.Error(c, 500, "Failed to get usage trend")
+			return
+		}
+		response.Success(c, gin.H{
+			"trend":       trend,
+			"start_date":  startTime.Format("2006-01-02"),
+			"end_date":    endTime.Add(-24 * time.Hour).Format("2006-01-02"),
+			"granularity": granularity,
+		})
+		return
+	}
+
 	trend, hit, err := h.getUsageTrendCached(c.Request.Context(), startTime, endTime, granularity, userID, apiKeyID, accountID, groupID, model, requestType, stream, billingType)
 	if err != nil {
 		response.Error(c, 500, "Failed to get usage trend")
