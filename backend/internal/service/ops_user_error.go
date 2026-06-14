@@ -15,10 +15,10 @@ type UserErrorRequest struct {
 	Category        string    `json:"category"`
 	Platform        string    `json:"platform"`
 	Message         string    `json:"message"`
-	KeyName    string  `json:"key_name"`
-	KeyDeleted bool    `json:"key_deleted"`
-	ClientIP   *string `json:"client_ip,omitempty"`
-	UserAgent  string  `json:"user_agent,omitempty"`
+	KeyName         string    `json:"key_name"`
+	KeyDeleted      bool      `json:"key_deleted"`
+	ClientIP        *string   `json:"client_ip,omitempty"`
+	UserAgent       string    `json:"user_agent,omitempty"`
 }
 
 // UserErrorRequestList 是用户错误请求分页结果。
@@ -96,10 +96,10 @@ func ToUserErrorRequest(e *OpsErrorLog) *UserErrorRequest {
 		Category:        MapUserErrorCategory(e.Phase, e.Type),
 		Platform:        e.Platform,
 		Message:         e.Message,
-		KeyName:    e.APIKeyName,
-		KeyDeleted: e.APIKeyDeleted,
-		ClientIP:   e.ClientIP,
-		UserAgent:  e.UserAgent,
+		KeyName:         e.APIKeyName,
+		KeyDeleted:      e.APIKeyDeleted,
+		ClientIP:        e.ClientIP,
+		UserAgent:       e.UserAgent,
 	}
 }
 
