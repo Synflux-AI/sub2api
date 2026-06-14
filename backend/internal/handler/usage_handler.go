@@ -616,32 +616,40 @@ func (h *UsageHandler) GetMyAPIKeyDailyUsage(c *gin.Context) {
 	userTZ := c.Query("timezone")
 	startTime, endTime := apiKeyDailyUsageRange(days, userTZ)
 
+	// granularity: 仅允许 hour / day(默认 day),其余忽略回退到 day。
+	granularity := "day"
+	if c.Query("granularity") == "hour" {
+		granularity = "hour"
+	}
+
 	// group_by=model 返回按天×模型的明细行(每行带 model),默认行为不变。
 	if c.Query("group_by") == "model" {
-		items, err := h.usageService.GetAPIKeyUsageTrendByModel(c.Request.Context(), subject.UserID, apiKeyID, startTime, endTime)
+		items, err := h.usageService.GetAPIKeyUsageTrendByModel(c.Request.Context(), subject.UserID, apiKeyID, startTime, endTime, granularity)
 		if err != nil {
 			response.ErrorFrom(c, err)
 			return
 		}
 		response.Success(c, gin.H{
-			"items":      items,
-			"days":       days,
-			"start_date": startTime.Format("2006-01-02"),
-			"end_date":   endTime.AddDate(0, 0, -1).Format("2006-01-02"),
+			"items":       items,
+			"days":        days,
+			"granularity": granularity,
+			"start_date":  startTime.Format("2006-01-02"),
+			"end_date":    endTime.AddDate(0, 0, -1).Format("2006-01-02"),
 		})
 		return
 	}
 
-	items, err := h.usageService.GetAPIKeyDailyUsage(c.Request.Context(), subject.UserID, apiKeyID, startTime, endTime)
+	items, err := h.usageService.GetAPIKeyDailyUsage(c.Request.Context(), subject.UserID, apiKeyID, startTime, endTime, granularity)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
 
 	response.Success(c, gin.H{
-		"items":      items,
-		"days":       days,
-		"start_date": startTime.Format("2006-01-02"),
-		"end_date":   endTime.AddDate(0, 0, -1).Format("2006-01-02"),
+		"items":       items,
+		"days":        days,
+		"granularity": granularity,
+		"start_date":  startTime.Format("2006-01-02"),
+		"end_date":    endTime.AddDate(0, 0, -1).Format("2006-01-02"),
 	})
 }
