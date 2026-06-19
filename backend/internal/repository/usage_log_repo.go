@@ -4035,6 +4035,11 @@ func (r *usageLogRepository) GetAccountUsageStats(ctx context.Context, accountID
 	if err != nil {
 		models = []ModelStat{}
 	}
+	users, userErr := r.getAccountUserStats(ctx, accountID, startTime, endTime)
+	if userErr != nil {
+		logger.LegacyPrintf("repository.usage_log", "getAccountUserStats failed in GetAccountUsageStats: %v", userErr)
+		users = []usagestats.AccountUserStat{}
+	}
 	endpoints, endpointErr := r.GetEndpointStatsWithFilters(ctx, startTime, endTime, 0, 0, accountID, 0, "", nil, nil, nil)
 	if endpointErr != nil {
 		logger.LegacyPrintf("repository.usage_log", "GetEndpointStatsWithFilters failed in GetAccountUsageStats: %v", endpointErr)
@@ -4050,10 +4055,55 @@ func (r *usageLogRepository) GetAccountUsageStats(ctx context.Context, accountID
 		History:           history,
 		Summary:           summary,
 		Models:            models,
+		Users:             users,
 		Endpoints:         endpoints,
 		UpstreamEndpoints: upstreamEndpoints,
 	}
 	return resp, nil
+}
+
+// getAccountUserStats 聚合某账号近窗口内各用户的用量(按 token 降序,取 top 50),用于账号详情「按用户」图。
+func (r *usageLogRepository) getAccountUserStats(ctx context.Context, accountID int64, startTime, endTime time.Time) (results []usagestats.AccountUserStat, err error) {
+	query := `
+		SELECT
+			ul.user_id,
+			COALESCE(u.username, '') as username,
+			COALESCE(u.email, '') as email,
+			COUNT(*) as requests,
+			COALESCE(SUM(ul.input_tokens + ul.output_tokens + ul.cache_creation_tokens + ul.cache_read_tokens), 0) as total_tokens,
+			COALESCE(SUM(ul.total_cost), 0) as cost,
+			COALESCE(SUM(COALESCE(ul.account_stats_cost, ul.total_cost) * COALESCE(ul.account_rate_multiplier, 1)), 0) as actual_cost
+		FROM usage_logs ul
+		LEFT JOIN users u ON u.id = ul.user_id
+		WHERE ul.account_id = $1 AND ul.created_at >= $2 AND ul.created_at < $3
+		GROUP BY ul.user_id, u.username, u.email
+		ORDER BY total_tokens DESC
+		LIMIT 50
+	`
+	rows, err := r.sql.QueryContext(ctx, query, accountID, startTime, endTime)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		// 保持主错误优先；仅在无错误时回传 Close 失败,并清空返回值避免误用不完整结果。
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = closeErr
+			results = nil
+		}
+	}()
+
+	results = make([]usagestats.AccountUserStat, 0)
+	for rows.Next() {
+		var s usagestats.AccountUserStat
+		if err = rows.Scan(&s.UserID, &s.Username, &s.Email, &s.Requests, &s.TotalTokens, &s.Cost, &s.ActualCost); err != nil {
+			return nil, err
+		}
+		results = append(results, s)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+	return results, nil
 }
 
 func (r *usageLogRepository) listUsageLogsWithPagination(ctx context.Context, whereClause string, args []any, params pagination.PaginationParams) ([]service.UsageLog, *pagination.PaginationResult, error) {

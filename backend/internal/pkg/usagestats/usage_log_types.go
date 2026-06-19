@@ -380,11 +380,23 @@ type AccountUsageSummary struct {
 	} `json:"highest_request_day"`
 }
 
+// AccountUserStat represents usage statistics for a single user on an account
+type AccountUserStat struct {
+	UserID      int64   `json:"user_id"`
+	Username    string  `json:"username"`
+	Email       string  `json:"email"`
+	Requests    int64   `json:"requests"`
+	TotalTokens int64   `json:"total_tokens"`
+	Cost        float64 `json:"cost"`        // 标准计费
+	ActualCost  float64 `json:"actual_cost"` // 账号成本口径
+}
+
 // AccountUsageStatsResponse represents the full usage statistics response for an account
 type AccountUsageStatsResponse struct {
 	History           []AccountUsageHistory `json:"history"`
 	Summary           AccountUsageSummary   `json:"summary"`
 	Models            []ModelStat           `json:"models"`
+	Users             []AccountUserStat     `json:"users"`
 	Endpoints         []EndpointStat        `json:"endpoints"`
 	UpstreamEndpoints []EndpointStat        `json:"upstream_endpoints"`
 }
