@@ -1939,6 +1939,63 @@ export interface UpdateScheduledTestPlanRequest {
   auto_recover?: boolean
 }
 
+// Routing Strategy types (智能路由策略)
+export type RoutingStrategyAction = 'restrict' | 'prefer'
+export type RoutingStrategyMatchMode = 'all' | 'any'
+export type RoutingConditionType = 'model' | 'client' | 'user_agent'
+export type RoutingClientType = 'claude_code' | 'codex' | 'other' | 'any'
+
+export interface RoutingCondition {
+  type: RoutingConditionType
+  op?: string
+  value: string
+}
+
+export interface RoutingStrategy {
+  id: number
+  name: string
+  description: string
+  enabled: boolean
+  priority: number
+  platform: string
+  group_id: number | null
+  match_mode: RoutingStrategyMatchMode
+  conditions: RoutingCondition[]
+  action: RoutingStrategyAction
+  account_ids: number[]
+  created_at: string
+  updated_at: string
+}
+
+export interface SaveRoutingStrategyRequest {
+  name: string
+  description?: string
+  enabled: boolean
+  priority: number
+  platform: string
+  group_id?: number | null
+  match_mode: RoutingStrategyMatchMode
+  conditions: RoutingCondition[]
+  action: RoutingStrategyAction
+  account_ids: number[]
+}
+
+export interface TestRoutingStrategyRequest {
+  platform?: string
+  group_id?: number | null
+  model?: string
+  client?: string
+  user_agent?: string
+}
+
+export interface TestRoutingStrategyResult {
+  matched: boolean
+  strategy_id: number
+  strategy_name: string
+  action: string
+  account_ids: number[]
+}
+
 // Payment types
 export type { SubscriptionPlan, PaymentOrder, CheckoutInfoResponse } from './payment'
 

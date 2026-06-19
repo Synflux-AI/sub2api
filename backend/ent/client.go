@@ -38,6 +38,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/promocodeusage"
 	"github.com/Wei-Shaw/sub2api/ent/proxy"
 	"github.com/Wei-Shaw/sub2api/ent/redeemcode"
+	"github.com/Wei-Shaw/sub2api/ent/routingstrategy"
 	"github.com/Wei-Shaw/sub2api/ent/securitysecret"
 	"github.com/Wei-Shaw/sub2api/ent/setting"
 	"github.com/Wei-Shaw/sub2api/ent/subscriptionplan"
@@ -105,6 +106,8 @@ type Client struct {
 	Proxy *ProxyClient
 	// RedeemCode is the client for interacting with the RedeemCode builders.
 	RedeemCode *RedeemCodeClient
+	// RoutingStrategy is the client for interacting with the RoutingStrategy builders.
+	RoutingStrategy *RoutingStrategyClient
 	// SecuritySecret is the client for interacting with the SecuritySecret builders.
 	SecuritySecret *SecuritySecretClient
 	// Setting is the client for interacting with the Setting builders.
@@ -163,6 +166,7 @@ func (c *Client) init() {
 	c.PromoCodeUsage = NewPromoCodeUsageClient(c.config)
 	c.Proxy = NewProxyClient(c.config)
 	c.RedeemCode = NewRedeemCodeClient(c.config)
+	c.RoutingStrategy = NewRoutingStrategyClient(c.config)
 	c.SecuritySecret = NewSecuritySecretClient(c.config)
 	c.Setting = NewSettingClient(c.config)
 	c.SubscriptionPlan = NewSubscriptionPlanClient(c.config)
@@ -290,6 +294,7 @@ func (c *Client) Tx(ctx context.Context) (*Tx, error) {
 		PromoCodeUsage:                NewPromoCodeUsageClient(cfg),
 		Proxy:                         NewProxyClient(cfg),
 		RedeemCode:                    NewRedeemCodeClient(cfg),
+		RoutingStrategy:               NewRoutingStrategyClient(cfg),
 		SecuritySecret:                NewSecuritySecretClient(cfg),
 		Setting:                       NewSettingClient(cfg),
 		SubscriptionPlan:              NewSubscriptionPlanClient(cfg),
@@ -344,6 +349,7 @@ func (c *Client) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) 
 		PromoCodeUsage:                NewPromoCodeUsageClient(cfg),
 		Proxy:                         NewProxyClient(cfg),
 		RedeemCode:                    NewRedeemCodeClient(cfg),
+		RoutingStrategy:               NewRoutingStrategyClient(cfg),
 		SecuritySecret:                NewSecuritySecretClient(cfg),
 		Setting:                       NewSettingClient(cfg),
 		SubscriptionPlan:              NewSubscriptionPlanClient(cfg),
@@ -391,10 +397,10 @@ func (c *Client) Use(hooks ...Hook) {
 		c.ChannelMonitorRequestTemplate, c.ErrorPassthroughRule, c.Group,
 		c.IdempotencyRecord, c.IdentityAdoptionDecision, c.PaymentAuditLog,
 		c.PaymentOrder, c.PaymentProviderInstance, c.PendingAuthSession, c.PromoCode,
-		c.PromoCodeUsage, c.Proxy, c.RedeemCode, c.SecuritySecret, c.Setting,
-		c.SubscriptionPlan, c.TLSFingerprintProfile, c.UsageCleanupTask, c.UsageLog,
-		c.User, c.UserAllowedGroup, c.UserAttributeDefinition, c.UserAttributeValue,
-		c.UserPlatformQuota, c.UserSubscription,
+		c.PromoCodeUsage, c.Proxy, c.RedeemCode, c.RoutingStrategy, c.SecuritySecret,
+		c.Setting, c.SubscriptionPlan, c.TLSFingerprintProfile, c.UsageCleanupTask,
+		c.UsageLog, c.User, c.UserAllowedGroup, c.UserAttributeDefinition,
+		c.UserAttributeValue, c.UserPlatformQuota, c.UserSubscription,
 	} {
 		n.Use(hooks...)
 	}
@@ -410,10 +416,10 @@ func (c *Client) Intercept(interceptors ...Interceptor) {
 		c.ChannelMonitorRequestTemplate, c.ErrorPassthroughRule, c.Group,
 		c.IdempotencyRecord, c.IdentityAdoptionDecision, c.PaymentAuditLog,
 		c.PaymentOrder, c.PaymentProviderInstance, c.PendingAuthSession, c.PromoCode,
-		c.PromoCodeUsage, c.Proxy, c.RedeemCode, c.SecuritySecret, c.Setting,
-		c.SubscriptionPlan, c.TLSFingerprintProfile, c.UsageCleanupTask, c.UsageLog,
-		c.User, c.UserAllowedGroup, c.UserAttributeDefinition, c.UserAttributeValue,
-		c.UserPlatformQuota, c.UserSubscription,
+		c.PromoCodeUsage, c.Proxy, c.RedeemCode, c.RoutingStrategy, c.SecuritySecret,
+		c.Setting, c.SubscriptionPlan, c.TLSFingerprintProfile, c.UsageCleanupTask,
+		c.UsageLog, c.User, c.UserAllowedGroup, c.UserAttributeDefinition,
+		c.UserAttributeValue, c.UserPlatformQuota, c.UserSubscription,
 	} {
 		n.Intercept(interceptors...)
 	}
@@ -468,6 +474,8 @@ func (c *Client) Mutate(ctx context.Context, m Mutation) (Value, error) {
 		return c.Proxy.mutate(ctx, m)
 	case *RedeemCodeMutation:
 		return c.RedeemCode.mutate(ctx, m)
+	case *RoutingStrategyMutation:
+		return c.RoutingStrategy.mutate(ctx, m)
 	case *SecuritySecretMutation:
 		return c.SecuritySecret.mutate(ctx, m)
 	case *SettingMutation:
@@ -4187,6 +4195,141 @@ func (c *RedeemCodeClient) mutate(ctx context.Context, m *RedeemCodeMutation) (V
 	}
 }
 
+// RoutingStrategyClient is a client for the RoutingStrategy schema.
+type RoutingStrategyClient struct {
+	config
+}
+
+// NewRoutingStrategyClient returns a client for the RoutingStrategy from the given config.
+func NewRoutingStrategyClient(c config) *RoutingStrategyClient {
+	return &RoutingStrategyClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `routingstrategy.Hooks(f(g(h())))`.
+func (c *RoutingStrategyClient) Use(hooks ...Hook) {
+	c.hooks.RoutingStrategy = append(c.hooks.RoutingStrategy, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `routingstrategy.Intercept(f(g(h())))`.
+func (c *RoutingStrategyClient) Intercept(interceptors ...Interceptor) {
+	c.inters.RoutingStrategy = append(c.inters.RoutingStrategy, interceptors...)
+}
+
+// Create returns a builder for creating a RoutingStrategy entity.
+func (c *RoutingStrategyClient) Create() *RoutingStrategyCreate {
+	mutation := newRoutingStrategyMutation(c.config, OpCreate)
+	return &RoutingStrategyCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of RoutingStrategy entities.
+func (c *RoutingStrategyClient) CreateBulk(builders ...*RoutingStrategyCreate) *RoutingStrategyCreateBulk {
+	return &RoutingStrategyCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *RoutingStrategyClient) MapCreateBulk(slice any, setFunc func(*RoutingStrategyCreate, int)) *RoutingStrategyCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &RoutingStrategyCreateBulk{err: fmt.Errorf("calling to RoutingStrategyClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*RoutingStrategyCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &RoutingStrategyCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for RoutingStrategy.
+func (c *RoutingStrategyClient) Update() *RoutingStrategyUpdate {
+	mutation := newRoutingStrategyMutation(c.config, OpUpdate)
+	return &RoutingStrategyUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *RoutingStrategyClient) UpdateOne(_m *RoutingStrategy) *RoutingStrategyUpdateOne {
+	mutation := newRoutingStrategyMutation(c.config, OpUpdateOne, withRoutingStrategy(_m))
+	return &RoutingStrategyUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *RoutingStrategyClient) UpdateOneID(id int64) *RoutingStrategyUpdateOne {
+	mutation := newRoutingStrategyMutation(c.config, OpUpdateOne, withRoutingStrategyID(id))
+	return &RoutingStrategyUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for RoutingStrategy.
+func (c *RoutingStrategyClient) Delete() *RoutingStrategyDelete {
+	mutation := newRoutingStrategyMutation(c.config, OpDelete)
+	return &RoutingStrategyDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *RoutingStrategyClient) DeleteOne(_m *RoutingStrategy) *RoutingStrategyDeleteOne {
+	return c.DeleteOneID(_m.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *RoutingStrategyClient) DeleteOneID(id int64) *RoutingStrategyDeleteOne {
+	builder := c.Delete().Where(routingstrategy.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &RoutingStrategyDeleteOne{builder}
+}
+
+// Query returns a query builder for RoutingStrategy.
+func (c *RoutingStrategyClient) Query() *RoutingStrategyQuery {
+	return &RoutingStrategyQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypeRoutingStrategy},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a RoutingStrategy entity by its id.
+func (c *RoutingStrategyClient) Get(ctx context.Context, id int64) (*RoutingStrategy, error) {
+	return c.Query().Where(routingstrategy.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *RoutingStrategyClient) GetX(ctx context.Context, id int64) *RoutingStrategy {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// Hooks returns the client hooks.
+func (c *RoutingStrategyClient) Hooks() []Hook {
+	hooks := c.hooks.RoutingStrategy
+	return append(hooks[:len(hooks):len(hooks)], routingstrategy.Hooks[:]...)
+}
+
+// Interceptors returns the client interceptors.
+func (c *RoutingStrategyClient) Interceptors() []Interceptor {
+	inters := c.inters.RoutingStrategy
+	return append(inters[:len(inters):len(inters)], routingstrategy.Interceptors[:]...)
+}
+
+func (c *RoutingStrategyClient) mutate(ctx context.Context, m *RoutingStrategyMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&RoutingStrategyCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&RoutingStrategyUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&RoutingStrategyUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&RoutingStrategyDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown RoutingStrategy mutation op: %q", m.Op())
+	}
+}
+
 // SecuritySecretClient is a client for the SecuritySecret schema.
 type SecuritySecretClient struct {
 	config
@@ -6214,10 +6357,10 @@ type (
 		ChannelMonitorHistory, ChannelMonitorRequestTemplate, ErrorPassthroughRule,
 		Group, IdempotencyRecord, IdentityAdoptionDecision, PaymentAuditLog,
 		PaymentOrder, PaymentProviderInstance, PendingAuthSession, PromoCode,
-		PromoCodeUsage, Proxy, RedeemCode, SecuritySecret, Setting, SubscriptionPlan,
-		TLSFingerprintProfile, UsageCleanupTask, UsageLog, User, UserAllowedGroup,
-		UserAttributeDefinition, UserAttributeValue, UserPlatformQuota,
-		UserSubscription []ent.Hook
+		PromoCodeUsage, Proxy, RedeemCode, RoutingStrategy, SecuritySecret, Setting,
+		SubscriptionPlan, TLSFingerprintProfile, UsageCleanupTask, UsageLog, User,
+		UserAllowedGroup, UserAttributeDefinition, UserAttributeValue,
+		UserPlatformQuota, UserSubscription []ent.Hook
 	}
 	inters struct {
 		APIKey, Account, AccountGroup, Announcement, AnnouncementRead, AuthIdentity,
@@ -6225,10 +6368,10 @@ type (
 		ChannelMonitorHistory, ChannelMonitorRequestTemplate, ErrorPassthroughRule,
 		Group, IdempotencyRecord, IdentityAdoptionDecision, PaymentAuditLog,
 		PaymentOrder, PaymentProviderInstance, PendingAuthSession, PromoCode,
-		PromoCodeUsage, Proxy, RedeemCode, SecuritySecret, Setting, SubscriptionPlan,
-		TLSFingerprintProfile, UsageCleanupTask, UsageLog, User, UserAllowedGroup,
-		UserAttributeDefinition, UserAttributeValue, UserPlatformQuota,
-		UserSubscription []ent.Interceptor
+		PromoCodeUsage, Proxy, RedeemCode, RoutingStrategy, SecuritySecret, Setting,
+		SubscriptionPlan, TLSFingerprintProfile, UsageCleanupTask, UsageLog, User,
+		UserAllowedGroup, UserAttributeDefinition, UserAttributeValue,
+		UserPlatformQuota, UserSubscription []ent.Interceptor
 	}
 )
 

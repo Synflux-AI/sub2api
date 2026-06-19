@@ -32,6 +32,9 @@ func RegisterAdminRoutes(
 		// 分组管理
 		registerGroupRoutes(admin, h)
 
+		// 智能路由策略
+		registerRoutingStrategyRoutes(admin, h)
+
 		// 账号管理
 		registerAccountRoutes(admin, h)
 
@@ -344,6 +347,18 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		accounts.POST("/exchange-setup-token-code", h.Admin.OAuth.ExchangeSetupTokenCode)
 		accounts.POST("/cookie-auth", h.Admin.OAuth.CookieAuth)
 		accounts.POST("/setup-token-cookie-auth", h.Admin.OAuth.SetupTokenCookieAuth)
+	}
+}
+
+func registerRoutingStrategyRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	strategies := admin.Group("/routing-strategies")
+	{
+		strategies.GET("", h.Admin.RoutingStrategy.List)
+		strategies.POST("", h.Admin.RoutingStrategy.Create)
+		strategies.POST("/test", h.Admin.RoutingStrategy.Test)
+		strategies.GET("/:id", h.Admin.RoutingStrategy.GetByID)
+		strategies.PUT("/:id", h.Admin.RoutingStrategy.Update)
+		strategies.DELETE("/:id", h.Admin.RoutingStrategy.Delete)
 	}
 }
 

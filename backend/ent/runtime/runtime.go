@@ -28,6 +28,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/promocodeusage"
 	"github.com/Wei-Shaw/sub2api/ent/proxy"
 	"github.com/Wei-Shaw/sub2api/ent/redeemcode"
+	"github.com/Wei-Shaw/sub2api/ent/routingstrategy"
 	"github.com/Wei-Shaw/sub2api/ent/schema"
 	"github.com/Wei-Shaw/sub2api/ent/securitysecret"
 	"github.com/Wei-Shaw/sub2api/ent/setting"
@@ -1434,6 +1435,73 @@ func init() {
 	redeemcodeDescValidityDays := redeemcodeFields[10].Descriptor()
 	// redeemcode.DefaultValidityDays holds the default value on creation for the validity_days field.
 	redeemcode.DefaultValidityDays = redeemcodeDescValidityDays.Default.(int)
+	routingstrategyMixin := schema.RoutingStrategy{}.Mixin()
+	routingstrategyMixinHooks1 := routingstrategyMixin[1].Hooks()
+	routingstrategy.Hooks[0] = routingstrategyMixinHooks1[0]
+	routingstrategyMixinInters1 := routingstrategyMixin[1].Interceptors()
+	routingstrategy.Interceptors[0] = routingstrategyMixinInters1[0]
+	routingstrategyMixinFields0 := routingstrategyMixin[0].Fields()
+	_ = routingstrategyMixinFields0
+	routingstrategyFields := schema.RoutingStrategy{}.Fields()
+	_ = routingstrategyFields
+	// routingstrategyDescCreatedAt is the schema descriptor for created_at field.
+	routingstrategyDescCreatedAt := routingstrategyMixinFields0[0].Descriptor()
+	// routingstrategy.DefaultCreatedAt holds the default value on creation for the created_at field.
+	routingstrategy.DefaultCreatedAt = routingstrategyDescCreatedAt.Default.(func() time.Time)
+	// routingstrategyDescUpdatedAt is the schema descriptor for updated_at field.
+	routingstrategyDescUpdatedAt := routingstrategyMixinFields0[1].Descriptor()
+	// routingstrategy.DefaultUpdatedAt holds the default value on creation for the updated_at field.
+	routingstrategy.DefaultUpdatedAt = routingstrategyDescUpdatedAt.Default.(func() time.Time)
+	// routingstrategy.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
+	routingstrategy.UpdateDefaultUpdatedAt = routingstrategyDescUpdatedAt.UpdateDefault.(func() time.Time)
+	// routingstrategyDescName is the schema descriptor for name field.
+	routingstrategyDescName := routingstrategyFields[0].Descriptor()
+	// routingstrategy.NameValidator is a validator for the "name" field. It is called by the builders before save.
+	routingstrategy.NameValidator = func() func(string) error {
+		validators := routingstrategyDescName.Validators
+		fns := [...]func(string) error{
+			validators[0].(func(string) error),
+			validators[1].(func(string) error),
+		}
+		return func(name string) error {
+			for _, fn := range fns {
+				if err := fn(name); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+	}()
+	// routingstrategyDescDescription is the schema descriptor for description field.
+	routingstrategyDescDescription := routingstrategyFields[1].Descriptor()
+	// routingstrategy.DefaultDescription holds the default value on creation for the description field.
+	routingstrategy.DefaultDescription = routingstrategyDescDescription.Default.(string)
+	// routingstrategyDescEnabled is the schema descriptor for enabled field.
+	routingstrategyDescEnabled := routingstrategyFields[2].Descriptor()
+	// routingstrategy.DefaultEnabled holds the default value on creation for the enabled field.
+	routingstrategy.DefaultEnabled = routingstrategyDescEnabled.Default.(bool)
+	// routingstrategyDescPriority is the schema descriptor for priority field.
+	routingstrategyDescPriority := routingstrategyFields[3].Descriptor()
+	// routingstrategy.DefaultPriority holds the default value on creation for the priority field.
+	routingstrategy.DefaultPriority = routingstrategyDescPriority.Default.(int)
+	// routingstrategyDescPlatform is the schema descriptor for platform field.
+	routingstrategyDescPlatform := routingstrategyFields[4].Descriptor()
+	// routingstrategy.DefaultPlatform holds the default value on creation for the platform field.
+	routingstrategy.DefaultPlatform = routingstrategyDescPlatform.Default.(string)
+	// routingstrategy.PlatformValidator is a validator for the "platform" field. It is called by the builders before save.
+	routingstrategy.PlatformValidator = routingstrategyDescPlatform.Validators[0].(func(string) error)
+	// routingstrategyDescMatchMode is the schema descriptor for match_mode field.
+	routingstrategyDescMatchMode := routingstrategyFields[6].Descriptor()
+	// routingstrategy.DefaultMatchMode holds the default value on creation for the match_mode field.
+	routingstrategy.DefaultMatchMode = routingstrategyDescMatchMode.Default.(string)
+	// routingstrategy.MatchModeValidator is a validator for the "match_mode" field. It is called by the builders before save.
+	routingstrategy.MatchModeValidator = routingstrategyDescMatchMode.Validators[0].(func(string) error)
+	// routingstrategyDescAction is the schema descriptor for action field.
+	routingstrategyDescAction := routingstrategyFields[8].Descriptor()
+	// routingstrategy.DefaultAction holds the default value on creation for the action field.
+	routingstrategy.DefaultAction = routingstrategyDescAction.Default.(string)
+	// routingstrategy.ActionValidator is a validator for the "action" field. It is called by the builders before save.
+	routingstrategy.ActionValidator = routingstrategyDescAction.Validators[0].(func(string) error)
 	securitysecretMixin := schema.SecuritySecret{}.Mixin()
 	securitysecretMixinFields0 := securitysecretMixin[0].Fields()
 	_ = securitysecretMixinFields0

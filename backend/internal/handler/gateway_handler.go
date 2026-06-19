@@ -178,6 +178,9 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 	SetClaudeCodeClientContext(c, body, parsedReq)
 	isClaudeCodeClient := service.IsClaudeCodeClient(c.Request.Context())
 
+	// 将原始 User-Agent 写入 context，供路由策略按 UA / 客户端类型匹配。
+	c.Request = c.Request.WithContext(service.SetUserAgentContext(c.Request.Context(), c.GetHeader("User-Agent")))
+
 	// 版本检查：仅对 Claude Code 客户端，拒绝低于最低版本的请求
 	if !h.checkClaudeCodeVersion(c) {
 		return
@@ -1746,6 +1749,7 @@ func (h *GatewayHandler) CountTokens(c *gin.Context) {
 	}
 	// count_tokens 走 messages 严格校验时，复用已解析请求，避免二次反序列化。
 	SetClaudeCodeClientContext(c, body, parsedReq)
+	c.Request = c.Request.WithContext(service.SetUserAgentContext(c.Request.Context(), c.GetHeader("User-Agent")))
 	reqLog = reqLog.With(zap.String("model", parsedReq.Model), zap.Bool("stream", parsedReq.Stream))
 	// 在请求上下文中记录 thinking 状态，供 Antigravity 最终模型 key 推导/模型维度限流使用
 	c.Request = c.Request.WithContext(service.WithThinkingEnabled(c.Request.Context(), parsedReq.ThinkingEnabled, h.metadataBridgeEnabled()))

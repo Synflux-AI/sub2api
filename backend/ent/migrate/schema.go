@@ -1207,6 +1207,46 @@ var (
 			},
 		},
 	}
+	// RoutingStrategiesColumns holds the columns for the "routing_strategies" table.
+	RoutingStrategiesColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeInt64, Increment: true},
+		{Name: "created_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
+		{Name: "updated_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
+		{Name: "deleted_at", Type: field.TypeTime, Nullable: true, SchemaType: map[string]string{"postgres": "timestamptz"}},
+		{Name: "name", Type: field.TypeString, Size: 128},
+		{Name: "description", Type: field.TypeString, Default: "", SchemaType: map[string]string{"postgres": "text"}},
+		{Name: "enabled", Type: field.TypeBool, Default: true},
+		{Name: "priority", Type: field.TypeInt, Default: 100},
+		{Name: "platform", Type: field.TypeString, Size: 32, Default: "anthropic"},
+		{Name: "group_id", Type: field.TypeInt64, Nullable: true},
+		{Name: "match_mode", Type: field.TypeString, Size: 8, Default: "all"},
+		{Name: "conditions", Type: field.TypeJSON, Nullable: true, SchemaType: map[string]string{"postgres": "jsonb"}},
+		{Name: "action", Type: field.TypeString, Size: 16, Default: "restrict"},
+		{Name: "account_ids", Type: field.TypeJSON, Nullable: true, SchemaType: map[string]string{"postgres": "jsonb"}},
+	}
+	// RoutingStrategiesTable holds the schema information for the "routing_strategies" table.
+	RoutingStrategiesTable = &schema.Table{
+		Name:       "routing_strategies",
+		Columns:    RoutingStrategiesColumns,
+		PrimaryKey: []*schema.Column{RoutingStrategiesColumns[0]},
+		Indexes: []*schema.Index{
+			{
+				Name:    "routingstrategy_enabled_priority",
+				Unique:  false,
+				Columns: []*schema.Column{RoutingStrategiesColumns[6], RoutingStrategiesColumns[7]},
+			},
+			{
+				Name:    "routingstrategy_group_id",
+				Unique:  false,
+				Columns: []*schema.Column{RoutingStrategiesColumns[9]},
+			},
+			{
+				Name:    "routingstrategy_deleted_at",
+				Unique:  false,
+				Columns: []*schema.Column{RoutingStrategiesColumns[3]},
+			},
+		},
+	}
 	// SecuritySecretsColumns holds the columns for the "security_secrets" table.
 	SecuritySecretsColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeInt64, Increment: true},
@@ -1801,6 +1841,7 @@ var (
 		PromoCodeUsagesTable,
 		ProxiesTable,
 		RedeemCodesTable,
+		RoutingStrategiesTable,
 		SecuritySecretsTable,
 		SettingsTable,
 		SubscriptionPlansTable,
@@ -1906,6 +1947,9 @@ func init() {
 	RedeemCodesTable.ForeignKeys[1].RefTable = UsersTable
 	RedeemCodesTable.Annotation = &entsql.Annotation{
 		Table: "redeem_codes",
+	}
+	RoutingStrategiesTable.Annotation = &entsql.Annotation{
+		Table: "routing_strategies",
 	}
 	SecuritySecretsTable.Annotation = &entsql.Annotation{
 		Table: "security_secrets",

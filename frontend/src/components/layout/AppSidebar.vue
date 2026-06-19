@@ -721,6 +721,12 @@ const adminNavItems = computed((): NavItem[] => {
     { path: '/admin/users', label: t('nav.users'), icon: UsersIcon, hideInSimpleMode: true },
     { path: '/admin/groups', label: t('nav.groups'), icon: FolderIcon, hideInSimpleMode: true },
     {
+      path: '/admin/routing-strategies',
+      label: t('nav.routingStrategies'),
+      icon: FolderIcon,
+      hideInSimpleMode: true
+    },
+    {
       path: '/admin/channels',
       label: t('nav.channelManagement'),
       icon: ChannelIcon,

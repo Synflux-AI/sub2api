@@ -614,42 +614,43 @@ func (s *GatewayService) TempUnscheduleRetryableError(ctx context.Context, accou
 
 // GatewayService handles API gateway operations
 type GatewayService struct {
-	accountRepo           AccountRepository
-	groupRepo             GroupRepository
-	usageLogRepo          UsageLogRepository
-	usageBillingRepo      UsageBillingRepository
-	userRepo              UserRepository
-	userSubRepo           UserSubscriptionRepository
-	userGroupRateRepo     UserGroupRateRepository
-	cache                 GatewayCache
-	digestStore           *DigestSessionStore
-	cfg                   *config.Config
-	schedulerSnapshot     *SchedulerSnapshotService
-	billingService        *BillingService
-	rateLimitService      *RateLimitService
-	billingCacheService   *BillingCacheService
-	identityService       *IdentityService
-	httpUpstream          HTTPUpstream
-	deferredService       *DeferredService
-	concurrencyService    *ConcurrencyService
-	claudeTokenProvider   *ClaudeTokenProvider
-	sessionLimitCache     SessionLimitCache // 会话数量限制缓存（仅 Anthropic OAuth/SetupToken）
-	rpmCache              RPMCache          // RPM 计数缓存（仅 Anthropic OAuth/SetupToken）
-	userGroupRateResolver *userGroupRateResolver
-	userGroupRateCache    *gocache.Cache
-	userGroupRateSF       singleflight.Group
-	modelsListCache       *gocache.Cache
-	modelsListCacheTTL    time.Duration
-	settingService        *SettingService
-	responseHeaderFilter  *responseheaders.CompiledHeaderFilter
-	debugModelRouting     atomic.Bool
-	debugClaudeMimic      atomic.Bool
-	channelService        *ChannelService
-	resolver              *ModelPricingResolver
-	debugGatewayBodyFile  atomic.Pointer[os.File] // non-nil when SUB2API_DEBUG_GATEWAY_BODY is set
-	tlsFPProfileService   *TLSFingerprintProfileService
-	balanceNotifyService  *BalanceNotifyService
-	userPlatformQuotaRepo UserPlatformQuotaRepository
+	accountRepo            AccountRepository
+	groupRepo              GroupRepository
+	usageLogRepo           UsageLogRepository
+	usageBillingRepo       UsageBillingRepository
+	userRepo               UserRepository
+	userSubRepo            UserSubscriptionRepository
+	userGroupRateRepo      UserGroupRateRepository
+	cache                  GatewayCache
+	digestStore            *DigestSessionStore
+	cfg                    *config.Config
+	schedulerSnapshot      *SchedulerSnapshotService
+	billingService         *BillingService
+	rateLimitService       *RateLimitService
+	billingCacheService    *BillingCacheService
+	identityService        *IdentityService
+	httpUpstream           HTTPUpstream
+	deferredService        *DeferredService
+	concurrencyService     *ConcurrencyService
+	claudeTokenProvider    *ClaudeTokenProvider
+	sessionLimitCache      SessionLimitCache // 会话数量限制缓存（仅 Anthropic OAuth/SetupToken）
+	rpmCache               RPMCache          // RPM 计数缓存（仅 Anthropic OAuth/SetupToken）
+	userGroupRateResolver  *userGroupRateResolver
+	userGroupRateCache     *gocache.Cache
+	userGroupRateSF        singleflight.Group
+	modelsListCache        *gocache.Cache
+	modelsListCacheTTL     time.Duration
+	settingService         *SettingService
+	responseHeaderFilter   *responseheaders.CompiledHeaderFilter
+	debugModelRouting      atomic.Bool
+	debugClaudeMimic       atomic.Bool
+	channelService         *ChannelService
+	resolver               *ModelPricingResolver
+	debugGatewayBodyFile   atomic.Pointer[os.File] // non-nil when SUB2API_DEBUG_GATEWAY_BODY is set
+	tlsFPProfileService    *TLSFingerprintProfileService
+	balanceNotifyService   *BalanceNotifyService
+	userPlatformQuotaRepo  UserPlatformQuotaRepository
+	routingStrategyService *RoutingStrategyService
 }
 
 // NewGatewayService creates a new GatewayService
@@ -681,42 +682,44 @@ func NewGatewayService(
 	resolver *ModelPricingResolver,
 	balanceNotifyService *BalanceNotifyService,
 	userPlatformQuotaRepo UserPlatformQuotaRepository,
+	routingStrategyService *RoutingStrategyService,
 ) *GatewayService {
 	userGroupRateTTL := resolveUserGroupRateCacheTTL(cfg)
 	modelsListTTL := resolveModelsListCacheTTL(cfg)
 
 	svc := &GatewayService{
-		accountRepo:           accountRepo,
-		groupRepo:             groupRepo,
-		usageLogRepo:          usageLogRepo,
-		usageBillingRepo:      usageBillingRepo,
-		userRepo:              userRepo,
-		userSubRepo:           userSubRepo,
-		userGroupRateRepo:     userGroupRateRepo,
-		cache:                 cache,
-		digestStore:           digestStore,
-		cfg:                   cfg,
-		schedulerSnapshot:     schedulerSnapshot,
-		concurrencyService:    concurrencyService,
-		billingService:        billingService,
-		rateLimitService:      rateLimitService,
-		billingCacheService:   billingCacheService,
-		identityService:       identityService,
-		httpUpstream:          httpUpstream,
-		deferredService:       deferredService,
-		claudeTokenProvider:   claudeTokenProvider,
-		sessionLimitCache:     sessionLimitCache,
-		rpmCache:              rpmCache,
-		userGroupRateCache:    gocache.New(userGroupRateTTL, time.Minute),
-		settingService:        settingService,
-		modelsListCache:       gocache.New(modelsListTTL, time.Minute),
-		modelsListCacheTTL:    modelsListTTL,
-		responseHeaderFilter:  compileResponseHeaderFilter(cfg),
-		tlsFPProfileService:   tlsFPProfileService,
-		channelService:        channelService,
-		resolver:              resolver,
-		balanceNotifyService:  balanceNotifyService,
-		userPlatformQuotaRepo: userPlatformQuotaRepo,
+		accountRepo:            accountRepo,
+		groupRepo:              groupRepo,
+		usageLogRepo:           usageLogRepo,
+		usageBillingRepo:       usageBillingRepo,
+		userRepo:               userRepo,
+		userSubRepo:            userSubRepo,
+		userGroupRateRepo:      userGroupRateRepo,
+		cache:                  cache,
+		digestStore:            digestStore,
+		cfg:                    cfg,
+		schedulerSnapshot:      schedulerSnapshot,
+		concurrencyService:     concurrencyService,
+		billingService:         billingService,
+		rateLimitService:       rateLimitService,
+		billingCacheService:    billingCacheService,
+		identityService:        identityService,
+		httpUpstream:           httpUpstream,
+		deferredService:        deferredService,
+		claudeTokenProvider:    claudeTokenProvider,
+		sessionLimitCache:      sessionLimitCache,
+		rpmCache:               rpmCache,
+		userGroupRateCache:     gocache.New(userGroupRateTTL, time.Minute),
+		settingService:         settingService,
+		modelsListCache:        gocache.New(modelsListTTL, time.Minute),
+		modelsListCacheTTL:     modelsListTTL,
+		responseHeaderFilter:   compileResponseHeaderFilter(cfg),
+		tlsFPProfileService:    tlsFPProfileService,
+		channelService:         channelService,
+		resolver:               resolver,
+		balanceNotifyService:   balanceNotifyService,
+		userPlatformQuotaRepo:  userPlatformQuotaRepo,
+		routingStrategyService: routingStrategyService,
 	}
 	svc.userGroupRateResolver = newUserGroupRateResolver(
 		userGroupRateRepo,
@@ -1763,26 +1766,11 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 		return excluded
 	}
 
-	// 获取模型路由配置（仅 anthropic 平台）
-	var routingAccountIDs []int64
-	if group != nil && requestedModel != "" && group.Platform == PlatformAnthropic {
-		routingAccountIDs = group.GetRoutingAccountIDs(requestedModel)
-		if s.debugModelRoutingEnabled() {
-			logger.LegacyPrintf("service.gateway", "[ModelRoutingDebug] context group routing: group_id=%d model=%s enabled=%v rules=%d matched_ids=%v session=%s sticky_account=%d",
-				group.ID, requestedModel, group.ModelRoutingEnabled, len(group.ModelRouting), routingAccountIDs, shortSessionHash(sessionHash), stickyAccountID)
-			if len(routingAccountIDs) == 0 && group.ModelRoutingEnabled && len(group.ModelRouting) > 0 {
-				keys := make([]string, 0, len(group.ModelRouting))
-				for k := range group.ModelRouting {
-					keys = append(keys, k)
-				}
-				sort.Strings(keys)
-				const maxKeys = 20
-				if len(keys) > maxKeys {
-					keys = keys[:maxKeys]
-				}
-				logger.LegacyPrintf("service.gateway", "[ModelRoutingDebug] context group routing miss: group_id=%d model=%s patterns(sample)=%v", group.ID, requestedModel, keys)
-			}
-		}
+	// 获取路由计划：智能路由策略（first-match-wins）优先，未命中回退旧版模型路由。
+	routingAccountIDs, routingHardRestrict := s.routingPlanForRequest(ctx, group, groupID, requestedModel, platform)
+	if s.debugModelRoutingEnabled() && len(routingAccountIDs) > 0 {
+		logger.LegacyPrintf("service.gateway", "[Routing] load-aware plan: group_id=%v model=%s session=%s ids=%v hard_restrict=%v sticky_account=%d",
+			derefGroupID(groupID), requestedModel, shortSessionHash(sessionHash), routingAccountIDs, routingHardRestrict, stickyAccountID)
 	}
 
 	// ============ Layer 1: 模型路由优先选择（优先级高于粘性会话） ============
@@ -2021,6 +2009,11 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 			// 路由列表中的账号都不可用（负载率 >= 100），继续到 Layer 2 回退
 			logger.LegacyPrintf("service.gateway", "[ModelRouting] All routed accounts unavailable for model=%s, falling back to normal selection", requestedModel)
 		}
+	}
+
+	// restrict 策略：候选账号都不可调度时直接失败，不回退到全量账号。
+	if routingHardRestrict && len(routingAccountIDs) > 0 {
+		return nil, fmt.Errorf("%w supporting model: %s (restrict routing strategy)", ErrNoAvailableAccounts, requestedModel)
 	}
 
 	// ============ Layer 1.5: 粘性会话（仅在无模型路由配置时生效） ============
@@ -2344,30 +2337,61 @@ func (s *GatewayService) ResolveGroupByID(ctx context.Context, groupID int64) (*
 	return s.resolveGroupByID(ctx, groupID)
 }
 
-func (s *GatewayService) routingAccountIDsForRequest(ctx context.Context, groupID *int64, requestedModel string, platform string) []int64 {
-	if groupID == nil || requestedModel == "" || platform != PlatformAnthropic {
-		return nil
-	}
-	group, err := s.resolveGroupByID(ctx, *groupID)
-	if err != nil || group == nil {
-		if s.debugModelRoutingEnabled() {
-			logger.LegacyPrintf("service.gateway", "[ModelRoutingDebug] resolve group failed: group_id=%v model=%s platform=%s err=%v", derefGroupID(groupID), requestedModel, platform, err)
+// routingPlanForRequest 解析本次请求的路由计划：返回候选账号 ID 列表以及是否为硬路由（restrict）。
+//
+//	hardRestrict=true  : 命中 restrict 策略，候选账号都不可调度时直接失败（不回退全量）。
+//	hardRestrict=false : 命中 prefer 策略或旧版模型路由，候选账号优先；不可用时回退全量（保持原行为）。
+//
+// 评估顺序：智能路由策略（first-match-wins）优先，未命中再回退到旧版 Group.ModelRouting（仅 anthropic）。
+func (s *GatewayService) routingPlanForRequest(ctx context.Context, group *Group, groupID *int64, requestedModel string, platform string) ([]int64, bool) {
+	// 1) 智能路由策略引擎
+	if s.routingStrategyService != nil {
+		ua := UserAgentFromContext(ctx)
+		mc := RoutingMatchContext{
+			Platform:   platform,
+			GroupID:    groupID,
+			Model:      requestedModel,
+			ClientType: DetectRoutingClientType(ctx, ua),
+			UserAgent:  ua,
 		}
-		return nil
-	}
-	// Preserve existing behavior: model routing only applies to anthropic groups.
-	if group.Platform != PlatformAnthropic {
-		if s.debugModelRoutingEnabled() {
-			logger.LegacyPrintf("service.gateway", "[ModelRoutingDebug] skip: non-anthropic group platform: group_id=%d group_platform=%s model=%s", group.ID, group.Platform, requestedModel)
+		dec := s.routingStrategyService.Evaluate(ctx, mc)
+		if dec.HasMatch() {
+			if len(dec.RestrictIDs) > 0 {
+				if s.debugModelRoutingEnabled() {
+					logger.LegacyPrintf("service.gateway", "[RoutingStrategy] matched restrict: strategy=%d(%s) group_id=%v model=%s client=%s ids=%v",
+						dec.MatchedID, dec.MatchedName, derefGroupID(groupID), requestedModel, mc.ClientType, dec.RestrictIDs)
+				}
+				return dec.RestrictIDs, true
+			}
+			if len(dec.PreferIDs) > 0 {
+				if s.debugModelRoutingEnabled() {
+					logger.LegacyPrintf("service.gateway", "[RoutingStrategy] matched prefer: strategy=%d(%s) group_id=%v model=%s client=%s ids=%v",
+						dec.MatchedID, dec.MatchedName, derefGroupID(groupID), requestedModel, mc.ClientType, dec.PreferIDs)
+				}
+				return dec.PreferIDs, false
+			}
 		}
-		return nil
 	}
-	ids := group.GetRoutingAccountIDs(requestedModel)
-	if s.debugModelRoutingEnabled() {
-		logger.LegacyPrintf("service.gateway", "[ModelRoutingDebug] routing lookup: group_id=%d model=%s enabled=%v rules=%d matched_ids=%v",
-			group.ID, requestedModel, group.ModelRoutingEnabled, len(group.ModelRouting), ids)
+
+	// 2) 回退：旧版分组模型路由（仅 anthropic，软优先语义）
+	if requestedModel == "" || platform != PlatformAnthropic {
+		return nil, false
 	}
-	return ids
+	g := group
+	if g == nil && groupID != nil {
+		if resolved, err := s.resolveGroupByID(ctx, *groupID); err == nil {
+			g = resolved
+		}
+	}
+	if g == nil || g.Platform != PlatformAnthropic {
+		return nil, false
+	}
+	ids := g.GetRoutingAccountIDs(requestedModel)
+	if s.debugModelRoutingEnabled() && len(ids) > 0 {
+		logger.LegacyPrintf("service.gateway", "[ModelRoutingDebug] legacy routing lookup: group_id=%d model=%s enabled=%v rules=%d matched_ids=%v",
+			g.ID, requestedModel, g.ModelRoutingEnabled, len(g.ModelRouting), ids)
+	}
+	return ids, false
 }
 
 func (s *GatewayService) resolveGatewayGroup(ctx context.Context, groupID *int64) (*Group, *int64, error) {
@@ -3216,7 +3240,7 @@ func shuffleWithinPriority(accounts []*Account) {
 // selectAccountForModelWithPlatform 选择单平台账户（完全隔离）
 func (s *GatewayService) selectAccountForModelWithPlatform(ctx context.Context, groupID *int64, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}, platform string) (*Account, error) {
 	preferOAuth := platform == PlatformGemini
-	routingAccountIDs := s.routingAccountIDsForRequest(ctx, groupID, requestedModel, platform)
+	routingAccountIDs, routingHardRestrict := s.routingPlanForRequest(ctx, nil, groupID, requestedModel, platform)
 
 	// require_privacy_set: 获取分组信息
 	var schedGroup *Group
@@ -3354,6 +3378,11 @@ func (s *GatewayService) selectAccountForModelWithPlatform(ctx context.Context, 
 		logger.LegacyPrintf("service.gateway", "[ModelRouting] No routed accounts available for model=%s, falling back to normal selection", requestedModel)
 	}
 
+	// restrict 策略：候选账号都不可调度时直接失败，不回退到全量账号。
+	if routingHardRestrict {
+		return nil, fmt.Errorf("%w supporting model: %s (restrict routing strategy)", ErrNoAvailableAccounts, requestedModel)
+	}
+
 	// 1. 查询粘性会话
 	if sessionHash != "" && s.cache != nil {
 		accountID, err := s.cache.GetSessionAccountID(ctx, derefGroupID(groupID), sessionHash)
@@ -3476,7 +3505,7 @@ func (s *GatewayService) selectAccountForModelWithPlatform(ctx context.Context, 
 // 查询原生平台账户 + 启用 mixed_scheduling 的 antigravity 账户
 func (s *GatewayService) selectAccountWithMixedScheduling(ctx context.Context, groupID *int64, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}, nativePlatform string) (*Account, error) {
 	preferOAuth := nativePlatform == PlatformGemini
-	routingAccountIDs := s.routingAccountIDsForRequest(ctx, groupID, requestedModel, nativePlatform)
+	routingAccountIDs, routingHardRestrict := s.routingPlanForRequest(ctx, nil, groupID, requestedModel, nativePlatform)
 
 	// require_privacy_set: 获取分组信息
 	var schedGroup *Group
@@ -3612,6 +3641,11 @@ func (s *GatewayService) selectAccountWithMixedScheduling(ctx context.Context, g
 			return selected, nil
 		}
 		logger.LegacyPrintf("service.gateway", "[ModelRouting] No routed accounts available for model=%s, falling back to normal selection", requestedModel)
+	}
+
+	// restrict 策略：候选账号都不可调度时直接失败，不回退到全量账号。
+	if routingHardRestrict {
+		return nil, fmt.Errorf("%w supporting model: %s (restrict routing strategy)", ErrNoAvailableAccounts, requestedModel)
 	}
 
 	// 1. 查询粘性会话
