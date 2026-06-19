@@ -26,6 +26,12 @@ func newTestRoutingService(strategies ...RoutingStrategy) *RoutingStrategyServic
 	return NewRoutingStrategyService(&stubRoutingStrategyRepo{enabled: strategies})
 }
 
+// ptrInt64 must live in this untagged test file so it is available to both the
+// default build (golangci-lint typecheck) and the `unit`-tagged build. The
+// payment_config_plans_validation_test.go helpers are gated behind //go:build
+// unit, so they cannot provide it for the default build. Do not move/remove.
+func ptrInt64(v int64) *int64 { return &v }
+
 func TestRoutingEvaluate_ModelWildcardRestrict(t *testing.T) {
 	svc := newTestRoutingService(RoutingStrategy{
 		ID: 1, Name: "opus->A", Enabled: true, Priority: 10,
