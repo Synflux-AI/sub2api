@@ -26,8 +26,6 @@ func newTestRoutingService(strategies ...RoutingStrategy) *RoutingStrategyServic
 	return NewRoutingStrategyService(&stubRoutingStrategyRepo{enabled: strategies})
 }
 
-func ptrInt64(v int64) *int64 { return &v }
-
 func TestRoutingEvaluate_ModelWildcardRestrict(t *testing.T) {
 	svc := newTestRoutingService(RoutingStrategy{
 		ID: 1, Name: "opus->A", Enabled: true, Priority: 10,
