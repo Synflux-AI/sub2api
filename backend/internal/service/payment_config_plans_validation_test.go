@@ -133,7 +133,6 @@ func TestValidatePlanPatch_NilOriginalPrice(t *testing.T) {
 
 func ptrStr(s string) *string     { return &s }
 func ptrInt(i int) *int           { return &i }
-func ptrInt64(i int64) *int64     { return &i }
 func ptrFloat(f float64) *float64 { return &f }
 
 func TestValidatePlanPatch_EmptyName(t *testing.T) {
