@@ -298,6 +298,20 @@ func (s *OpsAlertEvaluatorService) evaluateOnce(interval time.Duration) {
 
 			eventsCreated++
 			if created != nil && created.ID > 0 {
+				// 错误率/成功率类告警:回查窗口内明细,附上业务上下文(谁/什么错/哪个上游)。
+				// 查询失败或无明细时静默降级,告警仍照常发送。
+				if isOpsAlertErrorRateFamily(rule.MetricType) {
+					bdFilter := &OpsDashboardFilter{
+						Platform: scopePlatform,
+						GroupID:  scopeGroupID,
+					}
+					if bd, bdErr := s.opsRepo.GetAlertErrorBreakdown(ctx, bdFilter, windowStart, windowEnd, 5); bdErr == nil && bd != nil {
+						bd.WindowMinutes = windowMinutes
+						created.Breakdown = bd
+					} else if bdErr != nil {
+						logger.LegacyPrintf("service.ops_alert_evaluator", "[OpsAlertEvaluator] breakdown query failed (rule=%d): %v", rule.ID, bdErr)
+					}
+				}
 				if s.maybeSendAlertEmail(ctx, runtimeCfg, rule, created) {
 					emailsSent++
 				}
@@ -660,6 +674,16 @@ func buildOpsAlertDimensions(platform string, groupID *int64) map[string]any {
 	return dims
 }
 
+// isOpsAlertErrorRateFamily 判断指标是否为"请求错误"类(可回查 ops_error_logs 得到业务上下文)。
+func isOpsAlertErrorRateFamily(metricType string) bool {
+	switch strings.TrimSpace(strings.ToLower(metricType)) {
+	case "error_rate", "success_rate", "upstream_error_rate":
+		return true
+	default:
+		return false
+	}
+}
+
 func buildOpsAlertDescription(rule *OpsAlertRule, value float64, windowMinutes int, platform string, groupID *int64) string {
 	if rule == nil {
 		return ""
@@ -809,7 +833,7 @@ func buildOpsAlertEmailBody(rule *OpsAlertRule, event *OpsAlertEvent) string {
 	if event.ThresholdValue != nil {
 		threshold = fmt.Sprintf("%.2f", *event.ThresholdValue)
 	}
-	return fmt.Sprintf(`
+	body := fmt.Sprintf(`
 <h2>Ops Alert</h2>
 <p><b>Rule</b>: %s</p>
 <p><b>Severity</b>: %s</p>
@@ -827,6 +851,77 @@ func buildOpsAlertEmailBody(rule *OpsAlertRule, event *OpsAlertEvent) string {
 		event.FiredAt.Format(time.RFC3339),
 		htmlEscape(event.Description),
 	)
+	body += buildOpsAlertEmailBreakdownHTML(event.Breakdown)
+	return body
+}
+
+// buildOpsAlertEmailBreakdownHTML 把业务上下文渲染成邮件 HTML 片段(无明细时返回空串)。
+func buildOpsAlertEmailBreakdownHTML(bd *OpsAlertBreakdown) string {
+	if bd == nil {
+		return ""
+	}
+	win := bd.WindowMinutes
+	if win <= 0 {
+		win = 1
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "<hr/><h3>🔎 业务上下文（近 %d 分钟）</h3>", win)
+	fmt.Fprintf(&b, "<p>窗口请求 <b>%d</b> · 错误 <b>%d</b>（客户端 4xx %d · 上游 5xx %d）</p>", bd.WindowRequests, bd.TotalErrors, bd.Client4xx, bd.Server5xx)
+
+	if len(bd.Platforms) > 0 {
+		parts := make([]string, 0, len(bd.Platforms))
+		for _, p := range bd.Platforms {
+			parts = append(parts, fmt.Sprintf("%s %d", htmlEscape(alertPlatformDisplay(p.Platform)), p.Count))
+		}
+		fmt.Fprintf(&b, "<p><b>🌐 平台分布</b>：%s</p>", strings.Join(parts, " · "))
+	}
+	if len(bd.TopUsers) > 0 {
+		b.WriteString("<p><b>👤 触发用户 TOP（含各自错误构成）</b></p><ul>")
+		for _, u := range bd.TopUsers {
+			comp := ""
+			if len(u.Errors) > 0 {
+				cs := make([]string, 0, len(u.Errors))
+				for _, e := range u.Errors {
+					cs = append(cs, fmt.Sprintf("%s ×%d", htmlEscape(alertErrorShort(e)), e.Count))
+				}
+				comp = "（" + strings.Join(cs, " / ") + "）"
+			}
+			fmt.Fprintf(&b, "<li>%s — <b>%d</b> %s</li>", htmlEscape(alertUserLabel(u)), u.Count, comp)
+		}
+		b.WriteString("</ul>")
+	}
+	if len(bd.TopErrorTypes) > 0 {
+		b.WriteString("<p><b>🧩 错误类型 TOP</b></p><ul>")
+		for _, e := range bd.TopErrorTypes {
+			fmt.Fprintf(&b, "<li>%s — <b>%d</b></li>", htmlEscape(alertErrorTypePlain(e)), e.Count)
+		}
+		b.WriteString("</ul>")
+	}
+	if len(bd.TopUpstreams) > 0 {
+		b.WriteString("<p><b>🛰️ 上游渠道 TOP（平台 · 渠道 · 模型）</b></p><ul>")
+		for _, up := range bd.TopUpstreams {
+			if up.AccountID <= 0 {
+				fmt.Fprintf(&b, "<li>无上游（客户端错误，未到选号）— %d</li>", up.Count)
+				continue
+			}
+			fmt.Fprintf(&b, "<li>%s — <b>%d</b></li>", htmlEscape(alertUpstreamLabel(up)), up.Count)
+		}
+		b.WriteString("</ul>")
+	}
+	if len(bd.Samples) > 0 {
+		b.WriteString("<p><b>📋 样例报错</b></p><ul>")
+		for _, s := range bd.Samples {
+			fmt.Fprintf(&b, "<li><code>%d</code> %s</li>", s.StatusCode, htmlEscape(truncateAlertSample(s.Message, 240)))
+		}
+		b.WriteString("</ul>")
+	}
+	return b.String()
+}
+
+// alertErrorTypePlain 错误类型的纯文本标签(邮件用,无 markdown 反引号)。
+func alertErrorTypePlain(e OpsAlertErrorTypeStat) string {
+	label := alertErrorTypeLabel(e)
+	return strings.ReplaceAll(label, "`", "")
 }
 
 func shouldSendOpsAlertEmailByMinSeverity(minSeverity string, ruleSeverity string) bool {

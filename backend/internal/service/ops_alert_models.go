@@ -53,12 +53,69 @@ type OpsAlertEvent struct {
 
 	Dimensions map[string]any `json:"dimensions,omitempty"`
 
+	// Breakdown 是触发瞬间回查明细日志聚合出的业务上下文(Top 用户/错误/上游 + 样例)。
+	// 仅用于丰富告警通知内容,不持久化到 ops_alert_events;无明细或非错误类指标时为 nil。
+	Breakdown *OpsAlertBreakdown `json:"breakdown,omitempty"`
+
 	FiredAt    time.Time  `json:"fired_at"`
 	ResolvedAt *time.Time `json:"resolved_at,omitempty"`
 
 	EmailSent bool      `json:"email_sent"`
 	LarkSent  bool      `json:"lark_sent"`
 	CreatedAt time.Time `json:"created_at"`
+}
+
+// OpsAlertBreakdown 描述错误率/成功率类告警在评估窗口内的业务维度明细。
+type OpsAlertBreakdown struct {
+	WindowMinutes  int                     `json:"window_minutes"`
+	WindowRequests int64                   `json:"window_requests"` // 窗口内请求总数(成功 + SLA 错误),作为错误率分母
+	TotalErrors    int64                   `json:"total_errors"`
+	Client4xx      int64                   `json:"client_4xx"` // 客户端错误(状态码 4xx)条数
+	Server5xx      int64                   `json:"server_5xx"` // 上游/网关错误(状态码 >=500)条数
+	Platforms      []OpsAlertPlatformStat  `json:"platforms,omitempty"`
+	TopUsers       []OpsAlertUserStat      `json:"top_users,omitempty"`
+	TopErrorTypes  []OpsAlertErrorTypeStat `json:"top_error_types,omitempty"`
+	TopUpstreams   []OpsAlertUpstreamStat  `json:"top_upstreams,omitempty"`
+	Samples        []OpsAlertSampleStat    `json:"samples,omitempty"`
+}
+
+// OpsAlertPlatformStat 单个平台(anthropic/openai 等)在窗口内的错误计数。
+type OpsAlertPlatformStat struct {
+	Platform string `json:"platform,omitempty"`
+	Count    int64  `json:"count"`
+}
+
+// OpsAlertUserStat 单个用户在窗口内的错误计数;Errors 为该用户的错误构成(Top 几类)。
+type OpsAlertUserStat struct {
+	UserID int64                   `json:"user_id"`
+	Email  string                  `json:"email,omitempty"`
+	Notes  string                  `json:"notes,omitempty"`
+	Count  int64                   `json:"count"`
+	Errors []OpsAlertErrorTypeStat `json:"errors,omitempty"`
+}
+
+// OpsAlertErrorTypeStat 单类错误(error_type + 网关/上游状态码)的计数。
+type OpsAlertErrorTypeStat struct {
+	ErrorType          string `json:"error_type,omitempty"`
+	StatusCode         int    `json:"status_code,omitempty"`
+	UpstreamStatusCode int    `json:"upstream_status_code,omitempty"`
+	Count              int64  `json:"count"`
+}
+
+// OpsAlertUpstreamStat 单个上游(平台 · 渠道名 · 模型)在窗口内的错误计数。
+// AccountID<=0 表示请求未走到选号(客户端错误),此时 AccountName 为空。
+type OpsAlertUpstreamStat struct {
+	AccountID   int64  `json:"account_id,omitempty"`
+	AccountName string `json:"account_name,omitempty"`
+	Platform    string `json:"platform,omitempty"`
+	Model       string `json:"model,omitempty"`
+	Count       int64  `json:"count"`
+}
+
+// OpsAlertSampleStat 单条样例报错(状态码 + 报错原文)。
+type OpsAlertSampleStat struct {
+	StatusCode int    `json:"status_code,omitempty"`
+	Message    string `json:"message"`
 }
 
 type OpsAlertSilence struct {
