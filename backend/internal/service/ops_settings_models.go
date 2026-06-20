@@ -95,6 +95,7 @@ type OpsAdvancedSettings struct {
 	DataRetention                   OpsDataRetentionSettings               `json:"data_retention"`
 	Aggregation                     OpsAggregationSettings                 `json:"aggregation"`
 	OpenAIAccountQuotaAutoPause     OpsOpenAIAccountQuotaAutoPauseSettings `json:"openai_account_quota_auto_pause"`
+	AccountErrorRateMonitor         OpsAccountErrorRateMonitorSettings     `json:"account_error_rate_monitor"`
 	IgnoreCountTokensErrors         bool                                   `json:"ignore_count_tokens_errors"`
 	IgnoreContextCanceled           bool                                   `json:"ignore_context_canceled"`
 	IgnoreNoAvailableAccounts       bool                                   `json:"ignore_no_available_accounts"`
@@ -109,6 +110,21 @@ type OpsAdvancedSettings struct {
 type OpsOpenAIAccountQuotaAutoPauseSettings struct {
 	DefaultThreshold5h float64 `json:"default_threshold_5h"`
 	DefaultThreshold7d float64 `json:"default_threshold_7d"`
+}
+
+// OpsAccountErrorRateMonitorSettings 配置「按渠道(账号)上游错误率」的分钟级巡检：
+// 某个账号窗口内的上游错误率破阈值即可单独告警，并(可开关)自动把它临时移出调度列表，
+// 避免单个故障渠道被整体平均掩盖、影响客户。与整体 upstream_error_rate 告警相互独立。
+type OpsAccountErrorRateMonitorSettings struct {
+	Enabled               bool    `json:"enabled"`                 // 总开关，默认 false
+	WindowMinutes         int     `json:"window_minutes"`          // 错误率统计窗口(分钟)，默认 5
+	ErrorRateThreshold    float64 `json:"error_rate_threshold"`    // 上游错误率阈值(0-100)，默认 30
+	MinRequests           int     `json:"min_requests"`            // 窗口内最小请求样本，低于此值跳过判定(防小样本抖动)，默认 20
+	SustainedMinutes      int     `json:"sustained_minutes"`       // 连续破阈值持续时长(分钟)，默认 0(单次即触发)
+	AutoDetach            bool    `json:"auto_detach"`             // 是否自动剥离(临时下线)，默认 false(仅告警)
+	DetachCooldownMinutes int     `json:"detach_cooldown_minutes"` // 自动剥离回归时长：0=保持下线需人工恢复，>0=N分钟后自愈，默认 30
+	NotifyEnabled         bool    `json:"notify_enabled"`          // 是否发告警通知，默认 true
+	AlertCooldownMinutes  int     `json:"alert_cooldown_minutes"`  // 同一渠道两次告警最小间隔(分钟)，默认 30
 }
 
 type OpsDataRetentionSettings struct {

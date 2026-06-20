@@ -308,6 +308,21 @@ func ProvideOpsAlertEvaluatorService(
 	return svc
 }
 
+// ProvideAccountErrorRateMonitorService creates and starts AccountErrorRateMonitorService.
+func ProvideAccountErrorRateMonitorService(
+	opsService *OpsService,
+	opsRepo OpsRepository,
+	accountRepo AccountRepository,
+	emailService *EmailService,
+	larkService *LarkService,
+	redisClient *redis.Client,
+	cfg *config.Config,
+) *AccountErrorRateMonitorService {
+	svc := NewAccountErrorRateMonitorService(opsService, opsRepo, accountRepo, emailService, larkService, redisClient, cfg)
+	svc.Start()
+	return svc
+}
+
 // ProvideOpsCleanupService creates and starts OpsCleanupService (cron scheduled).
 // channelMonitorSvc 让维护任务（聚合 + 历史/聚合软删）跟随 ops 清理 cron 一起跑，
 // 共享 leader lock + heartbeat。
@@ -561,6 +576,7 @@ var ProviderSet = wire.NewSet(
 	ProvideOpsMetricsCollector,
 	ProvideOpsAggregationService,
 	ProvideOpsAlertEvaluatorService,
+	ProvideAccountErrorRateMonitorService,
 	ProvideOpsCleanupService,
 	ProvideOpsScheduledReportService,
 	NewEmailService,

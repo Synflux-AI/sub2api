@@ -370,6 +370,7 @@ func defaultOpsAdvancedSettings() *OpsAdvancedSettings {
 			AggregationEnabled: false,
 		},
 		OpenAIAccountQuotaAutoPause:     OpsOpenAIAccountQuotaAutoPauseSettings{},
+		AccountErrorRateMonitor:         defaultOpsAccountErrorRateMonitorSettings(),
 		IgnoreCountTokensErrors:         true,  // count_tokens 404 是预期行为，默认忽略
 		IgnoreContextCanceled:           true,  // Default to true - client disconnects are not errors
 		IgnoreNoAvailableAccounts:       false, // Default to false - this is a real routing issue
@@ -387,6 +388,7 @@ func normalizeOpsAdvancedSettings(cfg *OpsAdvancedSettings) {
 	}
 	cfg.OpenAIAccountQuotaAutoPause.DefaultThreshold5h = clampOpsQuotaAutoPauseThreshold(cfg.OpenAIAccountQuotaAutoPause.DefaultThreshold5h)
 	cfg.OpenAIAccountQuotaAutoPause.DefaultThreshold7d = clampOpsQuotaAutoPauseThreshold(cfg.OpenAIAccountQuotaAutoPause.DefaultThreshold7d)
+	normalizeOpsAccountErrorRateMonitorSettings(&cfg.AccountErrorRateMonitor)
 	cfg.DataRetention.CleanupSchedule = strings.TrimSpace(cfg.DataRetention.CleanupSchedule)
 	if cfg.DataRetention.CleanupSchedule == "" {
 		cfg.DataRetention.CleanupSchedule = opsCleanupDefaultSchedule
@@ -418,6 +420,49 @@ func clampOpsQuotaAutoPauseThreshold(value float64) float64 {
 	return value
 }
 
+func defaultOpsAccountErrorRateMonitorSettings() OpsAccountErrorRateMonitorSettings {
+	return OpsAccountErrorRateMonitorSettings{
+		Enabled:               false,
+		WindowMinutes:         5,
+		ErrorRateThreshold:    30,
+		MinRequests:           20,
+		SustainedMinutes:      0,
+		AutoDetach:            false,
+		DetachCooldownMinutes: 30,
+		NotifyEnabled:         true,
+		AlertCooldownMinutes:  30,
+	}
+}
+
+// normalizeOpsAccountErrorRateMonitorSettings 回填非法/缺省值，但保留用户主动设的合法 0
+// (SustainedMinutes=0 表示单次即触发、DetachCooldownMinutes=0 表示保持下线需人工恢复)。
+func normalizeOpsAccountErrorRateMonitorSettings(cfg *OpsAccountErrorRateMonitorSettings) {
+	if cfg == nil {
+		return
+	}
+	if cfg.WindowMinutes <= 0 {
+		cfg.WindowMinutes = 5
+	}
+	if cfg.ErrorRateThreshold < 0 {
+		cfg.ErrorRateThreshold = 30
+	}
+	if cfg.ErrorRateThreshold > 100 {
+		cfg.ErrorRateThreshold = 100
+	}
+	if cfg.MinRequests < 0 {
+		cfg.MinRequests = 0
+	}
+	if cfg.SustainedMinutes < 0 {
+		cfg.SustainedMinutes = 0
+	}
+	if cfg.DetachCooldownMinutes < 0 {
+		cfg.DetachCooldownMinutes = 0
+	}
+	if cfg.AlertCooldownMinutes < 0 {
+		cfg.AlertCooldownMinutes = 0
+	}
+}
+
 func validateOpsAdvancedSettings(cfg *OpsAdvancedSettings) error {
 	if cfg == nil {
 		return errors.New("invalid config")
@@ -434,6 +479,15 @@ func validateOpsAdvancedSettings(cfg *OpsAdvancedSettings) error {
 	}
 	if cfg.AutoRefreshIntervalSec < 15 || cfg.AutoRefreshIntervalSec > 300 {
 		return errors.New("auto_refresh_interval_seconds must be between 15 and 300")
+	}
+	if cfg.AccountErrorRateMonitor.ErrorRateThreshold < 0 || cfg.AccountErrorRateMonitor.ErrorRateThreshold > 100 {
+		return errors.New("account_error_rate_monitor.error_rate_threshold must be between 0 and 100")
+	}
+	if cfg.AccountErrorRateMonitor.WindowMinutes < 1 || cfg.AccountErrorRateMonitor.WindowMinutes > 1440 {
+		return errors.New("account_error_rate_monitor.window_minutes must be between 1 and 1440")
+	}
+	if cfg.AccountErrorRateMonitor.MinRequests < 0 {
+		return errors.New("account_error_rate_monitor.min_requests must be >= 0")
 	}
 	return nil
 }
