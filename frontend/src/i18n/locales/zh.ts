@@ -387,7 +387,7 @@ export default {
     profile: '个人资料',
     users: '用户管理',
     groups: '分组管理',
-    routingStrategies: '智能路由',
+    routingStrategies: '路由策略',
     channels: '渠道管理',
     availableChannels: '可用渠道',
     subscriptions: '订阅管理',
@@ -2163,7 +2163,7 @@ export default {
 
     // Routing Strategies
     routingStrategies: {
-      title: '智能路由策略',
+      title: '路由策略',
       description: '按模型 / 客户端 / User-Agent 将请求路由到指定账号',
       create: '新建策略',
       edit: '编辑策略',
