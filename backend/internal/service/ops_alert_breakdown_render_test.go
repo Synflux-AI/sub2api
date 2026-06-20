@@ -126,10 +126,10 @@ func flattenAny(v any) string {
 				walk(val)
 			}
 		case string:
-			b.WriteString(t)
-			b.WriteString("\n")
+			_, _ = b.WriteString(t)
+			_, _ = b.WriteString("\n")
 		default:
-			b.WriteString("")
+			_, _ = b.WriteString("")
 		}
 	}
 	walk(v)

@@ -421,7 +421,7 @@ func buildAlertRichElements(rule *OpsAlertRule, event *OpsAlertEvent) []any {
 	// 👤 触发用户 TOP(含各自错误构成)
 	if len(bd.TopUsers) > 0 {
 		var b strings.Builder
-		b.WriteString("**👤 触发用户 TOP**（含各自错误构成）")
+		_, _ = b.WriteString("**👤 触发用户 TOP**（含各自错误构成）")
 		for i, u := range bd.TopUsers {
 			comp := ""
 			if len(u.Errors) > 0 {
@@ -439,7 +439,7 @@ func buildAlertRichElements(rule *OpsAlertRule, event *OpsAlertEvent) []any {
 	// 🧩 错误类型 TOP
 	if len(bd.TopErrorTypes) > 0 {
 		var b strings.Builder
-		b.WriteString("**🧩 错误类型 TOP**")
+		_, _ = b.WriteString("**🧩 错误类型 TOP**")
 		for i, e := range bd.TopErrorTypes {
 			fmt.Fprintf(&b, "\n• %s — <font color='%s'>**%d**</font>", alertErrorTypeLabel(e), alertCountColor(i), e.Count)
 		}
@@ -449,7 +449,7 @@ func buildAlertRichElements(rule *OpsAlertRule, event *OpsAlertEvent) []any {
 	// 🛰️ 上游渠道 TOP(平台 · 渠道名 · 模型)
 	if len(bd.TopUpstreams) > 0 {
 		var b strings.Builder
-		b.WriteString("**🛰️ 上游渠道 TOP**（平台 · 渠道 · 模型）")
+		_, _ = b.WriteString("**🛰️ 上游渠道 TOP**（平台 · 渠道 · 模型）")
 		for i, up := range bd.TopUpstreams {
 			if up.AccountID <= 0 {
 				fmt.Fprintf(&b, "\n• <font color='grey'>无上游（客户端错误，未到选号）— %d</font>", up.Count)
@@ -463,7 +463,7 @@ func buildAlertRichElements(rule *OpsAlertRule, event *OpsAlertEvent) []any {
 	// 📋 样例报错
 	if len(bd.Samples) > 0 {
 		var b strings.Builder
-		b.WriteString("**📋 样例报错**")
+		_, _ = b.WriteString("**📋 样例报错**")
 		for _, s := range bd.Samples {
 			fmt.Fprintf(&b, "\n`%d` %s", s.StatusCode, truncateAlertSample(s.Message, 160))
 		}

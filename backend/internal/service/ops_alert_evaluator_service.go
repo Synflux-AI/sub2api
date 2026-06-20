@@ -876,7 +876,7 @@ func buildOpsAlertEmailBreakdownHTML(bd *OpsAlertBreakdown) string {
 		fmt.Fprintf(&b, "<p><b>🌐 平台分布</b>：%s</p>", strings.Join(parts, " · "))
 	}
 	if len(bd.TopUsers) > 0 {
-		b.WriteString("<p><b>👤 触发用户 TOP（含各自错误构成）</b></p><ul>")
+		_, _ = b.WriteString("<p><b>👤 触发用户 TOP（含各自错误构成）</b></p><ul>")
 		for _, u := range bd.TopUsers {
 			comp := ""
 			if len(u.Errors) > 0 {
@@ -888,17 +888,17 @@ func buildOpsAlertEmailBreakdownHTML(bd *OpsAlertBreakdown) string {
 			}
 			fmt.Fprintf(&b, "<li>%s — <b>%d</b> %s</li>", htmlEscape(alertUserLabel(u)), u.Count, comp)
 		}
-		b.WriteString("</ul>")
+		_, _ = b.WriteString("</ul>")
 	}
 	if len(bd.TopErrorTypes) > 0 {
-		b.WriteString("<p><b>🧩 错误类型 TOP</b></p><ul>")
+		_, _ = b.WriteString("<p><b>🧩 错误类型 TOP</b></p><ul>")
 		for _, e := range bd.TopErrorTypes {
 			fmt.Fprintf(&b, "<li>%s — <b>%d</b></li>", htmlEscape(alertErrorTypePlain(e)), e.Count)
 		}
-		b.WriteString("</ul>")
+		_, _ = b.WriteString("</ul>")
 	}
 	if len(bd.TopUpstreams) > 0 {
-		b.WriteString("<p><b>🛰️ 上游渠道 TOP（平台 · 渠道 · 模型）</b></p><ul>")
+		_, _ = b.WriteString("<p><b>🛰️ 上游渠道 TOP（平台 · 渠道 · 模型）</b></p><ul>")
 		for _, up := range bd.TopUpstreams {
 			if up.AccountID <= 0 {
 				fmt.Fprintf(&b, "<li>无上游（客户端错误，未到选号）— %d</li>", up.Count)
@@ -906,14 +906,14 @@ func buildOpsAlertEmailBreakdownHTML(bd *OpsAlertBreakdown) string {
 			}
 			fmt.Fprintf(&b, "<li>%s — <b>%d</b></li>", htmlEscape(alertUpstreamLabel(up)), up.Count)
 		}
-		b.WriteString("</ul>")
+		_, _ = b.WriteString("</ul>")
 	}
 	if len(bd.Samples) > 0 {
-		b.WriteString("<p><b>📋 样例报错</b></p><ul>")
+		_, _ = b.WriteString("<p><b>📋 样例报错</b></p><ul>")
 		for _, s := range bd.Samples {
 			fmt.Fprintf(&b, "<li><code>%d</code> %s</li>", s.StatusCode, htmlEscape(truncateAlertSample(s.Message, 240)))
 		}
-		b.WriteString("</ul>")
+		_, _ = b.WriteString("</ul>")
 	}
 	return b.String()
 }

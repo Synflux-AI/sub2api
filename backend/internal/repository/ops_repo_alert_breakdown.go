@@ -65,7 +65,7 @@ func (r *opsRepository) GetAlertErrorBreakdown(ctx context.Context, filter *serv
 				bd.Platforms = append(bd.Platforms, p)
 			}
 		}
-		rows.Close()
+		_ = rows.Close()
 	}
 
 	// 4) Top 用户(仅聚合 user_id;email/notes 与各自错误构成随后回查)
@@ -80,7 +80,7 @@ func (r *opsRepository) GetAlertErrorBreakdown(ctx context.Context, filter *serv
 				userIDs = append(userIDs, u.UserID)
 			}
 		}
-		rows.Close()
+		_ = rows.Close()
 	}
 	r.fillAlertUserIdentities(ctx, bd.TopUsers, userIDs)
 	r.fillAlertUserErrorComposition(ctx, bd.TopUsers, where, args)
@@ -95,7 +95,7 @@ func (r *opsRepository) GetAlertErrorBreakdown(ctx context.Context, filter *serv
 				bd.TopErrorTypes = append(bd.TopErrorTypes, e)
 			}
 		}
-		rows.Close()
+		_ = rows.Close()
 	}
 
 	// 6) Top 上游(平台 · 渠道名 · 模型);account_id 为空表示未走到选号(客户端错误)。
@@ -112,7 +112,7 @@ func (r *opsRepository) GetAlertErrorBreakdown(ctx context.Context, filter *serv
 				bd.TopUpstreams = append(bd.TopUpstreams, up)
 			}
 		}
-		rows.Close()
+		_ = rows.Close()
 	}
 
 	// 7) 样例报错(最近 3 条非空报错原文,优先取上游原文)
@@ -125,7 +125,7 @@ func (r *opsRepository) GetAlertErrorBreakdown(ctx context.Context, filter *serv
 				bd.Samples = append(bd.Samples, s)
 			}
 		}
-		rows.Close()
+		_ = rows.Close()
 	}
 
 	return bd, nil
@@ -147,7 +147,7 @@ func (r *opsRepository) fillAlertUserIdentities(ctx context.Context, stats []ser
 	if err != nil {
 		return
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	type ident struct {
 		email string
@@ -193,7 +193,7 @@ func (r *opsRepository) fillAlertUserErrorComposition(ctx context.Context, stats
 	if err != nil {
 		return
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	byUser := make(map[int64][]service.OpsAlertErrorTypeStat, len(stats))
 	for rows.Next() {
