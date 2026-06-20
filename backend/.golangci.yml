@@ -19,6 +19,7 @@ linters:
           list-mode: original
           files:
             - "**/internal/service/**"
+            - "!**/internal/service/account_error_rate_monitor_service.go"
             - "!**/internal/service/ops_aggregation_service.go"
             - "!**/internal/service/ops_alert_evaluator_service.go"
             - "!**/internal/service/ops_cleanup_service.go"

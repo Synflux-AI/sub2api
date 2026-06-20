@@ -13,6 +13,29 @@ const (
 	OpsAlertStatusManualResolved = "manual_resolved"
 )
 
+// OpsAccountErrorRateRow 是「按渠道(账号)上游错误率」巡检的单账号聚合结果。
+// Requests 为窗口内请求总数(成功 usage_logs + SLA 错误),作为错误率分母;
+// UpstreamErrors 为上游错误数(error_owner=provider 且非业务限流且非 429/529),口径与
+// 整体 upstream_error_rate 完全一致。ErrorRate() 返回百分比(0-100)。
+//
+// 不含分组维度:账号与分组为多对多(account_groups),单账号没有唯一 group_id;
+// 巡检按全局单一阈值遍历所有渠道,无需分组归属。
+type OpsAccountErrorRateRow struct {
+	AccountID      int64
+	AccountName    string
+	Platform       string
+	Requests       int64
+	UpstreamErrors int64
+}
+
+// ErrorRate 返回该账号窗口内的上游错误率百分比(0-100);无请求样本时返回 0。
+func (r OpsAccountErrorRateRow) ErrorRate() float64 {
+	if r.Requests <= 0 {
+		return 0
+	}
+	return float64(r.UpstreamErrors) / float64(r.Requests) * 100
+}
+
 type OpsAlertRule struct {
 	ID          int64  `json:"id"`
 	Name        string `json:"name"`
