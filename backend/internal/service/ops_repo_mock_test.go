@@ -201,4 +201,8 @@ func (m *opsRepoMock) LookupDeletedKeyAudit(ctx context.Context, key string) (*D
 	return nil, nil
 }
 
+func (m *opsRepoMock) GetAlertErrorBreakdown(ctx context.Context, filter *OpsDashboardFilter, start, end time.Time, topN int) (*OpsAlertBreakdown, error) {
+	return nil, nil
+}
+
 var _ OpsRepository = (*opsRepoMock)(nil)

@@ -49,6 +49,9 @@ type OpsRepository interface {
 	GetActiveAlertEvent(ctx context.Context, ruleID int64) (*OpsAlertEvent, error)
 	GetLatestAlertEvent(ctx context.Context, ruleID int64) (*OpsAlertEvent, error)
 	CreateAlertEvent(ctx context.Context, event *OpsAlertEvent) (*OpsAlertEvent, error)
+	// GetAlertErrorBreakdown 在 [start,end) 窗口内回查 ops_error_logs,聚合出业务维度明细
+	// (Top 用户/错误类型/上游 + 样例报错),用于丰富错误率类告警的通知内容。
+	GetAlertErrorBreakdown(ctx context.Context, filter *OpsDashboardFilter, start, end time.Time, topN int) (*OpsAlertBreakdown, error)
 	UpdateAlertEventStatus(ctx context.Context, eventID int64, status string, resolvedAt *time.Time) error
 	UpdateAlertEventEmailSent(ctx context.Context, eventID int64, emailSent bool) error
 	UpdateAlertEventLarkSent(ctx context.Context, eventID int64, larkSent bool) error
