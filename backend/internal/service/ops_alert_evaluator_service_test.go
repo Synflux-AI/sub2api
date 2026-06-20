@@ -14,8 +14,10 @@ var _ OpsRepository = (*stubOpsRepo)(nil)
 
 type stubOpsRepo struct {
 	OpsRepository
-	overview *OpsDashboardOverview
-	err      error
+	overview  *OpsDashboardOverview
+	err       error
+	cacheSums OpsCacheTokenSums
+	cacheErr  error
 }
 
 func (s *stubOpsRepo) GetDashboardOverview(ctx context.Context, filter *OpsDashboardFilter) (*OpsDashboardOverview, error) {
@@ -26,6 +28,13 @@ func (s *stubOpsRepo) GetDashboardOverview(ctx context.Context, filter *OpsDashb
 		return s.overview, nil
 	}
 	return &OpsDashboardOverview{}, nil
+}
+
+func (s *stubOpsRepo) GetWindowCacheTokenSums(ctx context.Context, scope OpsCacheTokenScope, start, end time.Time) (OpsCacheTokenSums, error) {
+	if s.cacheErr != nil {
+		return OpsCacheTokenSums{}, s.cacheErr
+	}
+	return s.cacheSums, nil
 }
 
 func TestComputeGroupAvailableRatio(t *testing.T) {
@@ -142,10 +151,49 @@ func TestComputeRuleMetric_AccountTempUnscheduledCount(t *testing.T) {
 
 	rule := &OpsAlertRule{MetricType: "account_temp_unscheduled_count"}
 	val, ok := svc.computeRuleMetric(context.Background(), rule, nil,
-		now.Add(-5*time.Minute), now, "", nil)
+		now.Add(-5*time.Minute), now, "", nil, nil)
 
 	require.True(t, ok)
 	require.InDelta(t, 2.0, val, 0.0001, "only 2 accounts have an active temp-unsched window")
+}
+
+// TestComputeRuleMetric_CacheHitRate verifies the cache_hit_rate metric returns
+// the read-token hit ratio as a percentage, and skips evaluation (ok=false) when
+// the window has no input samples so an empty window is not flagged as "low hit rate".
+func TestComputeRuleMetric_CacheHitRate(t *testing.T) {
+	t.Parallel()
+
+	start := time.Now().UTC().Add(-5 * time.Minute)
+	end := time.Now().UTC()
+	rule := &OpsAlertRule{MetricType: "cache_hit_rate"}
+
+	t.Run("returns hit rate percent", func(t *testing.T) {
+		t.Parallel()
+		svc := &OpsAlertEvaluatorService{
+			opsRepo: &stubOpsRepo{cacheSums: OpsCacheTokenSums{
+				InputTokens:         100,
+				CacheReadTokens:     300,
+				CacheCreationTokens: 100,
+			}},
+		}
+		got, ok := svc.computeRuleMetric(context.Background(), rule, nil, start, end, "", nil, nil)
+		require.True(t, ok)
+		require.InDelta(t, 60.0, got, 0.0001) // 300 / (100+300+100) * 100
+	})
+
+	t.Run("empty window is skipped", func(t *testing.T) {
+		t.Parallel()
+		svc := &OpsAlertEvaluatorService{opsRepo: &stubOpsRepo{cacheSums: OpsCacheTokenSums{}}}
+		_, ok := svc.computeRuleMetric(context.Background(), rule, nil, start, end, "", nil, nil)
+		require.False(t, ok)
+	})
+
+	t.Run("repo error is skipped", func(t *testing.T) {
+		t.Parallel()
+		svc := &OpsAlertEvaluatorService{opsRepo: &stubOpsRepo{cacheErr: context.DeadlineExceeded}}
+		_, ok := svc.computeRuleMetric(context.Background(), rule, nil, start, end, "", nil, nil)
+		require.False(t, ok)
+	})
 }
 
 func TestComputeRuleMetricNewIndicators(t *testing.T) {
@@ -243,7 +291,7 @@ func TestComputeRuleMetricNewIndicators(t *testing.T) {
 			rule := &OpsAlertRule{
 				MetricType: tt.metricType,
 			}
-			gotValue, gotOK := svc.computeRuleMetric(ctx, rule, nil, start, end, platform, tt.groupID)
+			gotValue, gotOK := svc.computeRuleMetric(ctx, rule, nil, start, end, platform, tt.groupID, nil)
 			require.Equal(t, tt.wantOK, gotOK)
 			if !tt.wantOK {
 				return

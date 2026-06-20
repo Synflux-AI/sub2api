@@ -178,6 +178,10 @@ func (m *opsRepoMock) IsAlertSilenced(ctx context.Context, ruleID int64, platfor
 	return false, nil
 }
 
+func (m *opsRepoMock) GetWindowCacheTokenSums(ctx context.Context, scope OpsCacheTokenScope, start, end time.Time) (OpsCacheTokenSums, error) {
+	return OpsCacheTokenSums{}, nil
+}
+
 func (m *opsRepoMock) UpsertHourlyMetrics(ctx context.Context, startTime, endTime time.Time) error {
 	return nil
 }

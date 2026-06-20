@@ -116,9 +116,10 @@ type ModelStat struct {
 	CacheCreationTokens int64   `json:"cache_creation_tokens"`
 	CacheReadTokens     int64   `json:"cache_read_tokens"`
 	TotalTokens         int64   `json:"total_tokens"`
-	Cost                float64 `json:"cost"`         // 标准计费
-	ActualCost          float64 `json:"actual_cost"`  // 实际扣除
-	AccountCost         float64 `json:"account_cost"` // 账号成本
+	CacheHitRate        float64 `json:"cache_hit_rate"` // 缓存命中率（0~1），见 CacheHitRate
+	Cost                float64 `json:"cost"`           // 标准计费
+	ActualCost          float64 `json:"actual_cost"`    // 实际扣除
+	AccountCost         float64 `json:"account_cost"`   // 账号成本
 }
 
 // EndpointStat represents usage statistics for a single request endpoint.
@@ -334,13 +335,17 @@ type BatchAPIKeyUsageStats struct {
 
 // AccountUsageHistory represents daily usage history for an account
 type AccountUsageHistory struct {
-	Date       string  `json:"date"`
-	Label      string  `json:"label"`
-	Requests   int64   `json:"requests"`
-	Tokens     int64   `json:"tokens"`
-	Cost       float64 `json:"cost"`        // 标准计费（total_cost）
-	ActualCost float64 `json:"actual_cost"` // 账号口径费用（total_cost * account_rate_multiplier）
-	UserCost   float64 `json:"user_cost"`   // 用户口径费用（actual_cost，受分组倍率影响）
+	Date                string  `json:"date"`
+	Label               string  `json:"label"`
+	Requests            int64   `json:"requests"`
+	Tokens              int64   `json:"tokens"`
+	InputTokens         int64   `json:"input_tokens"`
+	CacheCreationTokens int64   `json:"cache_creation_tokens"`
+	CacheReadTokens     int64   `json:"cache_read_tokens"`
+	CacheHitRate        float64 `json:"cache_hit_rate"` // 当日缓存命中率（0~1）
+	Cost                float64 `json:"cost"`           // 标准计费（total_cost）
+	ActualCost          float64 `json:"actual_cost"`    // 账号口径费用（total_cost * account_rate_multiplier）
+	UserCost            float64 `json:"user_cost"`      // 用户口径费用（actual_cost，受分组倍率影响）
 }
 
 // AccountUsageSummary represents summary statistics for an account
@@ -352,12 +357,18 @@ type AccountUsageSummary struct {
 	TotalStandardCost float64 `json:"total_standard_cost"`
 	TotalRequests     int64   `json:"total_requests"`
 	TotalTokens       int64   `json:"total_tokens"`
-	AvgDailyCost      float64 `json:"avg_daily_cost"` // 账号口径日均
-	AvgDailyUserCost  float64 `json:"avg_daily_user_cost"`
-	AvgDailyRequests  float64 `json:"avg_daily_requests"`
-	AvgDailyTokens    float64 `json:"avg_daily_tokens"`
-	AvgDurationMs     float64 `json:"avg_duration_ms"`
-	Today             *struct {
+
+	TotalInputTokens         int64   `json:"total_input_tokens"`
+	TotalCacheCreationTokens int64   `json:"total_cache_creation_tokens"`
+	TotalCacheReadTokens     int64   `json:"total_cache_read_tokens"`
+	CacheHitRate             float64 `json:"cache_hit_rate"` // 周期内缓存命中率（0~1）
+
+	AvgDailyCost     float64 `json:"avg_daily_cost"` // 账号口径日均
+	AvgDailyUserCost float64 `json:"avg_daily_user_cost"`
+	AvgDailyRequests float64 `json:"avg_daily_requests"`
+	AvgDailyTokens   float64 `json:"avg_daily_tokens"`
+	AvgDurationMs    float64 `json:"avg_duration_ms"`
+	Today            *struct {
 		Date     string  `json:"date"`
 		Cost     float64 `json:"cost"`
 		UserCost float64 `json:"user_cost"`

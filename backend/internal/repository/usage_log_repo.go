@@ -2074,6 +2074,9 @@ func (r *usageLogRepository) GetAccountTodayStats(ctx context.Context, accountID
 		SELECT
 			COUNT(*) as requests,
 			COALESCE(SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens), 0) as tokens,
+			COALESCE(SUM(input_tokens), 0) as input_tokens,
+			COALESCE(SUM(cache_creation_tokens), 0) as cache_creation_tokens,
+			COALESCE(SUM(cache_read_tokens), 0) as cache_read_tokens,
 			COALESCE(SUM(COALESCE(account_stats_cost, total_cost) * COALESCE(account_rate_multiplier, 1)), 0) as cost,
 			COALESCE(SUM(total_cost), 0) as standard_cost,
 			COALESCE(SUM(actual_cost), 0) as user_cost
@@ -2089,12 +2092,16 @@ func (r *usageLogRepository) GetAccountTodayStats(ctx context.Context, accountID
 		[]any{accountID, today},
 		&stats.Requests,
 		&stats.Tokens,
+		&stats.InputTokens,
+		&stats.CacheCreationTokens,
+		&stats.CacheReadTokens,
 		&stats.Cost,
 		&stats.StandardCost,
 		&stats.UserCost,
 	); err != nil {
 		return nil, err
 	}
+	stats.CacheHitRate = usagestats.CacheHitRate(stats.InputTokens, stats.CacheReadTokens, stats.CacheCreationTokens)
 	return stats, nil
 }
 
@@ -2104,6 +2111,9 @@ func (r *usageLogRepository) GetAccountWindowStats(ctx context.Context, accountI
 		SELECT
 			COUNT(*) as requests,
 			COALESCE(SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens), 0) as tokens,
+			COALESCE(SUM(input_tokens), 0) as input_tokens,
+			COALESCE(SUM(cache_creation_tokens), 0) as cache_creation_tokens,
+			COALESCE(SUM(cache_read_tokens), 0) as cache_read_tokens,
 			COALESCE(SUM(COALESCE(account_stats_cost, total_cost) * COALESCE(account_rate_multiplier, 1)), 0) as cost,
 			COALESCE(SUM(total_cost), 0) as standard_cost,
 			COALESCE(SUM(actual_cost), 0) as user_cost
@@ -2119,12 +2129,16 @@ func (r *usageLogRepository) GetAccountWindowStats(ctx context.Context, accountI
 		[]any{accountID, startTime},
 		&stats.Requests,
 		&stats.Tokens,
+		&stats.InputTokens,
+		&stats.CacheCreationTokens,
+		&stats.CacheReadTokens,
 		&stats.Cost,
 		&stats.StandardCost,
 		&stats.UserCost,
 	); err != nil {
 		return nil, err
 	}
+	stats.CacheHitRate = usagestats.CacheHitRate(stats.InputTokens, stats.CacheReadTokens, stats.CacheCreationTokens)
 	return stats, nil
 }
 
@@ -2141,6 +2155,9 @@ func (r *usageLogRepository) GetAccountWindowStatsBatch(ctx context.Context, acc
 			account_id,
 			COUNT(*) as requests,
 			COALESCE(SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens), 0) as tokens,
+			COALESCE(SUM(input_tokens), 0) as input_tokens,
+			COALESCE(SUM(cache_creation_tokens), 0) as cache_creation_tokens,
+			COALESCE(SUM(cache_read_tokens), 0) as cache_read_tokens,
 			COALESCE(SUM(COALESCE(account_stats_cost, total_cost) * COALESCE(account_rate_multiplier, 1)), 0) as cost,
 			COALESCE(SUM(total_cost), 0) as standard_cost,
 			COALESCE(SUM(actual_cost), 0) as user_cost
@@ -2161,12 +2178,16 @@ func (r *usageLogRepository) GetAccountWindowStatsBatch(ctx context.Context, acc
 			&accountID,
 			&stats.Requests,
 			&stats.Tokens,
+			&stats.InputTokens,
+			&stats.CacheCreationTokens,
+			&stats.CacheReadTokens,
 			&stats.Cost,
 			&stats.StandardCost,
 			&stats.UserCost,
 		); err != nil {
 			return nil, err
 		}
+		stats.CacheHitRate = usagestats.CacheHitRate(stats.InputTokens, stats.CacheReadTokens, stats.CacheCreationTokens)
 		result[accountID] = stats
 	}
 	if err := rows.Err(); err != nil {
@@ -3885,6 +3906,9 @@ func (r *usageLogRepository) GetAccountUsageStats(ctx context.Context, accountID
 			TO_CHAR(created_at, 'YYYY-MM-DD') as date,
 			COUNT(*) as requests,
 			COALESCE(SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens), 0) as tokens,
+			COALESCE(SUM(input_tokens), 0) as input_tokens,
+			COALESCE(SUM(cache_creation_tokens), 0) as cache_creation_tokens,
+			COALESCE(SUM(cache_read_tokens), 0) as cache_read_tokens,
 			COALESCE(SUM(total_cost), 0) as cost,
 			COALESCE(SUM(COALESCE(account_stats_cost, total_cost) * COALESCE(account_rate_multiplier, 1)), 0) as actual_cost,
 			COALESCE(SUM(actual_cost), 0) as user_cost
@@ -3912,21 +3936,26 @@ func (r *usageLogRepository) GetAccountUsageStats(ctx context.Context, accountID
 		var date string
 		var requests int64
 		var tokens int64
+		var inputTokens, cacheCreationTokens, cacheReadTokens int64
 		var cost float64
 		var actualCost float64
 		var userCost float64
-		if err = rows.Scan(&date, &requests, &tokens, &cost, &actualCost, &userCost); err != nil {
+		if err = rows.Scan(&date, &requests, &tokens, &inputTokens, &cacheCreationTokens, &cacheReadTokens, &cost, &actualCost, &userCost); err != nil {
 			return nil, err
 		}
 		t, _ := time.Parse("2006-01-02", date)
 		history = append(history, AccountUsageHistory{
-			Date:       date,
-			Label:      t.Format("01/02"),
-			Requests:   requests,
-			Tokens:     tokens,
-			Cost:       cost,
-			ActualCost: actualCost,
-			UserCost:   userCost,
+			Date:                date,
+			Label:               t.Format("01/02"),
+			Requests:            requests,
+			Tokens:              tokens,
+			InputTokens:         inputTokens,
+			CacheCreationTokens: cacheCreationTokens,
+			CacheReadTokens:     cacheReadTokens,
+			CacheHitRate:        usagestats.CacheHitRate(inputTokens, cacheReadTokens, cacheCreationTokens),
+			Cost:                cost,
+			ActualCost:          actualCost,
+			UserCost:            userCost,
 		})
 	}
 	if err = rows.Err(); err != nil {
@@ -3935,6 +3964,7 @@ func (r *usageLogRepository) GetAccountUsageStats(ctx context.Context, accountID
 
 	var totalAccountCost, totalUserCost, totalStandardCost float64
 	var totalRequests, totalTokens int64
+	var totalInputTokens, totalCacheCreationTokens, totalCacheReadTokens int64
 	var highestCostDay, highestRequestDay *AccountUsageHistory
 
 	for i := range history {
@@ -3944,6 +3974,9 @@ func (r *usageLogRepository) GetAccountUsageStats(ctx context.Context, accountID
 		totalStandardCost += h.Cost
 		totalRequests += h.Requests
 		totalTokens += h.Tokens
+		totalInputTokens += h.InputTokens
+		totalCacheCreationTokens += h.CacheCreationTokens
+		totalCacheReadTokens += h.CacheReadTokens
 
 		if highestCostDay == nil || h.ActualCost > highestCostDay.ActualCost {
 			highestCostDay = h
@@ -3965,18 +3998,22 @@ func (r *usageLogRepository) GetAccountUsageStats(ctx context.Context, accountID
 	}
 
 	summary := AccountUsageSummary{
-		Days:              daysCount,
-		ActualDaysUsed:    actualDaysUsed,
-		TotalCost:         totalAccountCost,
-		TotalUserCost:     totalUserCost,
-		TotalStandardCost: totalStandardCost,
-		TotalRequests:     totalRequests,
-		TotalTokens:       totalTokens,
-		AvgDailyCost:      totalAccountCost / float64(actualDaysUsed),
-		AvgDailyUserCost:  totalUserCost / float64(actualDaysUsed),
-		AvgDailyRequests:  float64(totalRequests) / float64(actualDaysUsed),
-		AvgDailyTokens:    float64(totalTokens) / float64(actualDaysUsed),
-		AvgDurationMs:     avgDuration,
+		Days:                     daysCount,
+		ActualDaysUsed:           actualDaysUsed,
+		TotalCost:                totalAccountCost,
+		TotalUserCost:            totalUserCost,
+		TotalStandardCost:        totalStandardCost,
+		TotalRequests:            totalRequests,
+		TotalTokens:              totalTokens,
+		TotalInputTokens:         totalInputTokens,
+		TotalCacheCreationTokens: totalCacheCreationTokens,
+		TotalCacheReadTokens:     totalCacheReadTokens,
+		CacheHitRate:             usagestats.CacheHitRate(totalInputTokens, totalCacheReadTokens, totalCacheCreationTokens),
+		AvgDailyCost:             totalAccountCost / float64(actualDaysUsed),
+		AvgDailyUserCost:         totalUserCost / float64(actualDaysUsed),
+		AvgDailyRequests:         float64(totalRequests) / float64(actualDaysUsed),
+		AvgDailyTokens:           float64(totalTokens) / float64(actualDaysUsed),
+		AvgDurationMs:            avgDuration,
 	}
 
 	todayStr := timezone.Now().Format("2006-01-02")
@@ -4656,6 +4693,7 @@ func scanModelStatsRows(rows *sql.Rows) ([]ModelStat, error) {
 		); err != nil {
 			return nil, err
 		}
+		row.CacheHitRate = usagestats.CacheHitRate(row.InputTokens, row.CacheReadTokens, row.CacheCreationTokens)
 		results = append(results, row)
 	}
 	if err := rows.Err(); err != nil {

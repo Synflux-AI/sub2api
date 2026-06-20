@@ -882,3 +882,42 @@ func opsNullJSONMap(v map[string]any) (any, error) {
 	}
 	return sql.NullString{String: string(b), Valid: true}, nil
 }
+
+// GetWindowCacheTokenSums 聚合 usage_logs 在 [start,end) 窗口内的输入/缓存 token。
+// scope 各字段可选：account_id / group_id / platform 任意组合，零值表示该维度不过滤。
+// platform 与 dashboard 口径一致按小写匹配。
+func (r *opsRepository) GetWindowCacheTokenSums(ctx context.Context, scope service.OpsCacheTokenScope, start, end time.Time) (service.OpsCacheTokenSums, error) {
+	var sums service.OpsCacheTokenSums
+
+	where := "created_at >= $1 AND created_at < $2"
+	args := []any{start, end}
+	if scope.AccountID != nil && *scope.AccountID > 0 {
+		args = append(args, *scope.AccountID)
+		where += fmt.Sprintf(" AND account_id = $%d", len(args))
+	}
+	if scope.GroupID != nil && *scope.GroupID > 0 {
+		args = append(args, *scope.GroupID)
+		where += fmt.Sprintf(" AND group_id = $%d", len(args))
+	}
+	if platform := strings.TrimSpace(strings.ToLower(scope.Platform)); platform != "" {
+		args = append(args, platform)
+		where += fmt.Sprintf(" AND platform = $%d", len(args))
+	}
+
+	query := `
+		SELECT
+			COALESCE(SUM(input_tokens), 0),
+			COALESCE(SUM(cache_read_tokens), 0),
+			COALESCE(SUM(cache_creation_tokens), 0)
+		FROM usage_logs
+		WHERE ` + where
+
+	if err := r.db.QueryRowContext(ctx, query, args...).Scan(
+		&sums.InputTokens,
+		&sums.CacheReadTokens,
+		&sums.CacheCreationTokens,
+	); err != nil {
+		return service.OpsCacheTokenSums{}, err
+	}
+	return sums, nil
+}
