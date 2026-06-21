@@ -261,22 +261,3 @@ func dedupIDsWithPriorities(ids []int64, prios []int) ([]int64, map[int64]int) {
 	}
 	return out, prioByID
 }
-
-func dedupInt64(in []int64) []int64 {
-	if len(in) == 0 {
-		return nil
-	}
-	seen := make(map[int64]struct{}, len(in))
-	out := make([]int64, 0, len(in))
-	for _, v := range in {
-		if v <= 0 {
-			continue
-		}
-		if _, ok := seen[v]; ok {
-			continue
-		}
-		seen[v] = struct{}{}
-		out = append(out, v)
-	}
-	return out
-}
