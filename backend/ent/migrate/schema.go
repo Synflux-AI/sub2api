@@ -1223,6 +1223,7 @@ var (
 		{Name: "conditions", Type: field.TypeJSON, Nullable: true, SchemaType: map[string]string{"postgres": "jsonb"}},
 		{Name: "action", Type: field.TypeString, Size: 16, Default: "restrict"},
 		{Name: "account_ids", Type: field.TypeJSON, Nullable: true, SchemaType: map[string]string{"postgres": "jsonb"}},
+		{Name: "account_priorities", Type: field.TypeJSON, Nullable: true, SchemaType: map[string]string{"postgres": "jsonb"}},
 	}
 	// RoutingStrategiesTable holds the schema information for the "routing_strategies" table.
 	RoutingStrategiesTable = &schema.Table{

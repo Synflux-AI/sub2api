@@ -2189,6 +2189,8 @@ export default {
       action: '动作',
       actionRestrict: '只能路由（restrict）',
       actionPrefer: '优先（prefer，可回退）',
+      accountPriorityLabel: '优先级',
+      accountPriorityHint: '可为每个账号指定优先级：数值越小越优先；相同数值为同一优先级，再按负载 + LRU 均衡（默认算法：优先级 + 负载 + LRU）。留空均为同级。',
       conditions: '匹配条件',
       addCondition: '添加条件',
       noConditions: '无条件（命中作用域内的所有请求）',

@@ -40,6 +40,8 @@ const (
 	FieldAction = "action"
 	// FieldAccountIds holds the string denoting the account_ids field in the database.
 	FieldAccountIds = "account_ids"
+	// FieldAccountPriorities holds the string denoting the account_priorities field in the database.
+	FieldAccountPriorities = "account_priorities"
 	// Table holds the table name of the routingstrategy in the database.
 	Table = "routing_strategies"
 )
@@ -60,6 +62,7 @@ var Columns = []string{
 	FieldConditions,
 	FieldAction,
 	FieldAccountIds,
+	FieldAccountPriorities,
 }
 
 // ValidColumn reports if the column name is valid (part of the table columns).

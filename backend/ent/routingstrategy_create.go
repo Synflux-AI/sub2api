@@ -181,6 +181,12 @@ func (_c *RoutingStrategyCreate) SetAccountIds(v []int64) *RoutingStrategyCreate
 	return _c
 }
 
+// SetAccountPriorities sets the "account_priorities" field.
+func (_c *RoutingStrategyCreate) SetAccountPriorities(v []int) *RoutingStrategyCreate {
+	_c.mutation.SetAccountPriorities(v)
+	return _c
+}
+
 // Mutation returns the RoutingStrategyMutation object of the builder.
 func (_c *RoutingStrategyCreate) Mutation() *RoutingStrategyMutation {
 	return _c.mutation
@@ -386,6 +392,10 @@ func (_c *RoutingStrategyCreate) createSpec() (*RoutingStrategy, *sqlgraph.Creat
 	if value, ok := _c.mutation.AccountIds(); ok {
 		_spec.SetField(routingstrategy.FieldAccountIds, field.TypeJSON, value)
 		_node.AccountIds = value
+	}
+	if value, ok := _c.mutation.AccountPriorities(); ok {
+		_spec.SetField(routingstrategy.FieldAccountPriorities, field.TypeJSON, value)
+		_node.AccountPriorities = value
 	}
 	return _node, _spec
 }
@@ -616,6 +626,24 @@ func (u *RoutingStrategyUpsert) UpdateAccountIds() *RoutingStrategyUpsert {
 // ClearAccountIds clears the value of the "account_ids" field.
 func (u *RoutingStrategyUpsert) ClearAccountIds() *RoutingStrategyUpsert {
 	u.SetNull(routingstrategy.FieldAccountIds)
+	return u
+}
+
+// SetAccountPriorities sets the "account_priorities" field.
+func (u *RoutingStrategyUpsert) SetAccountPriorities(v []int) *RoutingStrategyUpsert {
+	u.Set(routingstrategy.FieldAccountPriorities, v)
+	return u
+}
+
+// UpdateAccountPriorities sets the "account_priorities" field to the value that was provided on create.
+func (u *RoutingStrategyUpsert) UpdateAccountPriorities() *RoutingStrategyUpsert {
+	u.SetExcluded(routingstrategy.FieldAccountPriorities)
+	return u
+}
+
+// ClearAccountPriorities clears the value of the "account_priorities" field.
+func (u *RoutingStrategyUpsert) ClearAccountPriorities() *RoutingStrategyUpsert {
+	u.SetNull(routingstrategy.FieldAccountPriorities)
 	return u
 }
 
@@ -871,6 +899,27 @@ func (u *RoutingStrategyUpsertOne) UpdateAccountIds() *RoutingStrategyUpsertOne 
 func (u *RoutingStrategyUpsertOne) ClearAccountIds() *RoutingStrategyUpsertOne {
 	return u.Update(func(s *RoutingStrategyUpsert) {
 		s.ClearAccountIds()
+	})
+}
+
+// SetAccountPriorities sets the "account_priorities" field.
+func (u *RoutingStrategyUpsertOne) SetAccountPriorities(v []int) *RoutingStrategyUpsertOne {
+	return u.Update(func(s *RoutingStrategyUpsert) {
+		s.SetAccountPriorities(v)
+	})
+}
+
+// UpdateAccountPriorities sets the "account_priorities" field to the value that was provided on create.
+func (u *RoutingStrategyUpsertOne) UpdateAccountPriorities() *RoutingStrategyUpsertOne {
+	return u.Update(func(s *RoutingStrategyUpsert) {
+		s.UpdateAccountPriorities()
+	})
+}
+
+// ClearAccountPriorities clears the value of the "account_priorities" field.
+func (u *RoutingStrategyUpsertOne) ClearAccountPriorities() *RoutingStrategyUpsertOne {
+	return u.Update(func(s *RoutingStrategyUpsert) {
+		s.ClearAccountPriorities()
 	})
 }
 
@@ -1292,6 +1341,27 @@ func (u *RoutingStrategyUpsertBulk) UpdateAccountIds() *RoutingStrategyUpsertBul
 func (u *RoutingStrategyUpsertBulk) ClearAccountIds() *RoutingStrategyUpsertBulk {
 	return u.Update(func(s *RoutingStrategyUpsert) {
 		s.ClearAccountIds()
+	})
+}
+
+// SetAccountPriorities sets the "account_priorities" field.
+func (u *RoutingStrategyUpsertBulk) SetAccountPriorities(v []int) *RoutingStrategyUpsertBulk {
+	return u.Update(func(s *RoutingStrategyUpsert) {
+		s.SetAccountPriorities(v)
+	})
+}
+
+// UpdateAccountPriorities sets the "account_priorities" field to the value that was provided on create.
+func (u *RoutingStrategyUpsertBulk) UpdateAccountPriorities() *RoutingStrategyUpsertBulk {
+	return u.Update(func(s *RoutingStrategyUpsert) {
+		s.UpdateAccountPriorities()
+	})
+}
+
+// ClearAccountPriorities clears the value of the "account_priorities" field.
+func (u *RoutingStrategyUpsertBulk) ClearAccountPriorities() *RoutingStrategyUpsertBulk {
+	return u.Update(func(s *RoutingStrategyUpsert) {
+		s.ClearAccountPriorities()
 	})
 }
 

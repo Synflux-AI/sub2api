@@ -32,6 +32,47 @@ func newTestRoutingService(strategies ...RoutingStrategy) *RoutingStrategyServic
 // unit, so they cannot provide it for the default build. Do not move/remove.
 func ptrInt64(v int64) *int64 { return &v }
 
+func TestRoutingEvaluate_AccountPriorities(t *testing.T) {
+	svc := newTestRoutingService(
+		RoutingStrategy{
+			ID: 1, Name: "explicit-priorities", Enabled: true, Priority: 10,
+			Platform: PlatformAnthropic, Action: RoutingActionRestrict, MatchMode: RoutingMatchModeAll,
+			Conditions:        []RoutingCondition{{Type: RoutingConditionTypeModel, Op: RoutingConditionOpWildcard, Value: "claude-opus-*"}},
+			AccountIDs:        []int64{301, 302, 303},
+			AccountPriorities: []int{1, 1, 2}, // a=1, b=1（同点）, c=2
+		},
+		RoutingStrategy{
+			ID: 2, Name: "no-priorities", Enabled: true, Priority: 20,
+			Platform: PlatformAnthropic, Action: RoutingActionPrefer, MatchMode: RoutingMatchModeAll,
+			Conditions: []RoutingCondition{{Type: RoutingConditionTypeModel, Op: RoutingConditionOpWildcard, Value: "claude-sonnet-*"}},
+			AccountIDs: []int64{401, 402},
+			// AccountPriorities 留空：全部默认 0（同一优先级）
+		},
+	)
+
+	// 显式优先级：返回 id -> 优先级映射，ids 保持配置顺序。
+	dec := svc.Evaluate(context.Background(), RoutingMatchContext{
+		Platform: PlatformAnthropic, Model: "claude-opus-4-20250514", ClientType: RoutingClientOther,
+	})
+	if len(dec.RestrictIDs) != 3 {
+		t.Fatalf("expected 3 restrict ids, got %+v", dec.RestrictIDs)
+	}
+	if dec.AccountPriorities[301] != 1 || dec.AccountPriorities[302] != 1 || dec.AccountPriorities[303] != 2 {
+		t.Fatalf("expected priorities {301:1,302:1,303:2}, got %+v", dec.AccountPriorities)
+	}
+
+	// 留空优先级：映射存在且各账号默认为 0。
+	dec = svc.Evaluate(context.Background(), RoutingMatchContext{
+		Platform: PlatformAnthropic, Model: "claude-sonnet-4", ClientType: RoutingClientOther,
+	})
+	if len(dec.PreferIDs) != 2 {
+		t.Fatalf("expected prefer ids, got %+v", dec)
+	}
+	if dec.AccountPriorities[401] != 0 || dec.AccountPriorities[402] != 0 {
+		t.Fatalf("expected default priorities 0, got %+v", dec.AccountPriorities)
+	}
+}
+
 func TestRoutingEvaluate_ModelWildcardRestrict(t *testing.T) {
 	svc := newTestRoutingService(RoutingStrategy{
 		ID: 1, Name: "opus->A", Enabled: true, Priority: 10,

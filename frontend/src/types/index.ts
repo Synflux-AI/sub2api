@@ -1963,6 +1963,8 @@ export interface RoutingStrategy {
   conditions: RoutingCondition[]
   action: RoutingStrategyAction
   account_ids: number[]
+  // 与 account_ids 对齐：数值越小越优先；相同数值为同一优先级（再按负载 / LRU 选择）。
+  account_priorities: number[]
   created_at: string
   updated_at: string
 }
@@ -1978,6 +1980,7 @@ export interface SaveRoutingStrategyRequest {
   conditions: RoutingCondition[]
   action: RoutingStrategyAction
   account_ids: number[]
+  account_priorities: number[]
 }
 
 export interface TestRoutingStrategyRequest {

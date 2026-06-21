@@ -2136,6 +2136,8 @@ export default {
       action: 'Action',
       actionRestrict: 'Restrict — only these accounts',
       actionPrefer: 'Prefer — fallback to others',
+      accountPriorityLabel: 'Priority',
+      accountPriorityHint: 'Assign a priority per account: smaller = higher; equal values share a tier and are balanced by load + LRU (default: priority + load + LRU). Leave all equal for pure load + LRU.',
       conditions: 'Conditions',
       addCondition: 'Add condition',
       noConditions: 'No conditions (matches all requests in scope)',

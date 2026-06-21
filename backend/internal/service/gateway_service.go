@@ -1767,10 +1767,10 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 	}
 
 	// 获取路由计划：智能路由策略（first-match-wins）优先，未命中回退旧版模型路由。
-	routingAccountIDs, routingHardRestrict := s.routingPlanForRequest(ctx, group, groupID, requestedModel, platform)
+	routingAccountIDs, routingHardRestrict, routingPriorityByID := s.routingPlanForRequest(ctx, group, groupID, requestedModel, platform)
 	if s.debugModelRoutingEnabled() && len(routingAccountIDs) > 0 {
-		logger.LegacyPrintf("service.gateway", "[Routing] load-aware plan: group_id=%v model=%s session=%s ids=%v hard_restrict=%v sticky_account=%d",
-			derefGroupID(groupID), requestedModel, shortSessionHash(sessionHash), routingAccountIDs, routingHardRestrict, stickyAccountID)
+		logger.LegacyPrintf("service.gateway", "[Routing] load-aware plan: group_id=%v model=%s session=%s ids=%v hard_restrict=%v priorities=%v sticky_account=%d",
+			derefGroupID(groupID), requestedModel, shortSessionHash(sessionHash), routingAccountIDs, routingHardRestrict, routingPriorityByID, stickyAccountID)
 	}
 
 	// ============ Layer 1: 模型路由优先选择（优先级高于粘性会话） ============
@@ -1947,27 +1947,14 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 			}
 
 			if len(routingAvailable) > 0 {
-				// 排序：优先级 > 负载率 > 最后使用时间
-				sort.SliceStable(routingAvailable, func(i, j int) bool {
-					a, b := routingAvailable[i], routingAvailable[j]
-					if a.account.Priority != b.account.Priority {
-						return a.account.Priority < b.account.Priority
+				// 排序：有效优先级 > 负载率 > 最后使用时间（同优先级账号按负载 / LRU 均衡）。
+				// 命中智能路由策略时使用策略指定的账号优先级，否则回退到账号自身优先级。
+				sortRoutingCandidatesByPriority(routingAvailable, func(a *Account) int {
+					if routingPriorityByID != nil {
+						return routingPriorityByID[a.ID]
 					}
-					if a.loadInfo.LoadRate != b.loadInfo.LoadRate {
-						return a.loadInfo.LoadRate < b.loadInfo.LoadRate
-					}
-					switch {
-					case a.account.LastUsedAt == nil && b.account.LastUsedAt != nil:
-						return true
-					case a.account.LastUsedAt != nil && b.account.LastUsedAt == nil:
-						return false
-					case a.account.LastUsedAt == nil && b.account.LastUsedAt == nil:
-						return false
-					default:
-						return a.account.LastUsedAt.Before(*b.account.LastUsedAt)
-					}
+					return a.Priority
 				})
-				shuffleWithinSortGroups(routingAvailable)
 
 				// 4. 尝试获取槽位
 				for _, item := range routingAvailable {
@@ -2347,7 +2334,10 @@ func (s *GatewayService) ResolveGroupByID(ctx context.Context, groupID int64) (*
 //	hardRestrict=false : 命中 prefer 策略或旧版模型路由，候选账号优先；不可用时回退全量（保持原行为）。
 //
 // 评估顺序：智能路由策略（first-match-wins）优先，未命中再回退到旧版 Group.ModelRouting（仅 anthropic）。
-func (s *GatewayService) routingPlanForRequest(ctx context.Context, group *Group, groupID *int64, requestedModel string, platform string) ([]int64, bool) {
+// routingPlanForRequest 返回命中策略的目标账号 ID 列表、是否硬路由（restrict），以及账号优先级映射。
+// priorityByID 为智能路由策略指定的账号优先级（id -> 优先级，数值越小越优先；相同数值为同一优先级，
+// 再按负载 / LRU 选择）；命中策略时非空，旧版分组模型路由时为 nil（此时回退使用账号自身优先级）。
+func (s *GatewayService) routingPlanForRequest(ctx context.Context, group *Group, groupID *int64, requestedModel string, platform string) ([]int64, bool, map[int64]int) {
 	// 1) 智能路由策略引擎
 	if s.routingStrategyService != nil {
 		ua := UserAgentFromContext(ctx)
@@ -2362,24 +2352,24 @@ func (s *GatewayService) routingPlanForRequest(ctx context.Context, group *Group
 		if dec.HasMatch() {
 			if len(dec.RestrictIDs) > 0 {
 				if s.debugModelRoutingEnabled() {
-					logger.LegacyPrintf("service.gateway", "[RoutingStrategy] matched restrict: strategy=%d(%s) group_id=%v model=%s client=%s ids=%v",
-						dec.MatchedID, dec.MatchedName, derefGroupID(groupID), requestedModel, mc.ClientType, dec.RestrictIDs)
+					logger.LegacyPrintf("service.gateway", "[RoutingStrategy] matched restrict: strategy=%d(%s) group_id=%v model=%s client=%s ids=%v priorities=%v",
+						dec.MatchedID, dec.MatchedName, derefGroupID(groupID), requestedModel, mc.ClientType, dec.RestrictIDs, dec.AccountPriorities)
 				}
-				return dec.RestrictIDs, true
+				return dec.RestrictIDs, true, dec.AccountPriorities
 			}
 			if len(dec.PreferIDs) > 0 {
 				if s.debugModelRoutingEnabled() {
-					logger.LegacyPrintf("service.gateway", "[RoutingStrategy] matched prefer: strategy=%d(%s) group_id=%v model=%s client=%s ids=%v",
-						dec.MatchedID, dec.MatchedName, derefGroupID(groupID), requestedModel, mc.ClientType, dec.PreferIDs)
+					logger.LegacyPrintf("service.gateway", "[RoutingStrategy] matched prefer: strategy=%d(%s) group_id=%v model=%s client=%s ids=%v priorities=%v",
+						dec.MatchedID, dec.MatchedName, derefGroupID(groupID), requestedModel, mc.ClientType, dec.PreferIDs, dec.AccountPriorities)
 				}
-				return dec.PreferIDs, false
+				return dec.PreferIDs, false, dec.AccountPriorities
 			}
 		}
 	}
 
 	// 2) 回退：旧版分组模型路由（仅 anthropic，软优先语义）
 	if requestedModel == "" || platform != PlatformAnthropic {
-		return nil, false
+		return nil, false, nil
 	}
 	g := group
 	if g == nil && groupID != nil {
@@ -2388,14 +2378,14 @@ func (s *GatewayService) routingPlanForRequest(ctx context.Context, group *Group
 		}
 	}
 	if g == nil || g.Platform != PlatformAnthropic {
-		return nil, false
+		return nil, false, nil
 	}
 	ids := g.GetRoutingAccountIDs(requestedModel)
 	if s.debugModelRoutingEnabled() && len(ids) > 0 {
 		logger.LegacyPrintf("service.gateway", "[ModelRoutingDebug] legacy routing lookup: group_id=%d model=%s enabled=%v rules=%d matched_ids=%v",
 			g.ID, requestedModel, g.ModelRoutingEnabled, len(g.ModelRouting), ids)
 	}
-	return ids, false
+	return ids, false, nil
 }
 
 func (s *GatewayService) resolveGatewayGroup(ctx context.Context, groupID *int64) (*Group, *int64, error) {
@@ -3148,6 +3138,48 @@ func shuffleWithinSortGroups(accounts []accountWithLoad) {
 	}
 }
 
+// sortRoutingCandidatesByPriority 对路由候选账号按 (有效优先级 -> 负载率 -> LRU) 稳定排序，
+// 并在 (有效优先级, 负载率, LastUsedAt) 完全相同的分组内随机打乱，均衡热点。
+// prioOf 返回某账号的“有效优先级”：智能路由策略指定的账号优先级，或旧版路由下账号自身的优先级。
+// 相同优先级的账号会进一步按负载率 / LRU 选择（即默认算法：优先级 + 负载 + LRU）。
+func sortRoutingCandidatesByPriority(items []accountWithLoad, prioOf func(*Account) int) {
+	sort.SliceStable(items, func(i, j int) bool {
+		pi, pj := prioOf(items[i].account), prioOf(items[j].account)
+		if pi != pj {
+			return pi < pj
+		}
+		if items[i].loadInfo.LoadRate != items[j].loadInfo.LoadRate {
+			return items[i].loadInfo.LoadRate < items[j].loadInfo.LoadRate
+		}
+		a, b := items[i].account, items[j].account
+		switch {
+		case a.LastUsedAt == nil && b.LastUsedAt != nil:
+			return true
+		case a.LastUsedAt != nil && b.LastUsedAt == nil:
+			return false
+		case a.LastUsedAt == nil && b.LastUsedAt == nil:
+			return false
+		default:
+			return a.LastUsedAt.Before(*b.LastUsedAt)
+		}
+	})
+	i := 0
+	for i < len(items) {
+		j := i + 1
+		for j < len(items) && prioOf(items[i].account) == prioOf(items[j].account) &&
+			items[i].loadInfo.LoadRate == items[j].loadInfo.LoadRate &&
+			sameLastUsedAt(items[i].account.LastUsedAt, items[j].account.LastUsedAt) {
+			j++
+		}
+		if j-i > 1 {
+			mathrand.Shuffle(j-i, func(a, b int) {
+				items[i+a], items[i+b] = items[i+b], items[i+a]
+			})
+		}
+		i = j
+	}
+}
+
 // sameAccountWithLoadGroup 判断两个 accountWithLoad 是否属于同一排序组
 func sameAccountWithLoadGroup(a, b accountWithLoad) bool {
 	if a.account.Priority != b.account.Priority {
@@ -3277,7 +3309,14 @@ func shuffleWithinPriority(accounts []*Account) {
 // selectAccountForModelWithPlatform 选择单平台账户（完全隔离）
 func (s *GatewayService) selectAccountForModelWithPlatform(ctx context.Context, groupID *int64, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}, platform string) (*Account, error) {
 	preferOAuth := platform == PlatformGemini
-	routingAccountIDs, routingHardRestrict := s.routingPlanForRequest(ctx, nil, groupID, requestedModel, platform)
+	routingAccountIDs, routingHardRestrict, routingPriorityByID := s.routingPlanForRequest(ctx, nil, groupID, requestedModel, platform)
+	// 有效优先级：命中智能路由策略时用策略指定的账号优先级，否则回退账号自身优先级。
+	routingPrioOf := func(a *Account) int {
+		if routingPriorityByID != nil {
+			return routingPriorityByID[a.ID]
+		}
+		return a.Priority
+	}
 
 	// require_privacy_set: 获取分组信息
 	var schedGroup *Group
@@ -3381,9 +3420,11 @@ func (s *GatewayService) selectAccountForModelWithPlatform(ctx context.Context, 
 				selected = acc
 				continue
 			}
-			if acc.Priority < selected.Priority {
+			// 有效优先级（策略指定或账号自身）更小者优先；相同则按 LRU / OAuth 偏好。
+			pa, ps := routingPrioOf(acc), routingPrioOf(selected)
+			if pa < ps {
 				selected = acc
-			} else if acc.Priority == selected.Priority {
+			} else if pa == ps {
 				switch {
 				case acc.LastUsedAt == nil && selected.LastUsedAt != nil:
 					selected = acc
@@ -3542,7 +3583,14 @@ func (s *GatewayService) selectAccountForModelWithPlatform(ctx context.Context, 
 // 查询原生平台账户 + 启用 mixed_scheduling 的 antigravity 账户
 func (s *GatewayService) selectAccountWithMixedScheduling(ctx context.Context, groupID *int64, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}, nativePlatform string) (*Account, error) {
 	preferOAuth := nativePlatform == PlatformGemini
-	routingAccountIDs, routingHardRestrict := s.routingPlanForRequest(ctx, nil, groupID, requestedModel, nativePlatform)
+	routingAccountIDs, routingHardRestrict, routingPriorityByID := s.routingPlanForRequest(ctx, nil, groupID, requestedModel, nativePlatform)
+	// 有效优先级：命中智能路由策略时用策略指定的账号优先级，否则回退账号自身优先级。
+	routingPrioOf := func(a *Account) int {
+		if routingPriorityByID != nil {
+			return routingPriorityByID[a.ID]
+		}
+		return a.Priority
+	}
 
 	// require_privacy_set: 获取分组信息
 	var schedGroup *Group
@@ -3646,9 +3694,11 @@ func (s *GatewayService) selectAccountWithMixedScheduling(ctx context.Context, g
 				selected = acc
 				continue
 			}
-			if acc.Priority < selected.Priority {
+			// 有效优先级（策略指定或账号自身）更小者优先；相同则按 LRU / OAuth 偏好。
+			pa, ps := routingPrioOf(acc), routingPrioOf(selected)
+			if pa < ps {
 				selected = acc
-			} else if acc.Priority == selected.Priority {
+			} else if pa == ps {
 				switch {
 				case acc.LastUsedAt == nil && selected.LastUsedAt != nil:
 					selected = acc

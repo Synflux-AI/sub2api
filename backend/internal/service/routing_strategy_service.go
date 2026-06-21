@@ -29,6 +29,10 @@ type RoutingDecision struct {
 	PreferIDs   []int64
 	MatchedID   int64  // 命中的策略 ID，0 表示无命中
 	MatchedName string // 命中的策略名称（用于排障 / dry-run）
+	// AccountPriorities 为命中策略中各账号的优先级（id -> 优先级，数值越小越优先）。
+	// 命中智能路由策略时非空（未显式配置则各账号默认为 0，即同一优先级）；旧版分组模型路由为 nil。
+	// 选择时作为首要排序键，再按负载率 / LRU 决定（相同优先级的账号会被负载均衡）。
+	AccountPriorities map[int64]int
 }
 
 // HasMatch 报告是否有策略命中。
@@ -99,11 +103,15 @@ func (s *RoutingStrategyService) Evaluate(ctx context.Context, mc RoutingMatchCo
 		if !s.matchConditions(st, mc) {
 			continue
 		}
-		ids := dedupInt64(st.AccountIDs)
+		ids, prioByID := dedupIDsWithPriorities(st.AccountIDs, st.AccountPriorities)
 		if len(ids) == 0 {
 			continue
 		}
-		dec := RoutingDecision{MatchedID: st.ID, MatchedName: st.Name}
+		dec := RoutingDecision{
+			MatchedID:         st.ID,
+			MatchedName:       st.Name,
+			AccountPriorities: prioByID,
+		}
 		if st.Action == RoutingActionPrefer {
 			dec.PreferIDs = ids
 		} else {
@@ -225,6 +233,33 @@ func UserAgentFromContext(ctx context.Context) string {
 // SetUserAgentContext 将 User-Agent 写入 context，供下游策略评估使用。
 func SetUserAgentContext(ctx context.Context, ua string) context.Context {
 	return context.WithValue(ctx, ctxkey.UserAgent, ua)
+}
+
+// dedupIDsWithPriorities 在去重账号 ID（保留首次出现顺序、剔除非正数）的同时，
+// 构建 id -> 优先级映射。prios 与 ids 按下标对齐；缺失或越界的优先级默认为 0（同一优先级）。
+func dedupIDsWithPriorities(ids []int64, prios []int) ([]int64, map[int64]int) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	seen := make(map[int64]struct{}, len(ids))
+	out := make([]int64, 0, len(ids))
+	prioByID := make(map[int64]int, len(ids))
+	for i, v := range ids {
+		if v <= 0 {
+			continue
+		}
+		if _, ok := seen[v]; ok {
+			continue
+		}
+		seen[v] = struct{}{}
+		out = append(out, v)
+		p := 0
+		if i < len(prios) {
+			p = prios[i]
+		}
+		prioByID[v] = p
+	}
+	return out, prioByID
 }
 
 func dedupInt64(in []int64) []int64 {

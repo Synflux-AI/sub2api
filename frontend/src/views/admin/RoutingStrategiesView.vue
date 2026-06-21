@@ -132,6 +132,7 @@
           </div>
         </div>
 
+
         <!-- Conditions -->
         <div>
           <div class="mb-2 flex items-center justify-between">
@@ -200,20 +201,37 @@
             class="input mt-1"
             :placeholder="t('admin.routingStrategies.selectAccounts')"
           />
+          <p class="input-hint mt-1">{{ t('admin.routingStrategies.accountPriorityHint') }}</p>
           <div class="mt-2 max-h-48 overflow-y-auto rounded-lg border border-gray-200 p-2 dark:border-dark-600">
-            <label
+            <div
               v-for="acc in filteredAccounts"
               :key="acc.id"
-              class="flex cursor-pointer items-center gap-2 rounded px-2 py-1 hover:bg-gray-50 dark:hover:bg-dark-700"
+              class="flex items-center gap-2 rounded px-2 py-1 hover:bg-gray-50 dark:hover:bg-dark-700"
             >
-              <input
-                type="checkbox"
-                :checked="form.account_ids.includes(acc.id)"
-                @change="toggleAccount(acc.id)"
-              />
-              <span class="text-sm text-gray-800 dark:text-gray-200">{{ acc.name }}</span>
-              <span class="text-xs text-gray-400">{{ acc.platform }} · #{{ acc.id }}</span>
-            </label>
+              <label class="flex flex-1 cursor-pointer items-center gap-2 truncate">
+                <input
+                  type="checkbox"
+                  :checked="form.account_ids.includes(acc.id)"
+                  @change="toggleAccount(acc.id)"
+                />
+                <span class="truncate text-sm text-gray-800 dark:text-gray-200">{{ acc.name }}</span>
+                <span class="text-xs text-gray-400">{{ acc.platform }} · #{{ acc.id }}</span>
+              </label>
+              <div
+                v-if="form.account_ids.includes(acc.id)"
+                class="flex shrink-0 items-center gap-1"
+                :title="t('admin.routingStrategies.accountPriorityHint')"
+              >
+                <span class="text-xs text-gray-400">{{ t('admin.routingStrategies.accountPriorityLabel') }}</span>
+                <input
+                  type="number"
+                  min="0"
+                  class="input h-7 w-16 px-2 py-0 text-sm"
+                  :value="getAccountPriority(acc.id)"
+                  @input="setAccountPriority(acc.id, ($event.target as HTMLInputElement).value)"
+                />
+              </div>
+            </div>
             <p v-if="filteredAccounts.length === 0" class="px-2 py-1 text-sm text-gray-400">
               {{ t('empty.noData') }}
             </p>
@@ -432,6 +450,22 @@ function accountsSummary(ids: number[]) {
   return names.join(', ')
 }
 
+// 读取某账号在策略内的优先级（默认 1）。account_priorities 与 account_ids 按下标对齐。
+function getAccountPriority(id: number): number {
+  const idx = form.account_ids.indexOf(id)
+  if (idx === -1) return 1
+  return form.account_priorities[idx] ?? 1
+}
+
+// 设置某账号的优先级（数值越小越优先；相同数值为同一优先级，再按负载 / LRU 选择）。
+function setAccountPriority(id: number, value: string) {
+  const idx = form.account_ids.indexOf(id)
+  if (idx === -1) return
+  let n = parseInt(value, 10)
+  if (isNaN(n) || n < 0) n = 0
+  form.account_priorities[idx] = n
+}
+
 const accountSearch = ref('')
 const filteredAccounts = computed(() => {
   const q = accountSearch.value.trim().toLowerCase()
@@ -488,6 +522,7 @@ const form = reactive<{
   conditions: RoutingCondition[]
   action: 'restrict' | 'prefer'
   account_ids: number[]
+  account_priorities: number[]
 }>({
   name: '',
   description: '',
@@ -498,7 +533,8 @@ const form = reactive<{
   match_mode: 'all',
   conditions: [],
   action: 'restrict',
-  account_ids: []
+  account_ids: [],
+  account_priorities: []
 })
 
 function resetForm() {
@@ -512,6 +548,7 @@ function resetForm() {
   form.conditions = []
   form.action = 'restrict'
   form.account_ids = []
+  form.account_priorities = []
   accountSearch.value = ''
 }
 
@@ -533,6 +570,8 @@ function openEditDialog(row: RoutingStrategy) {
   form.conditions = (row.conditions || []).map((c) => ({ ...c }))
   form.action = row.action || 'restrict'
   form.account_ids = [...(row.account_ids || [])]
+  // 与 account_ids 对齐补齐优先级（缺失默认 1）
+  form.account_priorities = form.account_ids.map((_, i) => row.account_priorities?.[i] ?? 1)
   accountSearch.value = ''
   showEditDialog.value = true
 }
@@ -567,8 +606,13 @@ function onConditionTypeChange(idx: number, type: string) {
 
 function toggleAccount(id: number) {
   const i = form.account_ids.indexOf(id)
-  if (i === -1) form.account_ids.push(id)
-  else form.account_ids.splice(i, 1)
+  if (i === -1) {
+    form.account_ids.push(id)
+    form.account_priorities.push(1) // 默认优先级 1
+  } else {
+    form.account_ids.splice(i, 1)
+    form.account_priorities.splice(i, 1) // 保持与 account_ids 对齐
+  }
 }
 
 function buildPayload(): SaveRoutingStrategyRequest {
@@ -586,7 +630,8 @@ function buildPayload(): SaveRoutingStrategyRequest {
       value: c.value.trim()
     })),
     action: form.action,
-    account_ids: form.account_ids
+    account_ids: form.account_ids,
+    account_priorities: form.account_priorities
   }
 }
 

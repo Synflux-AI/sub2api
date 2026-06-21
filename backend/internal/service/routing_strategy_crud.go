@@ -19,6 +19,8 @@ type SaveRoutingStrategyInput struct {
 	Conditions  []RoutingCondition
 	Action      string
 	AccountIDs  []int64
+	// AccountPriorities 与 AccountIDs 对齐：数值越小越优先；相同数值为同一优先级。留空表示全部同一优先级。
+	AccountPriorities []int
 }
 
 // List 返回全部策略（按 priority 升序）。
@@ -104,9 +106,18 @@ func normalizeAndValidateRoutingStrategy(input *SaveRoutingStrategyInput) (*Rout
 		return nil, ErrRoutingStrategyMatchMode
 	}
 
-	accountIDs := dedupInt64(input.AccountIDs)
+	accountIDs, prioByID := dedupIDsWithPriorities(input.AccountIDs, input.AccountPriorities)
 	if len(accountIDs) == 0 {
 		return nil, ErrRoutingStrategyAccounts
+	}
+	// 构建与去重后 accountIDs 对齐的优先级数组（缺失默认 0，负数夹紧为 0）。
+	accountPriorities := make([]int, len(accountIDs))
+	for i, id := range accountIDs {
+		p := prioByID[id]
+		if p < 0 {
+			p = 0
+		}
+		accountPriorities[i] = p
 	}
 
 	conditions, err := normalizeConditions(input.Conditions)
@@ -126,16 +137,17 @@ func normalizeAndValidateRoutingStrategy(input *SaveRoutingStrategyInput) (*Rout
 	}
 
 	return &RoutingStrategy{
-		Name:        name,
-		Description: strings.TrimSpace(input.Description),
-		Enabled:     input.Enabled,
-		Priority:    priority,
-		Platform:    strings.TrimSpace(input.Platform),
-		GroupID:     groupID,
-		MatchMode:   matchMode,
-		Conditions:  conditions,
-		Action:      action,
-		AccountIDs:  accountIDs,
+		Name:              name,
+		Description:       strings.TrimSpace(input.Description),
+		Enabled:           input.Enabled,
+		Priority:          priority,
+		Platform:          strings.TrimSpace(input.Platform),
+		GroupID:           groupID,
+		MatchMode:         matchMode,
+		Conditions:        conditions,
+		Action:            action,
+		AccountIDs:        accountIDs,
+		AccountPriorities: accountPriorities,
 	}, nil
 }
 

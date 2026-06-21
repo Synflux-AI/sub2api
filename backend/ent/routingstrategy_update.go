@@ -224,6 +224,24 @@ func (_u *RoutingStrategyUpdate) ClearAccountIds() *RoutingStrategyUpdate {
 	return _u
 }
 
+// SetAccountPriorities sets the "account_priorities" field.
+func (_u *RoutingStrategyUpdate) SetAccountPriorities(v []int) *RoutingStrategyUpdate {
+	_u.mutation.SetAccountPriorities(v)
+	return _u
+}
+
+// AppendAccountPriorities appends value to the "account_priorities" field.
+func (_u *RoutingStrategyUpdate) AppendAccountPriorities(v []int) *RoutingStrategyUpdate {
+	_u.mutation.AppendAccountPriorities(v)
+	return _u
+}
+
+// ClearAccountPriorities clears the value of the "account_priorities" field.
+func (_u *RoutingStrategyUpdate) ClearAccountPriorities() *RoutingStrategyUpdate {
+	_u.mutation.ClearAccountPriorities()
+	return _u
+}
+
 // Mutation returns the RoutingStrategyMutation object of the builder.
 func (_u *RoutingStrategyUpdate) Mutation() *RoutingStrategyMutation {
 	return _u.mutation
@@ -371,6 +389,17 @@ func (_u *RoutingStrategyUpdate) sqlSave(ctx context.Context) (_node int, err er
 	}
 	if _u.mutation.AccountIdsCleared() {
 		_spec.ClearField(routingstrategy.FieldAccountIds, field.TypeJSON)
+	}
+	if value, ok := _u.mutation.AccountPriorities(); ok {
+		_spec.SetField(routingstrategy.FieldAccountPriorities, field.TypeJSON, value)
+	}
+	if value, ok := _u.mutation.AppendedAccountPriorities(); ok {
+		_spec.AddModifier(func(u *sql.UpdateBuilder) {
+			sqljson.Append(u, routingstrategy.FieldAccountPriorities, value)
+		})
+	}
+	if _u.mutation.AccountPrioritiesCleared() {
+		_spec.ClearField(routingstrategy.FieldAccountPriorities, field.TypeJSON)
 	}
 	if _node, err = sqlgraph.UpdateNodes(ctx, _u.driver, _spec); err != nil {
 		if _, ok := err.(*sqlgraph.NotFoundError); ok {
@@ -586,6 +615,24 @@ func (_u *RoutingStrategyUpdateOne) ClearAccountIds() *RoutingStrategyUpdateOne 
 	return _u
 }
 
+// SetAccountPriorities sets the "account_priorities" field.
+func (_u *RoutingStrategyUpdateOne) SetAccountPriorities(v []int) *RoutingStrategyUpdateOne {
+	_u.mutation.SetAccountPriorities(v)
+	return _u
+}
+
+// AppendAccountPriorities appends value to the "account_priorities" field.
+func (_u *RoutingStrategyUpdateOne) AppendAccountPriorities(v []int) *RoutingStrategyUpdateOne {
+	_u.mutation.AppendAccountPriorities(v)
+	return _u
+}
+
+// ClearAccountPriorities clears the value of the "account_priorities" field.
+func (_u *RoutingStrategyUpdateOne) ClearAccountPriorities() *RoutingStrategyUpdateOne {
+	_u.mutation.ClearAccountPriorities()
+	return _u
+}
+
 // Mutation returns the RoutingStrategyMutation object of the builder.
 func (_u *RoutingStrategyUpdateOne) Mutation() *RoutingStrategyMutation {
 	return _u.mutation
@@ -763,6 +810,17 @@ func (_u *RoutingStrategyUpdateOne) sqlSave(ctx context.Context) (_node *Routing
 	}
 	if _u.mutation.AccountIdsCleared() {
 		_spec.ClearField(routingstrategy.FieldAccountIds, field.TypeJSON)
+	}
+	if value, ok := _u.mutation.AccountPriorities(); ok {
+		_spec.SetField(routingstrategy.FieldAccountPriorities, field.TypeJSON, value)
+	}
+	if value, ok := _u.mutation.AppendedAccountPriorities(); ok {
+		_spec.AddModifier(func(u *sql.UpdateBuilder) {
+			sqljson.Append(u, routingstrategy.FieldAccountPriorities, value)
+		})
+	}
+	if _u.mutation.AccountPrioritiesCleared() {
+		_spec.ClearField(routingstrategy.FieldAccountPriorities, field.TypeJSON)
 	}
 	_node = &RoutingStrategy{config: _u.config}
 	_spec.Assign = _node.assignValues

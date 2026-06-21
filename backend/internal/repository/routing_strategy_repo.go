@@ -28,7 +28,8 @@ func (r *routingStrategyRepository) Create(ctx context.Context, s *service.Routi
 		SetMatchMode(s.MatchMode).
 		SetConditions(s.Conditions).
 		SetAction(s.Action).
-		SetAccountIds(s.AccountIDs)
+		SetAccountIds(s.AccountIDs).
+		SetAccountPriorities(s.AccountPriorities)
 	if s.GroupID != nil {
 		builder.SetGroupID(*s.GroupID)
 	}
@@ -62,7 +63,8 @@ func (r *routingStrategyRepository) Update(ctx context.Context, s *service.Routi
 		SetMatchMode(s.MatchMode).
 		SetConditions(s.Conditions).
 		SetAction(s.Action).
-		SetAccountIds(s.AccountIDs)
+		SetAccountIds(s.AccountIDs).
+		SetAccountPriorities(s.AccountPriorities)
 	if s.GroupID != nil {
 		builder.SetGroupID(*s.GroupID)
 	} else {
@@ -118,19 +120,20 @@ func routingStrategyEntityToService(m *dbent.RoutingStrategy) *service.RoutingSt
 		return nil
 	}
 	return &service.RoutingStrategy{
-		ID:          m.ID,
-		Name:        m.Name,
-		Description: m.Description,
-		Enabled:     m.Enabled,
-		Priority:    m.Priority,
-		Platform:    m.Platform,
-		GroupID:     m.GroupID,
-		MatchMode:   m.MatchMode,
-		Conditions:  m.Conditions,
-		Action:      m.Action,
-		AccountIDs:  m.AccountIds,
-		CreatedAt:   m.CreatedAt,
-		UpdatedAt:   m.UpdatedAt,
+		ID:                m.ID,
+		Name:              m.Name,
+		Description:       m.Description,
+		Enabled:           m.Enabled,
+		Priority:          m.Priority,
+		Platform:          m.Platform,
+		GroupID:           m.GroupID,
+		MatchMode:         m.MatchMode,
+		Conditions:        m.Conditions,
+		Action:            m.Action,
+		AccountIDs:        m.AccountIds,
+		AccountPriorities: m.AccountPriorities,
+		CreatedAt:         m.CreatedAt,
+		UpdatedAt:         m.UpdatedAt,
 	}
 }
 

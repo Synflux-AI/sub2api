@@ -69,6 +69,10 @@ func (RoutingStrategy) Fields() []ent.Field {
 			Optional().
 			SchemaType(map[string]string{dialect.Postgres: "jsonb"}).
 			Comment("目标账号 ID 列表"),
+		field.JSON("account_priorities", []int{}).
+			Optional().
+			SchemaType(map[string]string{dialect.Postgres: "jsonb"}).
+			Comment("与 account_ids 对齐的账号优先级数组（数值越小越优先；相同数值为同一优先级，再按负载/LRU 选择）"),
 	}
 }
 

@@ -30592,30 +30592,32 @@ func (m *RedeemCodeMutation) ResetEdge(name string) error {
 // RoutingStrategyMutation represents an operation that mutates the RoutingStrategy nodes in the graph.
 type RoutingStrategyMutation struct {
 	config
-	op                Op
-	typ               string
-	id                *int64
-	created_at        *time.Time
-	updated_at        *time.Time
-	deleted_at        *time.Time
-	name              *string
-	description       *string
-	enabled           *bool
-	priority          *int
-	addpriority       *int
-	platform          *string
-	group_id          *int64
-	addgroup_id       *int64
-	match_mode        *string
-	conditions        *[]domain.RoutingCondition
-	appendconditions  []domain.RoutingCondition
-	action            *string
-	account_ids       *[]int64
-	appendaccount_ids []int64
-	clearedFields     map[string]struct{}
-	done              bool
-	oldValue          func(context.Context) (*RoutingStrategy, error)
-	predicates        []predicate.RoutingStrategy
+	op                       Op
+	typ                      string
+	id                       *int64
+	created_at               *time.Time
+	updated_at               *time.Time
+	deleted_at               *time.Time
+	name                     *string
+	description              *string
+	enabled                  *bool
+	priority                 *int
+	addpriority              *int
+	platform                 *string
+	group_id                 *int64
+	addgroup_id              *int64
+	match_mode               *string
+	conditions               *[]domain.RoutingCondition
+	appendconditions         []domain.RoutingCondition
+	action                   *string
+	account_ids              *[]int64
+	appendaccount_ids        []int64
+	account_priorities       *[]int
+	appendaccount_priorities []int
+	clearedFields            map[string]struct{}
+	done                     bool
+	oldValue                 func(context.Context) (*RoutingStrategy, error)
+	predicates               []predicate.RoutingStrategy
 }
 
 var _ ent.Mutation = (*RoutingStrategyMutation)(nil)
@@ -31309,6 +31311,71 @@ func (m *RoutingStrategyMutation) ResetAccountIds() {
 	delete(m.clearedFields, routingstrategy.FieldAccountIds)
 }
 
+// SetAccountPriorities sets the "account_priorities" field.
+func (m *RoutingStrategyMutation) SetAccountPriorities(i []int) {
+	m.account_priorities = &i
+	m.appendaccount_priorities = nil
+}
+
+// AccountPriorities returns the value of the "account_priorities" field in the mutation.
+func (m *RoutingStrategyMutation) AccountPriorities() (r []int, exists bool) {
+	v := m.account_priorities
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAccountPriorities returns the old "account_priorities" field's value of the RoutingStrategy entity.
+// If the RoutingStrategy object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RoutingStrategyMutation) OldAccountPriorities(ctx context.Context) (v []int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAccountPriorities is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAccountPriorities requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAccountPriorities: %w", err)
+	}
+	return oldValue.AccountPriorities, nil
+}
+
+// AppendAccountPriorities adds i to the "account_priorities" field.
+func (m *RoutingStrategyMutation) AppendAccountPriorities(i []int) {
+	m.appendaccount_priorities = append(m.appendaccount_priorities, i...)
+}
+
+// AppendedAccountPriorities returns the list of values that were appended to the "account_priorities" field in this mutation.
+func (m *RoutingStrategyMutation) AppendedAccountPriorities() ([]int, bool) {
+	if len(m.appendaccount_priorities) == 0 {
+		return nil, false
+	}
+	return m.appendaccount_priorities, true
+}
+
+// ClearAccountPriorities clears the value of the "account_priorities" field.
+func (m *RoutingStrategyMutation) ClearAccountPriorities() {
+	m.account_priorities = nil
+	m.appendaccount_priorities = nil
+	m.clearedFields[routingstrategy.FieldAccountPriorities] = struct{}{}
+}
+
+// AccountPrioritiesCleared returns if the "account_priorities" field was cleared in this mutation.
+func (m *RoutingStrategyMutation) AccountPrioritiesCleared() bool {
+	_, ok := m.clearedFields[routingstrategy.FieldAccountPriorities]
+	return ok
+}
+
+// ResetAccountPriorities resets all changes to the "account_priorities" field.
+func (m *RoutingStrategyMutation) ResetAccountPriorities() {
+	m.account_priorities = nil
+	m.appendaccount_priorities = nil
+	delete(m.clearedFields, routingstrategy.FieldAccountPriorities)
+}
+
 // Where appends a list predicates to the RoutingStrategyMutation builder.
 func (m *RoutingStrategyMutation) Where(ps ...predicate.RoutingStrategy) {
 	m.predicates = append(m.predicates, ps...)
@@ -31343,7 +31410,7 @@ func (m *RoutingStrategyMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *RoutingStrategyMutation) Fields() []string {
-	fields := make([]string, 0, 13)
+	fields := make([]string, 0, 14)
 	if m.created_at != nil {
 		fields = append(fields, routingstrategy.FieldCreatedAt)
 	}
@@ -31383,6 +31450,9 @@ func (m *RoutingStrategyMutation) Fields() []string {
 	if m.account_ids != nil {
 		fields = append(fields, routingstrategy.FieldAccountIds)
 	}
+	if m.account_priorities != nil {
+		fields = append(fields, routingstrategy.FieldAccountPriorities)
+	}
 	return fields
 }
 
@@ -31417,6 +31487,8 @@ func (m *RoutingStrategyMutation) Field(name string) (ent.Value, bool) {
 		return m.Action()
 	case routingstrategy.FieldAccountIds:
 		return m.AccountIds()
+	case routingstrategy.FieldAccountPriorities:
+		return m.AccountPriorities()
 	}
 	return nil, false
 }
@@ -31452,6 +31524,8 @@ func (m *RoutingStrategyMutation) OldField(ctx context.Context, name string) (en
 		return m.OldAction(ctx)
 	case routingstrategy.FieldAccountIds:
 		return m.OldAccountIds(ctx)
+	case routingstrategy.FieldAccountPriorities:
+		return m.OldAccountPriorities(ctx)
 	}
 	return nil, fmt.Errorf("unknown RoutingStrategy field %s", name)
 }
@@ -31552,6 +31626,13 @@ func (m *RoutingStrategyMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetAccountIds(v)
 		return nil
+	case routingstrategy.FieldAccountPriorities:
+		v, ok := value.([]int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAccountPriorities(v)
+		return nil
 	}
 	return fmt.Errorf("unknown RoutingStrategy field %s", name)
 }
@@ -31621,6 +31702,9 @@ func (m *RoutingStrategyMutation) ClearedFields() []string {
 	if m.FieldCleared(routingstrategy.FieldAccountIds) {
 		fields = append(fields, routingstrategy.FieldAccountIds)
 	}
+	if m.FieldCleared(routingstrategy.FieldAccountPriorities) {
+		fields = append(fields, routingstrategy.FieldAccountPriorities)
+	}
 	return fields
 }
 
@@ -31646,6 +31730,9 @@ func (m *RoutingStrategyMutation) ClearField(name string) error {
 		return nil
 	case routingstrategy.FieldAccountIds:
 		m.ClearAccountIds()
+		return nil
+	case routingstrategy.FieldAccountPriorities:
+		m.ClearAccountPriorities()
 		return nil
 	}
 	return fmt.Errorf("unknown RoutingStrategy nullable field %s", name)
@@ -31693,6 +31780,9 @@ func (m *RoutingStrategyMutation) ResetField(name string) error {
 		return nil
 	case routingstrategy.FieldAccountIds:
 		m.ResetAccountIds()
+		return nil
+	case routingstrategy.FieldAccountPriorities:
+		m.ResetAccountPriorities()
 		return nil
 	}
 	return fmt.Errorf("unknown RoutingStrategy field %s", name)

@@ -26,16 +26,17 @@ type routingConditionRequest struct {
 }
 
 type saveRoutingStrategyRequest struct {
-	Name        string                    `json:"name" binding:"required"`
-	Description string                    `json:"description"`
-	Enabled     bool                      `json:"enabled"`
-	Priority    int                       `json:"priority"`
-	Platform    string                    `json:"platform"`
-	GroupID     *int64                    `json:"group_id"`
-	MatchMode   string                    `json:"match_mode"`
-	Conditions  []routingConditionRequest `json:"conditions"`
-	Action      string                    `json:"action"`
-	AccountIDs  []int64                   `json:"account_ids"`
+	Name              string                    `json:"name" binding:"required"`
+	Description       string                    `json:"description"`
+	Enabled           bool                      `json:"enabled"`
+	Priority          int                       `json:"priority"`
+	Platform          string                    `json:"platform"`
+	GroupID           *int64                    `json:"group_id"`
+	MatchMode         string                    `json:"match_mode"`
+	Conditions        []routingConditionRequest `json:"conditions"`
+	Action            string                    `json:"action"`
+	AccountIDs        []int64                   `json:"account_ids"`
+	AccountPriorities []int                     `json:"account_priorities"`
 }
 
 func (r *saveRoutingStrategyRequest) toInput() *service.SaveRoutingStrategyInput {
@@ -48,16 +49,17 @@ func (r *saveRoutingStrategyRequest) toInput() *service.SaveRoutingStrategyInput
 		})
 	}
 	return &service.SaveRoutingStrategyInput{
-		Name:        r.Name,
-		Description: r.Description,
-		Enabled:     r.Enabled,
-		Priority:    r.Priority,
-		Platform:    r.Platform,
-		GroupID:     r.GroupID,
-		MatchMode:   r.MatchMode,
-		Conditions:  conditions,
-		Action:      r.Action,
-		AccountIDs:  r.AccountIDs,
+		Name:              r.Name,
+		Description:       r.Description,
+		Enabled:           r.Enabled,
+		Priority:          r.Priority,
+		Platform:          r.Platform,
+		GroupID:           r.GroupID,
+		MatchMode:         r.MatchMode,
+		Conditions:        conditions,
+		Action:            r.Action,
+		AccountIDs:        r.AccountIDs,
+		AccountPriorities: r.AccountPriorities,
 	}
 }
 
@@ -180,11 +182,17 @@ func (h *RoutingStrategyHandler) Test(c *gin.Context) {
 		accountIDs = dec.PreferIDs
 	}
 
+	accountPriorities := make([]int, len(accountIDs))
+	for i, id := range accountIDs {
+		accountPriorities[i] = dec.AccountPriorities[id]
+	}
+
 	response.Success(c, gin.H{
-		"matched":       dec.HasMatch(),
-		"strategy_id":   dec.MatchedID,
-		"strategy_name": dec.MatchedName,
-		"action":        action,
-		"account_ids":   accountIDs,
+		"matched":            dec.HasMatch(),
+		"strategy_id":        dec.MatchedID,
+		"strategy_name":      dec.MatchedName,
+		"action":             action,
+		"account_ids":        accountIDs,
+		"account_priorities": accountPriorities,
 	})
 }

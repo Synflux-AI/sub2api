@@ -684,6 +684,16 @@ func AccountIdsNotNil() predicate.RoutingStrategy {
 	return predicate.RoutingStrategy(sql.FieldNotNull(FieldAccountIds))
 }
 
+// AccountPrioritiesIsNil applies the IsNil predicate on the "account_priorities" field.
+func AccountPrioritiesIsNil() predicate.RoutingStrategy {
+	return predicate.RoutingStrategy(sql.FieldIsNull(FieldAccountPriorities))
+}
+
+// AccountPrioritiesNotNil applies the NotNil predicate on the "account_priorities" field.
+func AccountPrioritiesNotNil() predicate.RoutingStrategy {
+	return predicate.RoutingStrategy(sql.FieldNotNull(FieldAccountPriorities))
+}
+
 // And groups predicates with the AND operator between them.
 func And(predicates ...predicate.RoutingStrategy) predicate.RoutingStrategy {
 	return predicate.RoutingStrategy(sql.AndPredicates(predicates...))

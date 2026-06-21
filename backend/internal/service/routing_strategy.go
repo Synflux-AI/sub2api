@@ -58,8 +58,10 @@ type RoutingStrategy struct {
 	Conditions  []RoutingCondition `json:"conditions"`
 	Action      string             `json:"action"`
 	AccountIDs  []int64            `json:"account_ids"`
-	CreatedAt   time.Time          `json:"created_at"`
-	UpdatedAt   time.Time          `json:"updated_at"`
+	// AccountPriorities 与 AccountIDs 对齐：数值越小越优先；相同数值为同一优先级，再按负载 / LRU 选择。
+	AccountPriorities []int     `json:"account_priorities"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
 }
 
 // RoutingStrategyRepository 定义路由策略持久化接口。

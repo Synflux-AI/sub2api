@@ -44,8 +44,10 @@ type RoutingStrategy struct {
 	// 动作：restrict（硬路由）| prefer（软优先回退）
 	Action string `json:"action,omitempty"`
 	// 目标账号 ID 列表
-	AccountIds   []int64 `json:"account_ids,omitempty"`
-	selectValues sql.SelectValues
+	AccountIds []int64 `json:"account_ids,omitempty"`
+	// 与 account_ids 对齐的账号优先级数组（数值越小越优先；相同数值为同一优先级，再按负载/LRU 选择）
+	AccountPriorities []int `json:"account_priorities,omitempty"`
+	selectValues      sql.SelectValues
 }
 
 // scanValues returns the types for scanning values from sql.Rows.
@@ -53,7 +55,7 @@ func (*RoutingStrategy) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
-		case routingstrategy.FieldConditions, routingstrategy.FieldAccountIds:
+		case routingstrategy.FieldConditions, routingstrategy.FieldAccountIds, routingstrategy.FieldAccountPriorities:
 			values[i] = new([]byte)
 		case routingstrategy.FieldEnabled:
 			values[i] = new(sql.NullBool)
@@ -168,6 +170,14 @@ func (_m *RoutingStrategy) assignValues(columns []string, values []any) error {
 					return fmt.Errorf("unmarshal field account_ids: %w", err)
 				}
 			}
+		case routingstrategy.FieldAccountPriorities:
+			if value, ok := values[i].(*[]byte); !ok {
+				return fmt.Errorf("unexpected type %T for field account_priorities", values[i])
+			} else if value != nil && len(*value) > 0 {
+				if err := json.Unmarshal(*value, &_m.AccountPriorities); err != nil {
+					return fmt.Errorf("unmarshal field account_priorities: %w", err)
+				}
+			}
 		default:
 			_m.selectValues.Set(columns[i], values[i])
 		}
@@ -246,6 +256,9 @@ func (_m *RoutingStrategy) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("account_ids=")
 	builder.WriteString(fmt.Sprintf("%v", _m.AccountIds))
+	builder.WriteString(", ")
+	builder.WriteString("account_priorities=")
+	builder.WriteString(fmt.Sprintf("%v", _m.AccountPriorities))
 	builder.WriteByte(')')
 	return builder.String()
 }
