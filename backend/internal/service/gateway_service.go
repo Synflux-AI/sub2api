@@ -5487,6 +5487,37 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 		}
 	}
 	if resp.StatusCode >= 400 {
+		// 签名错误切换账号：同账号去签名重试仍是签名 400 时（重试发生在上面的 for 循环内），
+		// 若开启「API Key 签名错误切换账号」，包装成 UpstreamFailoverError 触发 failover 换号。
+		if resp.StatusCode == 400 {
+			respBody, readErr := s.readUpstreamErrorBody(resp)
+			if readErr == nil {
+				_ = resp.Body.Close()
+				resp.Body = io.NopCloser(bytes.NewReader(respBody))
+
+				if s.shouldFailoverSignatureError(ctx, account, respBody, reqModel) {
+					upstreamMsg := sanitizeUpstreamErrorMessage(strings.TrimSpace(extractUpstreamErrorMessage(respBody)))
+					appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+						Platform:           account.Platform,
+						AccountID:          account.ID,
+						AccountName:        account.Name,
+						UpstreamStatusCode: resp.StatusCode,
+						UpstreamRequestID:  resp.Header.Get("x-request-id"),
+						Kind:               "signature_failover",
+						Message:            upstreamMsg,
+						Detail: func() string {
+							if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
+								return truncateString(string(respBody), s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes)
+							}
+							return ""
+						}(),
+					})
+					logger.LegacyPrintf("service.gateway", "Account %d: signature error persists after retry, switching account", account.ID)
+					s.handleFailoverSideEffects(ctx, resp, account, reqModel)
+					return nil, &UpstreamFailoverError{StatusCode: resp.StatusCode, ResponseBody: respBody}
+				}
+			}
+		}
 		// 可选：对部分 400 触发 failover（默认关闭以保持语义）
 		if resp.StatusCode == 400 && s.cfg != nil && s.cfg.Gateway.FailoverOn400 {
 			respBody, readErr := s.readUpstreamErrorBody(resp)
@@ -7656,6 +7687,26 @@ func (s *GatewayService) shouldRectifySignatureError(ctx context.Context, accoun
 	}
 	// OAuth/SetupToken/Upstream/Bedrock 等：保持原有行为（内置模式 + 原开关）
 	return s.isThinkingBlockSignatureError(respBody) && s.settingService.IsSignatureRectifierEnabled(ctx)
+}
+
+// shouldFailoverSignatureError 判断签名错误是否应切换账号（仅 API Key）。
+// 与 shouldRectifySignatureError 配合实现「先重试再切换」：同账号去签名重试仍是签名 400
+// 时，由本方法判定是否把错误包装成 UpstreamFailoverError 触发 failover 到其他账号。
+func (s *GatewayService) shouldFailoverSignatureError(ctx context.Context, account *Account, respBody []byte, mappedModel string) bool {
+	if !ShouldRectifyThinkingSignatureError(mappedModel) {
+		return false
+	}
+	if account.Type != AccountTypeAPIKey {
+		return false
+	}
+	settings, err := s.settingService.GetRectifierSettings(ctx)
+	if err != nil || !settings.Enabled || !settings.APIKeySignatureFailoverEnabled {
+		return false
+	}
+	if s.isThinkingBlockSignatureError(respBody) {
+		return true
+	}
+	return matchSignaturePatterns(respBody, settings.APIKeySignaturePatterns)
 }
 
 // isSignatureErrorPattern 仅做模式匹配，不检查开关。

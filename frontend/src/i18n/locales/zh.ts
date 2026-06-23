@@ -6627,6 +6627,9 @@ export default {
         apikeySignature: 'API Key 签名整流',
         apikeySignatureHint:
           '当 API Key 账号的上游返回签名相关错误时，自动去除签名并重试（内置规则始终生效）',
+        apikeySignatureFailover: 'API Key 签名错误切换账号',
+        apikeySignatureFailoverHint:
+          '当 API Key 账号去签名重试后仍返回签名错误时，自动切换到其他账号重试（匹配规则同上，含自定义关键词）',
         apikeyPatterns: '自定义匹配关键词',
         apikeyPatternsHint:
           '额外的关键词，匹配响应体中的内容（不区分大小写）。内置规则始终生效，此处用于补充额外匹配。',

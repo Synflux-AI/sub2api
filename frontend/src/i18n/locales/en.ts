@@ -6471,6 +6471,9 @@ export default {
         apikeySignature: 'API Key Signature Rectifier',
         apikeySignatureHint:
           'Automatically strip signatures and retry when API Key accounts receive signature-related errors (built-in patterns always apply)',
+        apikeySignatureFailover: 'Switch Account on API Key Signature Error',
+        apikeySignatureFailoverHint:
+          'When an API Key account still returns a signature error after the strip-and-retry, automatically switch to another account (same matching rules, including custom patterns)',
         apikeyPatterns: 'Custom Match Patterns',
         apikeyPatternsHint:
           'Additional keywords matched against the response body (case-insensitive). Built-in patterns always apply; use these for supplementary matching.',
