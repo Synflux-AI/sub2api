@@ -5879,6 +5879,40 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 		}
 	}
 
+	// 签名错误切换账号（直传路径）：直传禁止去签名重试（会改写请求体），
+	// 但切换账号不改写 body，故签名相关 400 直接触发 failover 换号。
+	// 复用 shouldFailoverSignatureError，受同一个「API Key 签名错误切换账号」开关控制。
+	if resp.StatusCode == 400 {
+		respBody, readErr := s.readUpstreamErrorBody(resp)
+		if readErr == nil {
+			_ = resp.Body.Close()
+			resp.Body = io.NopCloser(bytes.NewReader(respBody))
+
+			if s.shouldFailoverSignatureError(ctx, account, respBody, input.RequestModel) {
+				upstreamMsg := sanitizeUpstreamErrorMessage(strings.TrimSpace(extractUpstreamErrorMessage(respBody)))
+				appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+					Platform:           account.Platform,
+					AccountID:          account.ID,
+					AccountName:        account.Name,
+					UpstreamStatusCode: resp.StatusCode,
+					UpstreamRequestID:  resp.Header.Get("x-request-id"),
+					Passthrough:        true,
+					Kind:               "signature_failover",
+					Message:            upstreamMsg,
+					Detail: func() string {
+						if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
+							return truncateString(string(respBody), s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes)
+						}
+						return ""
+					}(),
+				})
+				logger.LegacyPrintf("service.gateway", "[Anthropic Passthrough] Account %d: signature error, switching account", account.ID)
+				s.handleFailoverSideEffects(ctx, resp, account, input.RequestModel)
+				return nil, &UpstreamFailoverError{StatusCode: resp.StatusCode, ResponseBody: respBody}
+			}
+		}
+	}
+
 	if resp.StatusCode >= 400 {
 		return s.handleErrorResponse(ctx, resp, c, account, input.RequestModel)
 	}
