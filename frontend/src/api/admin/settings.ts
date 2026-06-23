@@ -1187,6 +1187,7 @@ export interface RectifierSettings {
   thinking_budget_enabled: boolean;
   apikey_signature_enabled: boolean;
   apikey_signature_patterns: string[];
+  apikey_signature_failover_enabled: boolean;
 }
 
 /**

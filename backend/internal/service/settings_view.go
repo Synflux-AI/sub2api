@@ -411,6 +411,10 @@ type RectifierSettings struct {
 	ThinkingBudgetEnabled    bool     `json:"thinking_budget_enabled"`    // Thinking Budget 整流
 	APIKeySignatureEnabled   bool     `json:"apikey_signature_enabled"`   // API Key 签名整流开关
 	APIKeySignaturePatterns  []string `json:"apikey_signature_patterns"`  // API Key 自定义匹配关键词
+
+	// APIKeySignatureFailoverEnabled API Key 签名错误切换账号开关。
+	// 开启后：API Key 账号去签名重试仍返回签名错误时，failover 到其他账号重试。
+	APIKeySignatureFailoverEnabled bool `json:"apikey_signature_failover_enabled"`
 }
 
 // DefaultRectifierSettings 返回默认的整流器配置（全部启用）

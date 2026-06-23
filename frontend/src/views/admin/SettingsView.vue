@@ -686,6 +686,31 @@
                     <Toggle v-model="rectifierForm.apikey_signature_enabled" />
                   </div>
 
+                  <!-- API Key Signature Failover (only when apikey_signature_enabled) -->
+                  <div
+                    v-if="rectifierForm.apikey_signature_enabled"
+                    class="ml-4 flex items-center justify-between border-l-2 border-gray-200 pl-4 dark:border-dark-600"
+                  >
+                    <div>
+                      <label
+                        class="text-sm font-medium text-gray-700 dark:text-gray-300"
+                        >{{
+                          t("admin.settings.rectifier.apikeySignatureFailover")
+                        }}</label
+                      >
+                      <p class="text-xs text-gray-500 dark:text-gray-400">
+                        {{
+                          t(
+                            "admin.settings.rectifier.apikeySignatureFailoverHint",
+                          )
+                        }}
+                      </p>
+                    </div>
+                    <Toggle
+                      v-model="rectifierForm.apikey_signature_failover_enabled"
+                    />
+                  </div>
+
                   <!-- Custom Patterns (only when apikey_signature_enabled) -->
                   <div
                     v-if="rectifierForm.apikey_signature_enabled"
@@ -7159,6 +7184,7 @@ const rectifierForm = reactive({
   thinking_budget_enabled: true,
   apikey_signature_enabled: false,
   apikey_signature_patterns: [] as string[],
+  apikey_signature_failover_enabled: false,
 });
 
 // Beta Policy 状态
@@ -9384,6 +9410,8 @@ async function saveRectifierSettings() {
       thinking_signature_enabled: rectifierForm.thinking_signature_enabled,
       thinking_budget_enabled: rectifierForm.thinking_budget_enabled,
       apikey_signature_enabled: rectifierForm.apikey_signature_enabled,
+      apikey_signature_failover_enabled:
+        rectifierForm.apikey_signature_failover_enabled,
       apikey_signature_patterns: rectifierForm.apikey_signature_patterns.filter(
         (p) => p.trim() !== "",
       ),
