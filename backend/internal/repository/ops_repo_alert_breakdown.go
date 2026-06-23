@@ -245,3 +245,29 @@ func buildErrorWhereAliased(filter *service.OpsDashboardFilter, start, end time.
 	where = "WHERE " + strings.Join(clauses, " AND ")
 	return where, args, idx
 }
+
+// alertBreakdownErrorPredicate 返回指定指标口径的错误过滤谓词(不含前导 AND)。
+// prefix 为 "" 或 "e."(JOIN 别名场景)。upstream 口径逐字对齐 queryErrorCounts 的 upstreamExcl。
+func alertBreakdownErrorPredicate(metricType, prefix string) string {
+	p := prefix
+	if strings.EqualFold(strings.TrimSpace(metricType), "upstream_error_rate") {
+		return fmt.Sprintf("%serror_owner='provider' AND NOT %sis_business_limited AND COALESCE(%supstream_status_code,%sstatus_code,0) NOT IN (429,529)", p, p, p, p)
+	}
+	return fmt.Sprintf("COALESCE(%sstatus_code,0)>=400 AND COALESCE(%sis_business_limited,false)=false", p, p)
+}
+
+// alertBreakdownStatusExpr 返回 4xx/5xx 归类用的状态码表达式。
+// upstream 口径基于 COALESCE(upstream_status_code,status_code,0)(恢复行 status=200 不会落入 4xx/5xx),其余基于 status_code。
+func alertBreakdownStatusExpr(metricType, prefix string) string {
+	p := prefix
+	if strings.EqualFold(strings.TrimSpace(metricType), "upstream_error_rate") {
+		return fmt.Sprintf("COALESCE(%supstream_status_code,%sstatus_code,0)", p, p)
+	}
+	return fmt.Sprintf("COALESCE(%sstatus_code,0)", p)
+}
+
+// alertBreakdownSLAPredicate 返回 SLA 错误谓词(分母用,口径无关),逐字对齐指标 errorCountSLA。
+func alertBreakdownSLAPredicate(prefix string) string {
+	p := prefix
+	return fmt.Sprintf("COALESCE(%sstatus_code,0)>=400 AND NOT %sis_business_limited", p, p)
+}
