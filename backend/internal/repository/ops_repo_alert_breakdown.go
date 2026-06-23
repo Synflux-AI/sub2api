@@ -108,17 +108,26 @@ func (r *opsRepository) GetAlertErrorBreakdown(ctx context.Context, filter *serv
 		_ = rows.Close()
 	}
 
-	// 6) Top 上游(平台 · 渠道名 · 模型);account_id 为空表示未走到选号(客户端错误)。
-	// 与 accounts JOIN 时 created_at 列名歧义,改用带别名 e 的等价 where。
+	// 6) Top 上游(逐次失败尝试):展开每行 upstream_errors JSONB 数组,按 event.account_id 计数。
+	//    一个请求里失败过 A、B 两个渠道时 A、B 各计一次(请求级只能归到「最后失败」的那个,会漏 A)。
+	//    event 级再排除 429/529(对齐错误率分子,与行级 alertBreakdownErrorPredicate 同口径);
+	//    event 未存 model,故该维度仅到「平台 · 渠道」,Model 留空。account_id 缺失(=0)归「未记录上游渠道」。
+	//    行选择口径沿用 metricType 谓词(带别名 e);与 accounts JOIN 时 created_at 歧义,用带别名 e 的等价 where。
 	upBase, upArgs, _ := buildErrorWhereAliased(filter, start, end, 1, "e")
 	upWhere := upBase + " AND " + alertBreakdownErrorPredicate(metricType, "e.")
-	upQ := `SELECT COALESCE(e.account_id,0) AS aid, COALESCE(a.name,'') AS aname, COALESCE(e.platform,'') AS pf, COALESCE(e.model,'') AS md, COUNT(*) AS c
-		FROM ops_error_logs e LEFT JOIN accounts a ON a.id = e.account_id ` + upWhere +
-		" GROUP BY aid, aname, pf, md ORDER BY c DESC LIMIT " + fmt.Sprintf("%d", topN)
+	upQ := `SELECT COALESCE(NULLIF(ev->>'account_id','')::bigint, 0) AS aid,
+			COALESCE(a.name, '') AS aname,
+			COALESCE(ev->>'platform', '') AS pf,
+			COUNT(*) AS c
+		FROM ops_error_logs e
+		CROSS JOIN LATERAL jsonb_array_elements(COALESCE(e.upstream_errors, '[]'::jsonb)) AS ev
+		LEFT JOIN accounts a ON a.id = NULLIF(ev->>'account_id','')::bigint ` + upWhere +
+		` AND COALESCE(NULLIF(ev->>'upstream_status_code','')::int, 0) NOT IN (429,529)
+		GROUP BY aid, aname, pf ORDER BY c DESC LIMIT ` + fmt.Sprintf("%d", topN)
 	if rows, err := r.db.QueryContext(ctx, upQ, upArgs...); err == nil {
 		for rows.Next() {
 			var up service.OpsAlertUpstreamStat
-			if err := rows.Scan(&up.AccountID, &up.AccountName, &up.Platform, &up.Model, &up.Count); err == nil {
+			if err := rows.Scan(&up.AccountID, &up.AccountName, &up.Platform, &up.Count); err == nil {
 				bd.TopUpstreams = append(bd.TopUpstreams, up)
 			}
 		}

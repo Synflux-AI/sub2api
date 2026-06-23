@@ -449,10 +449,10 @@ func buildAlertRichElements(rule *OpsAlertRule, event *OpsAlertEvent) []any {
 		elements = append(elements, map[string]any{"tag": "div", "text": map[string]any{"tag": "lark_md", "content": b.String()}})
 	}
 
-	// 🛰️ 上游渠道 TOP(平台 · 渠道名 · 模型)
+	// 🛰️ 上游失败尝试 TOP(逐次累计:展开每请求的多次上游失败尝试,平台 · 渠道;event 无 model 维度)
 	if len(bd.TopUpstreams) > 0 {
 		var b strings.Builder
-		_, _ = b.WriteString("**🛰️ 上游渠道 TOP**（平台 · 渠道 · 模型）")
+		_, _ = b.WriteString("**🛰️ 上游失败尝试 TOP**（逐次累计 · 平台 · 渠道）")
 		for i, up := range bd.TopUpstreams {
 			if up.AccountID <= 0 {
 				if strings.EqualFold(strings.TrimSpace(bd.MetricType), "upstream_error_rate") {
