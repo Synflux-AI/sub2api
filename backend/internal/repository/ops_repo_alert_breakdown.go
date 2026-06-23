@@ -39,21 +39,30 @@ func (r *opsRepository) GetAlertErrorBreakdown(ctx context.Context, filter *serv
 
 	bd := &service.OpsAlertBreakdown{MetricType: metricType}
 
-	// 1) 总错误数 + 4xx/5xx 拆分
-	totalQ := `SELECT
-		COUNT(*),
-		COUNT(*) FILTER (WHERE COALESCE(status_code,0) BETWEEN 400 AND 499),
-		COUNT(*) FILTER (WHERE COALESCE(status_code,0) >= 500)
-	FROM ops_error_logs ` + where
-	if err := r.db.QueryRowContext(ctx, totalQ, args...).Scan(&bd.TotalErrors, &bd.Client4xx, &bd.Server5xx); err != nil {
+	// 1) 总错误数 + 4xx/5xx 拆分 + SLA 错误数(分母用)。基线 WHERE 只含时间/scope,口径用 FILTER 表达。
+	statusExpr := alertBreakdownStatusExpr(metricType, "")
+	slaPred := alertBreakdownSLAPredicate("")
+	var slaErrors int64
+	totalQ := fmt.Sprintf(`SELECT
+		COUNT(*) FILTER (WHERE %[1]s),
+		COUNT(*) FILTER (WHERE %[1]s AND %[2]s BETWEEN 400 AND 499),
+		COUNT(*) FILTER (WHERE %[1]s AND %[2]s >= 500),
+		COUNT(*) FILTER (WHERE %[3]s)
+	FROM ops_error_logs %[4]s`, pred, statusExpr, slaPred, base)
+	if err := r.db.QueryRowContext(ctx, totalQ, args...).Scan(&bd.TotalErrors, &bd.Client4xx, &bd.Server5xx, &slaErrors); err != nil {
 		return nil, fmt.Errorf("alert breakdown total: %w", err)
 	}
+	bd.OtherErrors = bd.TotalErrors - bd.Client4xx - bd.Server5xx
+	if bd.OtherErrors < 0 {
+		bd.OtherErrors = 0
+	}
 
-	// 2) 窗口请求总数 = 成功(usage_logs) + SLA 错误。用于在卡片上展示错误率分母。
+	// 2) 窗口请求总数 = 成功(usage_logs) + SLA 错误,与指标分母 requestCountSLA 完全一致。
+	//    严禁用 TotalErrors:upstream 口径下被救回的 200 请求已计入 success,会双计。
 	if success, _, err := r.queryUsageCounts(ctx, filter, start, end); err == nil {
-		bd.WindowRequests = success + bd.TotalErrors
+		bd.WindowRequests = success + slaErrors
 	} else {
-		bd.WindowRequests = bd.TotalErrors
+		bd.WindowRequests = slaErrors
 	}
 
 	// 3) 平台分布
