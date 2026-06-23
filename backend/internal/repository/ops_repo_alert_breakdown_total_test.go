@@ -37,3 +37,30 @@ func TestGetAlertErrorBreakdown_UpstreamDenominatorAndBuckets(t *testing.T) {
 	require.Equal(t, int64(92), bd.WindowRequests, "分母必须是 success + sla,不是 success + total")
 	require.Equal(t, "upstream_error_rate", bd.MetricType)
 }
+
+// error_rate 口径回归:total==sla(均为 status>=400 非业务限流),other==0,分母=success+sla。
+// 钉住 default 分支不被误改:total=8(=4xx5+5xx3),sla=8,success=92 => 分母=100,other=0。
+func TestGetAlertErrorBreakdown_ErrorRateDefaultUnchanged(t *testing.T) {
+	db, mock := newSQLMock(t)
+	repo := &opsRepository{db: db}
+	mock.MatchExpectationsInOrder(false)
+
+	start := time.Date(2026, 6, 23, 0, 0, 0, 0, time.UTC)
+	end := start.Add(time.Hour)
+
+	mock.ExpectQuery(`COALESCE\(status_code,0\)>=400 AND NOT is_business_limited`).
+		WillReturnRows(sqlmock.NewRows([]string{"total", "c4xx", "c5xx", "sla"}).
+			AddRow(int64(8), int64(5), int64(3), int64(8)))
+	mock.ExpectQuery(`FROM usage_logs ul`).
+		WillReturnRows(sqlmock.NewRows([]string{"success_count", "token_consumed"}).
+			AddRow(int64(92), int64(0)))
+
+	bd, err := repo.GetAlertErrorBreakdown(context.Background(), &service.OpsDashboardFilter{}, start, end, 5, "error_rate")
+	require.NoError(t, err)
+	require.Equal(t, int64(8), bd.TotalErrors)
+	require.Equal(t, int64(5), bd.Client4xx)
+	require.Equal(t, int64(3), bd.Server5xx)
+	require.Equal(t, int64(0), bd.OtherErrors, "error_rate 口径下 total==4xx+5xx,无其他余量")
+	require.Equal(t, int64(100), bd.WindowRequests, "分母 = success + sla")
+	require.Equal(t, "error_rate", bd.MetricType)
+}
