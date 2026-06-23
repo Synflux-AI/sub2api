@@ -93,8 +93,8 @@ type OpsAlertBreakdown struct {
 	WindowMinutes  int                     `json:"window_minutes"`
 	WindowRequests int64                   `json:"window_requests"` // 窗口内请求总数(成功 + SLA 错误),作为错误率分母
 	TotalErrors    int64                   `json:"total_errors"`
-	Client4xx      int64                   `json:"client_4xx"` // 客户端错误(状态码 4xx)条数
-	Server5xx      int64                   `json:"server_5xx"` // 上游/网关错误(状态码 >=500)条数
+	Client4xx      int64                   `json:"client_4xx"`             // 客户端错误(状态码 4xx)条数
+	Server5xx      int64                   `json:"server_5xx"`             // 上游/网关错误(状态码 >=500)条数
 	OtherErrors    int64                   `json:"other_errors,omitempty"` // upstream 口径下既非 4xx 也非 5xx 的余量(恢复行)
 	MetricType     string                  `json:"metric_type,omitempty"`  // 该 breakdown 的指标口径,渲染层据此切换文案
 	Platforms      []OpsAlertPlatformStat  `json:"platforms,omitempty"`
