@@ -102,6 +102,10 @@ func (m *opsRepoMock) GetErrorDistribution(ctx context.Context, filter *OpsDashb
 	return &OpsErrorDistributionResponse{}, nil
 }
 
+func (m *opsRepoMock) GetErrorBreakdown(ctx context.Context, filter *OpsDashboardFilter, dimension string, limit int) (*OpsErrorBreakdownResponse, error) {
+	return &OpsErrorBreakdownResponse{Dimension: dimension}, nil
+}
+
 func (m *opsRepoMock) GetOpenAITokenStats(ctx context.Context, filter *OpsOpenAITokenStatsFilter) (*OpsOpenAITokenStatsResponse, error) {
 	return &OpsOpenAITokenStatsResponse{}, nil
 }

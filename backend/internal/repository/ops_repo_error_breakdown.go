@@ -1,9 +1,67 @@
 package repository
 
 import (
+	"context"
 	"fmt"
 	"strings"
+
+	"github.com/Wei-Shaw/sub2api/internal/service"
 )
+
+const opsErrorBreakdownMaxLimit = 100
+
+func (r *opsRepository) GetErrorBreakdown(ctx context.Context, filter *service.OpsDashboardFilter, dimension string, limit int) (*service.OpsErrorBreakdownResponse, error) {
+	if r == nil || r.db == nil {
+		return nil, fmt.Errorf("nil ops repository")
+	}
+	if filter == nil {
+		return nil, fmt.Errorf("nil filter")
+	}
+	if filter.StartTime.IsZero() || filter.EndTime.IsZero() {
+		return nil, fmt.Errorf("start_time/end_time required")
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > opsErrorBreakdownMaxLimit {
+		limit = opsErrorBreakdownMaxLimit
+	}
+
+	start := filter.StartTime.UTC()
+	end := filter.EndTime.UTC()
+	where, args, nextIdx := buildErrorWhere(filter, start, end, 1)
+
+	itemsSQL, totalsSQL, err := buildErrorBreakdownQuery(dimension, where, nextIdx)
+	if err != nil {
+		return nil, err
+	}
+
+	resp := &service.OpsErrorBreakdownResponse{Dimension: dimension, Items: []*service.OpsErrorBreakdownItem{}}
+
+	// grand totals（同 where/args，不加 limit），不受 items 的 LIMIT 影响。
+	if err := r.db.QueryRowContext(ctx, totalsSQL, args...).Scan(&resp.Total, &resp.SLA, &resp.BusinessLimited); err != nil {
+		return nil, err
+	}
+
+	// items（where args + limit）。
+	itemArgs := append(append([]any{}, args...), limit)
+	rows, err := r.db.QueryContext(ctx, itemsSQL, itemArgs...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		it := &service.OpsErrorBreakdownItem{}
+		if err := rows.Scan(&it.Key, &it.Label, &it.Total, &it.SLA, &it.BusinessLimited); err != nil {
+			return nil, err
+		}
+		resp.Items = append(resp.Items, it)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return resp, nil
+}
 
 // opsBreakdownDim 描述一个错误分组维度。
 //
