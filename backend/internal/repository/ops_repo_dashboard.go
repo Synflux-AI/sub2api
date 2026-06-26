@@ -1041,6 +1041,63 @@ func buildErrorWhere(filter *service.OpsDashboardFilter, start, end time.Time, s
 		idx++
 	}
 
+	if filter != nil {
+		if filter.UserID != nil && *filter.UserID > 0 {
+			args = append(args, *filter.UserID)
+			clauses = append(clauses, fmt.Sprintf("user_id = $%d", idx))
+			idx++
+		}
+		if filter.AccountID != nil && *filter.AccountID > 0 {
+			args = append(args, *filter.AccountID)
+			clauses = append(clauses, fmt.Sprintf("account_id = $%d", idx))
+			idx++
+		}
+		if filter.APIKeyID != nil && *filter.APIKeyID > 0 {
+			args = append(args, *filter.APIKeyID)
+			clauses = append(clauses, fmt.Sprintf("api_key_id = $%d", idx))
+			idx++
+		}
+		if m := strings.TrimSpace(filter.Model); m != "" {
+			args = append(args, m)
+			clauses = append(clauses, fmt.Sprintf("COALESCE(requested_model, model, '') = $%d", idx))
+			idx++
+		}
+		if o := strings.TrimSpace(filter.ErrorOwner); o != "" {
+			args = append(args, strings.ToLower(o))
+			clauses = append(clauses, fmt.Sprintf("LOWER(COALESCE(error_owner,'')) = $%d", idx))
+			idx++
+		}
+		if s := strings.TrimSpace(filter.ErrorSource); s != "" {
+			args = append(args, strings.ToLower(s))
+			clauses = append(clauses, fmt.Sprintf("LOWER(COALESCE(error_source,'')) = $%d", idx))
+			idx++
+		}
+		if et := strings.TrimSpace(filter.ErrorType); et != "" {
+			args = append(args, et)
+			clauses = append(clauses, fmt.Sprintf("error_type = $%d", idx))
+			idx++
+		}
+		if ep := strings.TrimSpace(filter.ErrorPhase); ep != "" {
+			args = append(args, ep)
+			clauses = append(clauses, fmt.Sprintf("error_phase = $%d", idx))
+			idx++
+		}
+		if sev := strings.TrimSpace(filter.Severity); sev != "" {
+			args = append(args, sev)
+			clauses = append(clauses, fmt.Sprintf("severity = $%d", idx))
+			idx++
+		}
+		if len(filter.StatusCodes) > 0 {
+			placeholders := make([]string, 0, len(filter.StatusCodes))
+			for _, code := range filter.StatusCodes {
+				args = append(args, code)
+				placeholders = append(placeholders, fmt.Sprintf("$%d", idx))
+				idx++
+			}
+			clauses = append(clauses, "COALESCE(upstream_status_code, status_code, 0) IN ("+strings.Join(placeholders, ", ")+")")
+		}
+	}
+
 	where = "WHERE " + strings.Join(clauses, " AND ")
 	return where, args, idx
 }
