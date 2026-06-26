@@ -64,3 +64,22 @@ type OpsErrorDistributionResponse struct {
 	Total int64                       `json:"total"`
 	Items []*OpsErrorDistributionItem `json:"items"`
 }
+
+// OpsErrorBreakdownItem 是某维度取值的错误聚合行。
+type OpsErrorBreakdownItem struct {
+	Key             string `json:"key"`
+	Label           string `json:"label"`
+	Total           int64  `json:"total"`
+	SLA             int64  `json:"sla"`
+	BusinessLimited int64  `json:"business_limited"`
+}
+
+// OpsErrorBreakdownResponse 是 error-breakdown 接口的响应。
+// Total/SLA/BusinessLimited 为全量(未被 LIMIT 截断)合计，供前端算「其它」与占比。
+type OpsErrorBreakdownResponse struct {
+	Dimension       string                   `json:"dimension"`
+	Total           int64                    `json:"total"`
+	SLA             int64                    `json:"sla"`
+	BusinessLimited int64                    `json:"business_limited"`
+	Items           []*OpsErrorBreakdownItem `json:"items"`
+}
