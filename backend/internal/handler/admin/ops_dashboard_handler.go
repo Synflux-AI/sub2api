@@ -154,19 +154,10 @@ func (h *OpsHandler) GetDashboardErrorTrend(c *gin.Context) {
 		return
 	}
 
-	filter := &service.OpsDashboardFilter{
-		StartTime: startTime,
-		EndTime:   endTime,
-		Platform:  strings.TrimSpace(c.Query("platform")),
-		QueryMode: parseOpsQueryMode(c),
-	}
-	if v := strings.TrimSpace(c.Query("group_id")); v != "" {
-		id, err := strconv.ParseInt(v, 10, 64)
-		if err != nil || id <= 0 {
-			response.BadRequest(c, "Invalid group_id")
-			return
-		}
-		filter.GroupID = &id
+	filter, err := parseOpsDashboardErrorFilter(c, startTime, endTime)
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
 	}
 
 	bucketSeconds := pickThroughputBucketSeconds(endTime.Sub(startTime))
@@ -196,19 +187,10 @@ func (h *OpsHandler) GetDashboardErrorDistribution(c *gin.Context) {
 		return
 	}
 
-	filter := &service.OpsDashboardFilter{
-		StartTime: startTime,
-		EndTime:   endTime,
-		Platform:  strings.TrimSpace(c.Query("platform")),
-		QueryMode: parseOpsQueryMode(c),
-	}
-	if v := strings.TrimSpace(c.Query("group_id")); v != "" {
-		id, err := strconv.ParseInt(v, 10, 64)
-		if err != nil || id <= 0 {
-			response.BadRequest(c, "Invalid group_id")
-			return
-		}
-		filter.GroupID = &id
+	filter, err := parseOpsDashboardErrorFilter(c, startTime, endTime)
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
 	}
 
 	data, err := h.opsService.GetErrorDistribution(c.Request.Context(), filter)
@@ -350,4 +332,62 @@ func parseOpsQueryMode(c *gin.Context) service.OpsQueryMode {
 		return ""
 	}
 	return service.ParseOpsQueryMode(raw)
+}
+
+// parseOpsDashboardErrorFilter 解析 error 类 dashboard 接口的过滤参数（trend/distribution/breakdown 共用）。
+// 返回的 filter 已含时间窗 + platform/query_mode/group_id + 各维度过滤；非法入参返回 error。
+func parseOpsDashboardErrorFilter(c *gin.Context, start, end time.Time) (*service.OpsDashboardFilter, error) {
+	filter := &service.OpsDashboardFilter{
+		StartTime: start,
+		EndTime:   end,
+		Platform:  strings.TrimSpace(c.Query("platform")),
+		QueryMode: parseOpsQueryMode(c),
+	}
+	parseID := func(name string) (*int64, error) {
+		v := strings.TrimSpace(c.Query(name))
+		if v == "" {
+			return nil, nil
+		}
+		id, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || id <= 0 {
+			return nil, fmt.Errorf("invalid %s", name)
+		}
+		return &id, nil
+	}
+	var err error
+	if filter.GroupID, err = parseID("group_id"); err != nil {
+		return nil, err
+	}
+	if filter.UserID, err = parseID("user_id"); err != nil {
+		return nil, err
+	}
+	if filter.AccountID, err = parseID("account_id"); err != nil {
+		return nil, err
+	}
+	if filter.APIKeyID, err = parseID("api_key_id"); err != nil {
+		return nil, err
+	}
+	filter.Model = strings.TrimSpace(c.Query("model"))
+	filter.ErrorOwner = strings.TrimSpace(c.Query("error_owner"))
+	filter.ErrorSource = strings.TrimSpace(c.Query("error_source"))
+	filter.ErrorType = strings.TrimSpace(c.Query("error_type"))
+	filter.ErrorPhase = strings.TrimSpace(c.Query("phase"))
+	filter.Severity = strings.TrimSpace(c.Query("severity"))
+	if s := strings.TrimSpace(c.Query("status_codes")); s != "" {
+		parts := strings.Split(s, ",")
+		out := make([]int, 0, len(parts))
+		for _, part := range parts {
+			p := strings.TrimSpace(part)
+			if p == "" {
+				continue
+			}
+			n, convErr := strconv.Atoi(p)
+			if convErr != nil || n < 0 {
+				return nil, fmt.Errorf("invalid status_codes")
+			}
+			out = append(out, n)
+		}
+		filter.StatusCodes = out
+	}
+	return filter, nil
 }
