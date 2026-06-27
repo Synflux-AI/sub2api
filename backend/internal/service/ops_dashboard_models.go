@@ -12,6 +12,18 @@ type OpsDashboardFilter struct {
 	// QueryMode controls whether dashboard queries should use raw logs or pre-aggregated tables.
 	// Expected values: auto/raw/preagg (see OpsQueryMode).
 	QueryMode OpsQueryMode
+
+	// Error-stats 过滤维度（与明细列表对齐）。零值表示不过滤。
+	UserID      *int64
+	AccountID   *int64
+	APIKeyID    *int64
+	Model       string // 比对 COALESCE(requested_model, model, '')，精确
+	ErrorOwner  string // 比对 LOWER(COALESCE(error_owner,''))，库内小写
+	ErrorType   string
+	ErrorPhase  string
+	ErrorSource string // 比对 LOWER(COALESCE(error_source,''))
+	StatusCodes []int  // 比对 COALESCE(upstream_status_code, status_code, 0) IN (...)
+	Severity    string
 }
 
 type OpsRateSummary struct {
