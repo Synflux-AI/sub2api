@@ -48,3 +48,29 @@ func TestParseOpsDashboardErrorFilter_RejectsBadUserID(t *testing.T) {
 		t.Errorf("expected error for invalid user_id")
 	}
 }
+
+func TestParseOpsBreakdownLimit(t *testing.T) {
+	cases := []struct {
+		raw     string
+		want    int
+		wantErr bool
+	}{
+		{"", 20, false},
+		{"50", 50, false},
+		{"0", 0, true},
+		{"101", 0, true},
+		{"abc", 0, true},
+	}
+	for _, tc := range cases {
+		got, err := parseOpsBreakdownLimit(tc.raw)
+		if tc.wantErr {
+			if err == nil {
+				t.Errorf("raw=%q expected error", tc.raw)
+			}
+			continue
+		}
+		if err != nil || got != tc.want {
+			t.Errorf("raw=%q got (%d,%v) want %d", tc.raw, got, err, tc.want)
+		}
+	}
+}
