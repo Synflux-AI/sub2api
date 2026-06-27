@@ -1078,7 +1078,8 @@ func buildErrorWhere(filter *service.OpsDashboardFilter, start, end time.Time, s
 			idx++
 		}
 		if ep := strings.TrimSpace(filter.ErrorPhase); ep != "" {
-			args = append(args, ep)
+			// error_phase 库内存小写；与明细列表一致地对入参小写归一。
+			args = append(args, strings.ToLower(ep))
 			clauses = append(clauses, fmt.Sprintf("error_phase = $%d", idx))
 			idx++
 		}

@@ -116,7 +116,9 @@ func buildErrorBreakdownQuery(dimension, where string, limitArgIndex int) (items
 	b.WriteString("  FROM ops_error_logs\n  " + where + "\n")
 	b.WriteString("    AND COALESCE(status_code, 0) >= 400\n")
 	b.WriteString("  GROUP BY 1\n)\n")
-	b.WriteString("SELECT g.k::text AS key, " + labelSelect + " AS label, g.total, g.sla, g.business_limited\n")
+	// key 必须 COALESCE：user_id/account_id/platform 等可空列分组会产生 NULL 键，
+	// 而 NULL 扫描进 Go string 会报错。NULL 键统一落为空串。
+	b.WriteString("SELECT COALESCE(g.k::text, '') AS key, " + labelSelect + " AS label, g.total, g.sla, g.business_limited\n")
 	b.WriteString("FROM g " + dim.joinSQL + "\n")
 	b.WriteString("ORDER BY g.total DESC\n")
 	b.WriteString(fmt.Sprintf("LIMIT $%d", limitArgIndex))

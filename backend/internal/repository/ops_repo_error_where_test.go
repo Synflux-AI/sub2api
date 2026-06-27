@@ -20,7 +20,7 @@ func TestBuildErrorWhere_AppliesNewDimensionFilters(t *testing.T) {
 		ErrorOwner:  "Provider", // 大写，断言归一为小写参数
 		ErrorSource: "Network",
 		ErrorType:   "api_error",
-		ErrorPhase:  "upstream",
+		ErrorPhase:  "Upstream", // 大写，断言归一为小写参数
 		Severity:    "P0",
 		StatusCodes: []int{429, 529},
 	}
@@ -49,16 +49,26 @@ func TestBuildErrorWhere_AppliesNewDimensionFilters(t *testing.T) {
 		t.Errorf("where must stay unaliased, got: %s", where)
 	}
 	foundProvider := false
+	foundPhase := false
 	for _, a := range args {
-		if s, ok := a.(string); ok && s == "provider" {
-			foundProvider = true
+		s, ok := a.(string)
+		if !ok {
+			continue
 		}
-		if s, ok := a.(string); ok && s == "Provider" {
-			t.Errorf("error_owner arg should be lowercased")
+		switch s {
+		case "provider":
+			foundProvider = true
+		case "upstream":
+			foundPhase = true
+		case "Provider", "Upstream":
+			t.Errorf("owner/phase arg should be lowercased, got %q", s)
 		}
 	}
 	if !foundProvider {
 		t.Errorf("expected lowercased 'provider' in args: %#v", args)
+	}
+	if !foundPhase {
+		t.Errorf("expected lowercased 'upstream' (phase) in args: %#v", args)
 	}
 	if next <= 1 {
 		t.Errorf("nextIndex should advance, got %d", next)

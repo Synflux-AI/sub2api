@@ -21,6 +21,7 @@ func TestBuildErrorBreakdownQuery_UserDimensionJoinsAndLimits(t *testing.T) {
 		"WHERE created_at >= $1",
 		"COALESCE(status_code, 0) >= 400",
 		"GROUP BY 1",
+		"COALESCE(g.k::text, '') AS key", // NULL 键防扫描错误
 		"LEFT JOIN users u ON u.id = g.k",
 		"ORDER BY g.total DESC",
 		"LIMIT $2",
