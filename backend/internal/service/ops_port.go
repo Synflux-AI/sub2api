@@ -31,6 +31,7 @@ type OpsRepository interface {
 	GetErrorTrend(ctx context.Context, filter *OpsDashboardFilter, bucketSeconds int) (*OpsErrorTrendResponse, error)
 	GetErrorDistribution(ctx context.Context, filter *OpsDashboardFilter) (*OpsErrorDistributionResponse, error)
 	GetErrorBreakdown(ctx context.Context, filter *OpsDashboardFilter, dimension string, limit int) (*OpsErrorBreakdownResponse, error)
+	GetErrorTrendByDim(ctx context.Context, filter *OpsDashboardFilter, dimension string, bucketSeconds, limit int) (*OpsErrorTrendByDimResponse, error)
 	GetOpenAITokenStats(ctx context.Context, filter *OpsOpenAITokenStatsFilter) (*OpsOpenAITokenStatsResponse, error)
 
 	InsertSystemMetrics(ctx context.Context, input *OpsInsertSystemMetricsInput) error

@@ -225,6 +225,7 @@ func registerOpsRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		ops.GET("/dashboard/error-trend", h.Admin.Ops.GetDashboardErrorTrend)
 		ops.GET("/dashboard/error-distribution", h.Admin.Ops.GetDashboardErrorDistribution)
 		ops.GET("/dashboard/error-breakdown", h.Admin.Ops.GetDashboardErrorBreakdown)
+		ops.GET("/dashboard/error-trend-by-dim", h.Admin.Ops.GetDashboardErrorTrendByDim)
 		ops.GET("/dashboard/openai-token-stats", h.Admin.Ops.GetDashboardOpenAITokenStats)
 	}
 }

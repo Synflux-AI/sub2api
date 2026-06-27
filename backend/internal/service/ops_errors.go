@@ -78,3 +78,24 @@ func (s *OpsService) GetErrorBreakdown(ctx context.Context, filter *OpsDashboard
 	}
 	return s.opsRepo.GetErrorBreakdown(ctx, filter, dimension, limit)
 }
+
+// GetErrorTrendByDim 返回某维度下「逐时间桶 × Top-N 键」的错误计数长表（仅 raw 路径）。
+// dimension 白名单由仓库层守门；非法 dimension 返回普通 error。
+func (s *OpsService) GetErrorTrendByDim(ctx context.Context, filter *OpsDashboardFilter, dimension string, bucketSeconds, limit int) (*OpsErrorTrendByDimResponse, error) {
+	if err := s.RequireMonitoringEnabled(ctx); err != nil {
+		return nil, err
+	}
+	if s.opsRepo == nil {
+		return nil, infraerrors.ServiceUnavailable("OPS_REPO_UNAVAILABLE", "Ops repository not available")
+	}
+	if filter == nil {
+		return nil, infraerrors.BadRequest("OPS_FILTER_REQUIRED", "filter is required")
+	}
+	if filter.StartTime.IsZero() || filter.EndTime.IsZero() {
+		return nil, infraerrors.BadRequest("OPS_TIME_RANGE_REQUIRED", "start_time/end_time are required")
+	}
+	if filter.StartTime.After(filter.EndTime) {
+		return nil, infraerrors.BadRequest("OPS_TIME_RANGE_INVALID", "start_time must be <= end_time")
+	}
+	return s.opsRepo.GetErrorTrendByDim(ctx, filter, dimension, bucketSeconds, limit)
+}

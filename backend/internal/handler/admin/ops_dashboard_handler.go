@@ -390,6 +390,46 @@ func (h *OpsHandler) GetDashboardErrorBreakdown(c *gin.Context) {
 	response.Success(c, data)
 }
 
+// GetDashboardErrorTrendByDim returns per-bucket error counts grouped by a dimension (top-N + others).
+// GET /api/v1/admin/ops/dashboard/error-trend-by-dim
+func (h *OpsHandler) GetDashboardErrorTrendByDim(c *gin.Context) {
+	if h.opsService == nil {
+		response.Error(c, http.StatusServiceUnavailable, "Ops service not available")
+		return
+	}
+	if err := h.opsService.RequireMonitoringEnabled(c.Request.Context()); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	startTime, endTime, err := parseOpsTimeRange(c, "1h")
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	dimension := strings.TrimSpace(c.Query("dimension"))
+	if dimension == "" {
+		response.BadRequest(c, "dimension is required")
+		return
+	}
+	limit, err := parseOpsBreakdownLimit(c.Query("limit"))
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	filter, err := parseOpsDashboardErrorFilter(c, startTime, endTime)
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	bucketSeconds := pickThroughputBucketSeconds(endTime.Sub(startTime))
+	data, err := h.opsService.GetErrorTrendByDim(c.Request.Context(), filter, dimension, bucketSeconds, limit)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, data)
+}
+
 // parseOpsDashboardErrorFilter 解析 error 类 dashboard 接口的过滤参数（trend/distribution/breakdown 共用）。
 // 返回的 filter 已含时间窗 + platform/query_mode/group_id + 各维度过滤；非法入参返回 error。
 func parseOpsDashboardErrorFilter(c *gin.Context, start, end time.Time) (*service.OpsDashboardFilter, error) {

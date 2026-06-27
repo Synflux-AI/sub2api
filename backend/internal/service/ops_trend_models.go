@@ -83,3 +83,21 @@ type OpsErrorBreakdownResponse struct {
 	BusinessLimited int64                    `json:"business_limited"`
 	Items           []*OpsErrorBreakdownItem `json:"items"`
 }
+
+// OpsErrorTrendByDimPoint 是「某时间桶 × 某维度键」的错误计数（含其它桶 key='__others__'）。
+type OpsErrorTrendByDimPoint struct {
+	BucketStart     time.Time `json:"bucket_start"`
+	Key             string    `json:"key"`
+	Label           string    `json:"label"`
+	Total           int64     `json:"total"`
+	SLA             int64     `json:"sla"`
+	BusinessLimited int64     `json:"business_limited"`
+}
+
+// OpsErrorTrendByDimResponse 是 error-trend-by-dim 接口响应。
+// Points 为长表（桶×键），前端据此同时派生堆叠图与排行（单一数据源）。
+type OpsErrorTrendByDimResponse struct {
+	Dimension string                     `json:"dimension"`
+	Bucket    string                     `json:"bucket"`
+	Points    []*OpsErrorTrendByDimPoint `json:"points"`
+}
