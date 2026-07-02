@@ -70,11 +70,11 @@ pipeline {
         stage('govulncheck') {
           steps { ciStage('govulncheck', '''docker run --rm -v "$WORKSPACE":/w -w /w/backend -v jenkins-sub2api-gomod:/go/pkg/mod -v jenkins-sub2api-gocache:/root/.cache/go-build -v jenkins-sub2api-gobin:/go/bin -e GOPROXY -e GOSUMDB "$GO_FULL_IMAGE" sh -c 'go install golang.org/x/vuln/cmd/govulncheck@latest && govulncheck ./...' ''') }
         }
-        stage('Frontend unit + lint') {
-          steps { ciStage('frontend', '''docker run --rm -v "$WORKSPACE":/w -w /w/frontend -v jenkins-sub2api-pnpm:/pnpm-store "$NODE_IMAGE" sh -c 'corepack enable && corepack prepare pnpm@9 --activate && pnpm config set store-dir /pnpm-store && pnpm install --frozen-lockfile && pnpm run lint:check && pnpm run typecheck && pnpm exec vitest run '"$FE_CRITICAL"' ' ''') }
-        }
-        stage('Frontend audit') {
-          steps { ciStage('audit', '''docker run --rm -v "$WORKSPACE":/w -w /w/frontend -v jenkins-sub2api-pnpm:/pnpm-store "$NODE_IMAGE" sh -c 'corepack enable && corepack prepare pnpm@9 --activate && pnpm config set store-dir /pnpm-store && pnpm install --frozen-lockfile && pnpm audit --prod --audit-level=high --json > audit.json || true' && docker run --rm -v "$WORKSPACE":/w -w /w "$PY_IMAGE" python tools/check_pnpm_audit_exceptions.py --audit frontend/audit.json --exceptions .github/audit-exceptions.yml''') }
+        // Frontend lint/typecheck/test + audit share one pnpm install. Kept in a
+        // single stage on purpose: running two `pnpm install` in parallel against
+        // the same store/node_modules races (ERR_PNPM_ENOENT).
+        stage('Frontend') {
+          steps { ciStage('frontend', '''docker run --rm -v "$WORKSPACE":/w -w /w/frontend -v jenkins-sub2api-pnpm:/pnpm-store "$NODE_IMAGE" sh -c 'set -e; corepack enable; corepack prepare pnpm@9 --activate; pnpm config set store-dir /pnpm-store; pnpm install --frozen-lockfile; pnpm run lint:check; pnpm run typecheck; pnpm exec vitest run '"$FE_CRITICAL"'; pnpm audit --prod --audit-level=high --json > audit.json || true' && docker run --rm -v "$WORKSPACE":/w -w /w "$PY_IMAGE" python tools/check_pnpm_audit_exceptions.py --audit frontend/audit.json --exceptions .github/audit-exceptions.yml''') }
         }
       }
     }

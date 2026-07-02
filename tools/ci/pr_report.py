@@ -27,8 +27,7 @@ STAGE_TITLES = {
     "backend-unit": "后端单元测试",
     "golangci-lint": "golangci-lint",
     "govulncheck": "govulncheck",
-    "frontend": "前端 lint/typecheck/单测",
-    "audit": "pnpm audit",
+    "frontend": "前端 lint/typecheck/单测/audit",
 }
 
 
