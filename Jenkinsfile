@@ -112,8 +112,11 @@ pipeline {
 // Run one CI stage: stream + capture its output to ci-logs/<key>.log, record
 // pass/fail in ci-logs/<key>.status, and fail the stage on non-zero exit.
 def ciStage(String key, String dockerCmd) {
-  def wrapped = '( ' + dockerCmd + '\n' +
-                'echo $? > ci-logs/' + key + '.rc ) 2>&1 | tee ci-logs/' + key + '.log\n' +
+  // NOTE: Jenkins runs `sh` with `set -e`; without `set +e` a failing docker
+  // run would abort the group before the exit code is recorded, masking
+  // failures. Capture the real exit code to a file, stream via tee, re-exit.
+  def wrapped = 'set +e\n' +
+                '{ ' + dockerCmd + ' ; echo $? > ci-logs/' + key + '.rc ; } 2>&1 | tee ci-logs/' + key + '.log\n' +
                 'exit $(cat ci-logs/' + key + '.rc)'
   int rc = sh(returnStatus: true, label: key, script: wrapped)
   writeFile file: 'ci-logs/' + key + '.status', text: (rc == 0 ? 'pass' : 'fail')
