@@ -1701,7 +1701,10 @@ export interface UserErrorRequest {
   message: string
   key_name: string
   key_deleted: boolean
-  client_ip?: string | null
+  client_ip?: string
+  group_name?: string
+  request_type?: number
+  stream?: boolean
   user_agent?: string
 }
 
@@ -1721,6 +1724,9 @@ export interface UserErrorListParams {
   status_code?: number
   category?: string
   api_key_id?: number
+  // 服务端排序,列白名单见后端 opsErrorLogsOrderBy(created_at/model/status_code)
+  sort_by?: string
+  sort_order?: 'asc' | 'desc'
 }
 
 export interface UsageQueryParams {
