@@ -94,10 +94,19 @@ type OpsErrorTrendByDimPoint struct {
 	BusinessLimited int64     `json:"business_limited"`
 }
 
+// OpsRequestTotalPoint 是某时间桶的「请求总数」分母（成功 usage_logs + 错误 ops_error_logs status≥400）。
+// 只随实体筛选(user/account/key/model/group/platform)变，不随 error_owner/error_type 等 view 维度变。
+type OpsRequestTotalPoint struct {
+	BucketStart  time.Time `json:"bucket_start"`
+	RequestTotal int64     `json:"request_total"`
+}
+
 // OpsErrorTrendByDimResponse 是 error-trend-by-dim 接口响应。
 // Points 为长表（桶×键），前端据此同时派生堆叠图与排行（单一数据源）。
+// RequestTotals 为逐桶分母，供前端画错误率虚线（分子=各桶 key 求和 ÷ 分母）；字段可选，前端缺失时优雅降级。
 type OpsErrorTrendByDimResponse struct {
-	Dimension string                     `json:"dimension"`
-	Bucket    string                     `json:"bucket"`
-	Points    []*OpsErrorTrendByDimPoint `json:"points"`
+	Dimension     string                     `json:"dimension"`
+	Bucket        string                     `json:"bucket"`
+	Points        []*OpsErrorTrendByDimPoint `json:"points"`
+	RequestTotals []*OpsRequestTotalPoint    `json:"request_totals"`
 }
