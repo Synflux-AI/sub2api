@@ -946,7 +946,6 @@ export interface OpsErrorLog {
   requested_model?: string
   upstream_model?: string
   request_type?: number | null
-  user_agent?: string
 
   // 已删除 KEY 所有者(INVALID_API_KEY 归因快照):认证失败行 user_id 为空,
   // 用户列以此回退显示所有者
