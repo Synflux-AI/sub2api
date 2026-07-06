@@ -902,7 +902,7 @@ export default {
   usage: {
     title: '使用记录',
     description: '查看和分析您的 API 使用历史',
-    costDetails: '成本明细',
+    costDetails: '费用明细',
     tokenDetails: 'Token 明细',
     cacheTtlOverriddenHint: '缓存 TTL Override 已启用',
     cacheTtlOverriddenLabel: 'TTL 替换',
@@ -978,7 +978,7 @@ export default {
     imageOutputSize: '输出尺寸',
     imageOutputTokens: '图片输出 Token',
     imageOutputTokenPrice: '图片输出单价',
-    imageOutputCost: '图片输出成本',
+    imageOutputCost: '图片输出费用',
     imageSizeSource: '尺寸来源',
     imageSizeBreakdown: '尺寸明细',
     imageSizeSourceOutput: '上游输出',
@@ -3264,7 +3264,7 @@ export default {
           resetQuota: '重置配额',
           resetQuotaDesc: '将日/周/月用量归零，重新开始计算',
           revoke: '撤销',
-          revokeDesc: '立即终止该用户的订阅，不可恢复'
+          revokeDesc: '立即终止该用户的订阅，可在已撤销列表中恢复'
         },
         tip: '提示：订阅分组下拉列表中只会显示计费类型为「订阅」且状态为「正常」的分组。如果没有可选项，请先到分组管理中创建。'
       }
@@ -3378,6 +3378,7 @@ export default {
         priority: '优先级',
         billingRateMultiplier: '账号倍率',
         weight: '权重',
+        schedulerScore: '调度权值',
         status: '状态',
         schedulable: '调度',
         todayStats: '今日统计',
@@ -3388,6 +3389,12 @@ export default {
         createdAt: '创建时间',
         expiresAt: '过期时间',
         actions: '操作'
+      },
+      schedulerScore: {
+        baseShort: '普通',
+        stickyShort: '粘性',
+        ungrouped: '未分组',
+        hint: '显示格式为“分组名 / 基础分 / 粘性加分”。基础分按当前筛选条件限定的候选账号计算，包含优先级、负载、排队、错误率、首包延迟、重置窗口、额度余量等因子；粘性加分只在开启粘性加权时用于 previous_response_id 或 session_hash。分数越大越优先。'
       },
       usageWindowsHint: '“5h / 7d”是上游账号（如 OpenAI ChatGPT、Claude）官方的滚动用量窗口限制，由上游对账号设定，并非 sub2api 配置，也与你映射的模型无关。窗口滚动到期后用量会自动重置，无法在 sub2api 端解除该限制。',
       allPrivacyModes: '全部Privacy状态',
@@ -5028,10 +5035,10 @@ export default {
       allAccounts: '全部账户',
       allGroups: '全部分组',
       allTypes: '全部类型',
-      inputCost: '输入成本',
-      outputCost: '输出成本',
-      cacheCreationCost: '缓存创建成本',
-      cacheReadCost: '缓存读取成本',
+      inputCost: '输入费用',
+      outputCost: '输出费用',
+      cacheCreationCost: '缓存创建费用',
+      cacheReadCost: '缓存读取费用',
       inputTokens: '输入 Token',
       outputTokens: '输出 Token',
       cacheCreationTokens: '缓存创建 Token',
@@ -6469,6 +6476,10 @@ export default {
         balanceRechargeMultiplier: '余额充值倍率',
         balanceRechargeMultiplierHint: '用户每支付 1 CNY 可获得多少 USD 余额',
         balanceRechargePreview: '预览：1 CNY = {usd} USD',
+        subscriptionUsdToCnyRate: '订阅 CNY 换算汇率',
+        subscriptionUsdToCnyRateHint:
+          'CNY 支付通道下，套餐每 1 USD 价格收取多少 CNY（如 7.15）。0 或留空 = 不换算，订阅按 price 数值直接收款。启用后所有套餐 price 必须按 USD 定价',
+        subscriptionUsdToCnyRateDisabled: '未启用（按 price 直付）',
         rechargeFeeRate: '充值手续费率',
         rechargeFeeRateHint: '用户充值时额外收取的手续费百分比，0 表示不收取手续费',
         rechargeFeePreview: '预览：充值 100 元，手续费 {fee} 元',
@@ -7019,7 +7030,24 @@ export default {
       },
       openaiExperimentalScheduler: {
         title: 'OpenAI 实验调度策略',
-        description: '默认关闭。开启后仅影响本网关在 OpenAI 账号间的实验性调度选择逻辑，不代表上游 OpenAI 官方能力。'
+        description: '默认关闭。开启后仅影响本网关在 OpenAI 账号间的实验性调度选择逻辑，不代表上游 OpenAI 官方能力。',
+        stickyWeightedTitle: '粘性加权',
+        stickyWeightedDescription: '开启后 previous_response_id 和 session_hash 粘性进入高级调度打分；关闭时仍按旧逻辑硬命中粘性账号。',
+        subscriptionPriorityTitle: '订阅优先',
+        subscriptionPriorityDescription: '开启后先在 ChatGPT 订阅账号池中按权值选取；订阅池拿不到席位时再回退到非订阅账号池。',
+        weightsTitle: '调度权值覆盖',
+        weightsDescription: '留空时使用配置/环境变量值；配置未设置时使用内置默认值。页面非空设置优先。',
+        defaultPlaceholder: '配置/默认：{value}',
+        topKLabel: 'TopK',
+        priorityWeight: '优先级',
+        loadWeight: '负载',
+        queueWeight: '排队',
+        errorRateWeight: '错误率',
+        ttftWeight: '首包延迟',
+        resetWeight: '重置窗口',
+        quotaHeadroomWeight: '额度余量',
+        previousResponseWeight: 'previous_response 粘性',
+        sessionStickyWeight: 'session_hash 粘性'
       },
       usageRecords: {
         title: '使用记录',
