@@ -149,7 +149,9 @@ func (s *OpenAIGatewayService) tempUnscheduleOpenAITransportError(ctx context.Co
 	if s == nil || account == nil {
 		return
 	}
-	if tempUnschedDisabledSkip(ctx, account.ID, "openai_transport_error") {
+	// 全局"禁止临时停止调度"开关（仅 Anthropic/OpenAI 账号生效；本路径上的
+	// Grok 等其他平台账号由 guard 内的平台判断放行，保持原有行为）
+	if tempUnschedDisabledSkip(ctx, account.Platform, account.ID, "openai_transport_error") {
 		return
 	}
 	until := time.Now().Add(openAITransportErrorTempUnschedDuration)

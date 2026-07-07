@@ -1230,7 +1230,8 @@ export async function updateStreamTimeoutSettings(
 
 /**
  * Disable temp unschedulable settings interface.
- * enabled=true: the gateway must NOT temporarily unschedule accounts on upstream errors
+ * enabled=true: the gateway must NOT temporarily unschedule Anthropic/OpenAI
+ * accounts on upstream errors (Anthropic/OpenAI-platform accounts only)
  */
 export interface DisableTempUnschedSettings {
   enabled: boolean;

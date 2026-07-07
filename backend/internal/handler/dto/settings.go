@@ -393,7 +393,8 @@ type StreamTimeoutSettings struct {
 }
 
 // DisableTempUnschedSettings 禁止临时停止调度开关 DTO
-// enabled=true 表示开启"禁止临时停止调度"：网关不再因上游报错把账号临时停止调度
+// enabled=true 表示开启"禁止临时停止调度"：网关不再因上游报错把 Anthropic/OpenAI 账号临时停止调度
+// （仅对 Anthropic 和 OpenAI 平台账号生效，其他平台不受影响）
 type DisableTempUnschedSettings struct {
 	Enabled bool `json:"enabled"`
 }

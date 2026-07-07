@@ -35,11 +35,6 @@ func isAntigravityInternalServerError(statusCode int, body []byte) bool {
 func (s *AntigravityGatewayService) applyInternal500Penalty(
 	ctx context.Context, prefix string, account *Account, count int64,
 ) {
-	// 全局"禁止临时停止调度"开关开启时整体跳过：渐进惩罚以临时停用冷却为前提，
-	// 只跳过前两档会让计数快速冲到第 3 档永久禁用，反而违背开关意图。
-	if tempUnschedDisabledSkip(ctx, account.ID, "antigravity_internal_500") {
-		return
-	}
 	switch {
 	case count >= int64(internal500PenaltyTier3Threshold):
 		reason := fmt.Sprintf("INTERNAL 500 consecutive failures: %d rounds", count)

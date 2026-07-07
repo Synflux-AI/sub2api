@@ -392,10 +392,11 @@ const (
 	// =========================
 
 	// SettingKeyDisableTempUnschedulable is a DB-backed master switch ("true"/"false", default "false").
-	// When true, the gateway must NOT temporarily unschedule accounts on upstream errors:
-	// all automatic temp_unschedulable triggers (custom rules, OAuth 401 cooldown, OpenAI 403,
-	// stream timeout, transport errors, token refresh failures, error-rate auto detach, etc.)
-	// are skipped.
+	// When true, the gateway must NOT temporarily unschedule Anthropic/OpenAI accounts on
+	// upstream errors: automatic temp_unschedulable triggers (custom rules, OAuth 401 cooldown,
+	// OpenAI 403 cooldown, stream timeout, transport errors, token refresh failures,
+	// error-rate auto detach) are skipped.
+	// Only applies to Anthropic/OpenAI-platform accounts; other platforms keep their behavior.
 	SettingKeyDisableTempUnschedulable = "disable_temp_unschedulable"
 
 	// =========================

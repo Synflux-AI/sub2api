@@ -346,8 +346,9 @@ func (s *TokenRefreshService) refreshWithRetry(ctx context.Context, account *Acc
 		"error", lastErr,
 	)
 
-	// 全局"禁止临时停止调度"开关开启时跳过标记，账号保持可调度，下个刷新周期继续尝试
-	if tempUnschedDisabledSkip(ctx, account.ID, "token_refresh_retry_exhausted") {
+	// 全局"禁止临时停止调度"开关开启时（仅 Anthropic 账号）跳过标记，
+	// 账号保持可调度，下个刷新周期继续尝试
+	if tempUnschedDisabledSkip(ctx, account.Platform, account.ID, "token_refresh_retry_exhausted") {
 		return lastErr
 	}
 
