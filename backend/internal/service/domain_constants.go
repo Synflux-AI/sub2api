@@ -388,6 +388,17 @@ const (
 	SettingKeyStreamTimeoutSettings = "stream_timeout_settings"
 
 	// =========================
+	// Temp Unschedulable Guard (禁止临时停止调度)
+	// =========================
+
+	// SettingKeyDisableTempUnschedulable is a DB-backed master switch ("true"/"false", default "false").
+	// When true, the gateway must NOT temporarily unschedule accounts on upstream errors:
+	// all automatic temp_unschedulable triggers (custom rules, OAuth 401 cooldown, OpenAI 403,
+	// stream timeout, transport errors, token refresh failures, error-rate auto detach, etc.)
+	// are skipped.
+	SettingKeyDisableTempUnschedulable = "disable_temp_unschedulable"
+
+	// =========================
 	// Request Rectifier (请求整流器)
 	// =========================
 

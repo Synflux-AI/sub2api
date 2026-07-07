@@ -139,8 +139,11 @@ func (p *GrokTokenProvider) markTempUnschedulable(account *Account, refreshErr e
 		}
 		return
 	}
-	reason := "grok token refresh failed on request path: " + redactedErr
 	bgCtx := context.Background()
+	if tempUnschedDisabledSkip(bgCtx, account.ID, "grok_token_refresh_failed") {
+		return
+	}
+	reason := "grok token refresh failed on request path: " + redactedErr
 	if err := p.accountRepo.SetTempUnschedulable(bgCtx, account.ID, until, reason); err != nil {
 		slog.Warn(grokTokenProviderLogComponent+".set_temp_unschedulable_failed", "account_id", account.ID, "error", err)
 		return

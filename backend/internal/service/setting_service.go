@@ -174,6 +174,17 @@ const cyberSessionBlockRuntimeCacheTTL = 60 * time.Second
 const cyberSessionBlockRuntimeErrorTTL = 5 * time.Second
 const cyberSessionBlockRuntimeDBTimeout = 5 * time.Second
 
+// cachedDisableTempUnsched "禁止临时停止调度"总开关进程内缓存（60s TTL）。
+// IsTempUnschedDisabled 在网关错误处理热路径上被调用，避免每次访问 DB。
+type cachedDisableTempUnsched struct {
+	disabled  bool
+	expiresAt int64 // unix nano
+}
+
+const disableTempUnschedCacheTTL = 60 * time.Second
+const disableTempUnschedErrorTTL = 5 * time.Second
+const disableTempUnschedDBTimeout = 5 * time.Second
+
 const openAIQuotaAutoPauseSettingsCacheTTL = 60 * time.Second
 const openAIQuotaAutoPauseSettingsErrorTTL = 5 * time.Second
 const openAIQuotaAutoPauseSettingsDBTimeout = 5 * time.Second
@@ -207,6 +218,9 @@ type SettingService struct {
 
 	cyberSessionBlockRuntimeCache atomic.Value // *cachedCyberSessionBlockRuntime
 	cyberSessionBlockRuntimeSF    singleflight.Group
+
+	disableTempUnschedCache atomic.Value // *cachedDisableTempUnsched
+	disableTempUnschedSF    singleflight.Group
 
 	// openAIQuotaAutoPauseSettingsCache holds the most recently observed quota auto-pause
 	// settings. GetOpenAIQuotaAutoPauseSettings reads this atomic.Value on the request hot
@@ -4639,6 +4653,71 @@ func (s *SettingService) SetOverloadCooldownSettings(ctx context.Context, settin
 	}
 
 	return s.settingRepo.Set(ctx, SettingKeyOverloadCooldownSettings, string(data))
+}
+
+// GetDisableTempUnschedulable 读取"禁止临时停止调度"总开关（管理端读取，不走缓存）。
+func (s *SettingService) GetDisableTempUnschedulable(ctx context.Context) (bool, error) {
+	value, err := s.settingRepo.GetValue(ctx, SettingKeyDisableTempUnschedulable)
+	if err != nil {
+		if errors.Is(err, ErrSettingNotFound) {
+			return false, nil
+		}
+		return false, fmt.Errorf("get disable temp unschedulable setting: %w", err)
+	}
+	return strings.TrimSpace(value) == "true", nil
+}
+
+// SetDisableTempUnschedulable 更新"禁止临时停止调度"总开关，并让本进程缓存立即生效。
+func (s *SettingService) SetDisableTempUnschedulable(ctx context.Context, disabled bool) error {
+	if err := s.settingRepo.Set(ctx, SettingKeyDisableTempUnschedulable, strconv.FormatBool(disabled)); err != nil {
+		return fmt.Errorf("set disable temp unschedulable setting: %w", err)
+	}
+	s.disableTempUnschedCache.Store(&cachedDisableTempUnsched{
+		disabled:  disabled,
+		expiresAt: time.Now().Add(disableTempUnschedCacheTTL).UnixNano(),
+	})
+	return nil
+}
+
+// IsTempUnschedDisabled 返回"禁止临时停止调度"总开关状态，进程内缓存 ~60s，
+// 供网关错误处理热路径读取时避免 DB 往返。DB 读取失败时视为 false（不禁止）。
+func (s *SettingService) IsTempUnschedDisabled(ctx context.Context) bool {
+	if cached, ok := s.disableTempUnschedCache.Load().(*cachedDisableTempUnsched); ok && cached != nil {
+		if time.Now().UnixNano() < cached.expiresAt {
+			return cached.disabled
+		}
+	}
+	result, _, _ := s.disableTempUnschedSF.Do("disable_temp_unschedulable", func() (any, error) {
+		if cached, ok := s.disableTempUnschedCache.Load().(*cachedDisableTempUnsched); ok && cached != nil {
+			if time.Now().UnixNano() < cached.expiresAt {
+				return cached, nil
+			}
+		}
+		dbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), disableTempUnschedDBTimeout)
+		defer cancel()
+
+		value, err := s.settingRepo.GetValue(dbCtx, SettingKeyDisableTempUnschedulable)
+		if err != nil && !errors.Is(err, ErrSettingNotFound) {
+			slog.Warn("failed to get disable_temp_unschedulable setting", "error", err)
+			entry := &cachedDisableTempUnsched{
+				disabled:  false,
+				expiresAt: time.Now().Add(disableTempUnschedErrorTTL).UnixNano(),
+			}
+			s.disableTempUnschedCache.Store(entry)
+			return entry, nil
+		}
+
+		entry := &cachedDisableTempUnsched{
+			disabled:  err == nil && strings.TrimSpace(value) == "true",
+			expiresAt: time.Now().Add(disableTempUnschedCacheTTL).UnixNano(),
+		}
+		s.disableTempUnschedCache.Store(entry)
+		return entry, nil
+	})
+	if entry, ok := result.(*cachedDisableTempUnsched); ok && entry != nil {
+		return entry.disabled
+	}
+	return false
 }
 
 // GetRateLimit429CooldownSettings 获取429默认回避配置

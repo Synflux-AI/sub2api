@@ -14,6 +14,7 @@ const {
   getRateLimit429CooldownSettings,
   updateRateLimit429CooldownSettings,
   getStreamTimeoutSettings,
+  getDisableTempUnschedSettings,
   getRectifierSettings,
   getBetaPolicySettings,
   getGroups,
@@ -36,6 +37,7 @@ const {
   getRateLimit429CooldownSettings: vi.fn(),
   updateRateLimit429CooldownSettings: vi.fn(),
   getStreamTimeoutSettings: vi.fn(),
+  getDisableTempUnschedSettings: vi.fn(),
   getRectifierSettings: vi.fn(),
   getBetaPolicySettings: vi.fn(),
   getGroups: vi.fn(),
@@ -64,6 +66,7 @@ vi.mock("@/api", () => ({
       getRateLimit429CooldownSettings,
       updateRateLimit429CooldownSettings,
       getStreamTimeoutSettings,
+      getDisableTempUnschedSettings,
       getRectifierSettings,
       getBetaPolicySettings,
     },
@@ -528,6 +531,7 @@ describe("admin SettingsView payment visible method controls", () => {
     getRateLimit429CooldownSettings.mockReset();
     updateRateLimit429CooldownSettings.mockReset();
     getStreamTimeoutSettings.mockReset();
+    getDisableTempUnschedSettings.mockReset();
     getRectifierSettings.mockReset();
     getBetaPolicySettings.mockReset();
     getGroups.mockReset();
@@ -574,6 +578,9 @@ describe("admin SettingsView payment visible method controls", () => {
       temp_unsched_minutes: 5,
       threshold_count: 3,
       threshold_window_minutes: 10,
+    });
+    getDisableTempUnschedSettings.mockResolvedValue({
+      enabled: false,
     });
     getRectifierSettings.mockResolvedValue({
       enabled: true,
@@ -911,6 +918,7 @@ describe("admin SettingsView wechat connect controls", () => {
     getRateLimit429CooldownSettings.mockReset();
     updateRateLimit429CooldownSettings.mockReset();
     getStreamTimeoutSettings.mockReset();
+    getDisableTempUnschedSettings.mockReset();
     getRectifierSettings.mockReset();
     getBetaPolicySettings.mockReset();
     getGroups.mockReset();
@@ -960,6 +968,9 @@ describe("admin SettingsView wechat connect controls", () => {
       temp_unsched_minutes: 5,
       threshold_count: 3,
       threshold_window_minutes: 10,
+    });
+    getDisableTempUnschedSettings.mockResolvedValue({
+      enabled: false,
     });
     getRectifierSettings.mockResolvedValue({
       enabled: true,
@@ -1157,6 +1168,7 @@ describe("admin SettingsView platform quota matrix", () => {
     getRateLimit429CooldownSettings.mockReset();
     updateRateLimit429CooldownSettings.mockReset();
     getStreamTimeoutSettings.mockReset();
+    getDisableTempUnschedSettings.mockReset();
     getRectifierSettings.mockReset();
     getBetaPolicySettings.mockReset();
     getGroups.mockReset();
@@ -1183,6 +1195,7 @@ describe("admin SettingsView platform quota matrix", () => {
     getRateLimit429CooldownSettings.mockResolvedValue({});
     updateRateLimit429CooldownSettings.mockResolvedValue({});
     getStreamTimeoutSettings.mockResolvedValue({});
+    getDisableTempUnschedSettings.mockResolvedValue({});
     getRectifierSettings.mockResolvedValue({});
     getBetaPolicySettings.mockResolvedValue({});
     getGroups.mockResolvedValue([]);

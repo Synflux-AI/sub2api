@@ -3402,6 +3402,46 @@ func (h *SettingHandler) UpdateRateLimit429CooldownSettings(c *gin.Context) {
 	})
 }
 
+// GetDisableTempUnschedSettings 获取"禁止临时停止调度"开关
+// GET /api/v1/admin/settings/disable-temp-unsched
+func (h *SettingHandler) GetDisableTempUnschedSettings(c *gin.Context) {
+	disabled, err := h.settingService.GetDisableTempUnschedulable(c.Request.Context())
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	response.Success(c, dto.DisableTempUnschedSettings{Enabled: disabled})
+}
+
+// UpdateDisableTempUnschedSettingsRequest 更新"禁止临时停止调度"开关请求
+type UpdateDisableTempUnschedSettingsRequest struct {
+	Enabled bool `json:"enabled"`
+}
+
+// UpdateDisableTempUnschedSettings 更新"禁止临时停止调度"开关
+// PUT /api/v1/admin/settings/disable-temp-unsched
+func (h *SettingHandler) UpdateDisableTempUnschedSettings(c *gin.Context) {
+	var req UpdateDisableTempUnschedSettingsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+
+	if err := h.settingService.SetDisableTempUnschedulable(c.Request.Context(), req.Enabled); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+
+	updated, err := h.settingService.GetDisableTempUnschedulable(c.Request.Context())
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	response.Success(c, dto.DisableTempUnschedSettings{Enabled: updated})
+}
+
 // GetStreamTimeoutSettings 获取流超时处理配置
 // GET /api/v1/admin/settings/stream-timeout
 func (h *SettingHandler) GetStreamTimeoutSettings(c *gin.Context) {

@@ -6872,6 +6872,14 @@ export default {
           testFailed: 'Google Drive 存储测试失败'
         }
       },
+      disableTempUnsched: {
+        title: '禁止临时停止调度',
+        description: '全局开关：禁止网关服务因上游报错把账号临时停止调度',
+        enabled: '启用禁止临时停止调度',
+        enabledHint: '开启后，上游报错（401/403/自定义规则/流超时/网络错误/Token 刷新失败/错误率剥离等）不再将账号临时移出调度，账号持续参与调度',
+        saved: '禁止临时停止调度设置保存成功',
+        saveFailed: '保存禁止临时停止调度设置失败'
+      },
       overloadCooldown: {
         title: '529 过载冷却',
         description: '配置上游返回 529（过载）时的账号调度暂停策略',

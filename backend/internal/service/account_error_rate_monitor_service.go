@@ -244,7 +244,7 @@ func (s *AccountErrorRateMonitorService) evaluateOnce(interval time.Duration) {
 
 			// 先止损:自动剥离(到期后允许再次剥离)。用独立的短 context,确保剥离这一关键
 			// 动作不会被同一轮里前面账号的慢通知(Lark/SMTP)耗尽主 ctx 预算而失败。
-			if mcfg.AutoDetach && s.shouldDetach(row.AccountID, now) {
+			if mcfg.AutoDetach && s.shouldDetach(row.AccountID, now) && !tempUnschedDisabledSkip(ctx, row.AccountID, "error_rate_auto_detach") {
 				until := s.detachUntil(now, mcfg.DetachCooldownMinutes)
 				reason := buildAccountDetachReason(rate, mcfg.ErrorRateThreshold, mcfg.WindowMinutes, row, mcfg.DetachCooldownMinutes)
 				dctx, dcancel := context.WithTimeout(context.Background(), 5*time.Second)

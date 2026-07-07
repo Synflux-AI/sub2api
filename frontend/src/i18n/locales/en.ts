@@ -6717,6 +6717,14 @@ export default {
           testFailed: 'Google Drive storage test failed'
         }
       },
+      disableTempUnsched: {
+        title: 'Disable Temporary Unscheduling',
+        description: 'Global switch: prevent the gateway from temporarily unscheduling accounts on upstream errors',
+        enabled: 'Enable Disable Temporary Unscheduling',
+        enabledHint: 'When on, upstream errors (401/403/custom rules/stream timeout/transport errors/token refresh failures/error-rate detach, etc.) no longer temporarily remove accounts from scheduling',
+        saved: 'Disable temporary unscheduling settings saved',
+        saveFailed: 'Failed to save disable temporary unscheduling settings'
+      },
       overloadCooldown: {
         title: '529 Overload Cooldown',
         description: 'Configure account scheduling pause strategy when upstream returns 529 (overloaded)',

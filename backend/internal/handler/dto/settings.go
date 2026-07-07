@@ -392,6 +392,12 @@ type StreamTimeoutSettings struct {
 	ThresholdWindowMinutes int    `json:"threshold_window_minutes"`
 }
 
+// DisableTempUnschedSettings 禁止临时停止调度开关 DTO
+// enabled=true 表示开启"禁止临时停止调度"：网关不再因上游报错把账号临时停止调度
+type DisableTempUnschedSettings struct {
+	Enabled bool `json:"enabled"`
+}
+
 // RectifierSettings 请求整流器配置 DTO
 type RectifierSettings struct {
 	Enabled                  bool     `json:"enabled"`
