@@ -1226,6 +1226,34 @@ export async function updateStreamTimeoutSettings(
   return data;
 }
 
+// ==================== Disable Temp Unschedulable Settings ====================
+
+/**
+ * Disable temp unschedulable settings interface.
+ * enabled=true: the gateway must NOT temporarily unschedule Anthropic/OpenAI
+ * accounts on upstream errors (Anthropic/OpenAI-platform accounts only)
+ */
+export interface DisableTempUnschedSettings {
+  enabled: boolean;
+}
+
+export async function getDisableTempUnschedSettings(): Promise<DisableTempUnschedSettings> {
+  const { data } = await apiClient.get<DisableTempUnschedSettings>(
+    "/admin/settings/disable-temp-unsched",
+  );
+  return data;
+}
+
+export async function updateDisableTempUnschedSettings(
+  settings: DisableTempUnschedSettings,
+): Promise<DisableTempUnschedSettings> {
+  const { data } = await apiClient.put<DisableTempUnschedSettings>(
+    "/admin/settings/disable-temp-unsched",
+    settings,
+  );
+  return data;
+}
+
 // ==================== Rectifier Settings ====================
 
 /**
@@ -1416,6 +1444,8 @@ export const settingsAPI = {
   updateRateLimit429CooldownSettings,
   getStreamTimeoutSettings,
   updateStreamTimeoutSettings,
+  getDisableTempUnschedSettings,
+  updateDisableTempUnschedSettings,
   getRectifierSettings,
   updateRectifierSettings,
   getBetaPolicySettings,

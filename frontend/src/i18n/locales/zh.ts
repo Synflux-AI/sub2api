@@ -6872,6 +6872,14 @@ export default {
           testFailed: 'Google Drive 存储测试失败'
         }
       },
+      disableTempUnsched: {
+        title: '禁止临时停止调度',
+        description: '全局开关：禁止网关服务因上游报错把 Anthropic/OpenAI 账号临时停止调度（仅对 Anthropic 和 OpenAI 平台账号生效）',
+        enabled: '启用禁止临时停止调度',
+        enabledHint: '开启后，Anthropic/OpenAI 账号在上游报错（OAuth 401/OpenAI 403/自定义临时规则/流超时/网络错误/Token 刷新失败/错误率剥离）时不再被临时移出调度，持续参与调度；其他平台账号不受影响',
+        saved: '禁止临时停止调度设置保存成功',
+        saveFailed: '保存禁止临时停止调度设置失败'
+      },
       overloadCooldown: {
         title: '529 过载冷却',
         description: '配置上游返回 529（过载）时的账号调度暂停策略',

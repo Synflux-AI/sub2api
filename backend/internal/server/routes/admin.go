@@ -501,6 +501,9 @@ func registerSettingsRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		// 流超时处理配置
 		adminSettings.GET("/stream-timeout", h.Admin.Setting.GetStreamTimeoutSettings)
 		adminSettings.PUT("/stream-timeout", h.Admin.Setting.UpdateStreamTimeoutSettings)
+		// 禁止临时停止调度开关
+		adminSettings.GET("/disable-temp-unsched", h.Admin.Setting.GetDisableTempUnschedSettings)
+		adminSettings.PUT("/disable-temp-unsched", h.Admin.Setting.UpdateDisableTempUnschedSettings)
 		// 请求整流器配置
 		adminSettings.GET("/rectifier", h.Admin.Setting.GetRectifierSettings)
 		adminSettings.PUT("/rectifier", h.Admin.Setting.UpdateRectifierSettings)

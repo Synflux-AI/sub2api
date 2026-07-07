@@ -6717,6 +6717,14 @@ export default {
           testFailed: 'Google Drive storage test failed'
         }
       },
+      disableTempUnsched: {
+        title: 'Disable Temporary Unscheduling',
+        description: 'Global switch: prevent the gateway from temporarily unscheduling Anthropic/OpenAI accounts on upstream errors (Anthropic/OpenAI-platform accounts only)',
+        enabled: 'Enable Disable Temporary Unscheduling',
+        enabledHint: 'When on, upstream errors (OAuth 401/OpenAI 403/custom temp rules/stream timeout/transport errors/token refresh failures/error-rate detach) no longer temporarily remove Anthropic/OpenAI accounts from scheduling; other platforms are unaffected',
+        saved: 'Disable temporary unscheduling settings saved',
+        saveFailed: 'Failed to save disable temporary unscheduling settings'
+      },
       overloadCooldown: {
         title: '529 Overload Cooldown',
         description: 'Configure account scheduling pause strategy when upstream returns 529 (overloaded)',

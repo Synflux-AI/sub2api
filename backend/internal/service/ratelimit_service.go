@@ -314,6 +314,12 @@ func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Acc
 					slog.Info("antigravity_401_force_refresh_marked", "account_id", authAccount.ID)
 				}
 			}
+			// 全局"禁止临时停止调度"开关开启时（仅 Anthropic 账号）跳过标记，
+			// 仅保留缓存失效让刷新服务自愈
+			if tempUnschedDisabledSkip(ctx, authAccount.Platform, authAccount.ID, "oauth_401") {
+				shouldDisable = true
+				break
+			}
 			cooldownMinutes := s.cfg.RateLimit.OAuth401CooldownMinutes
 			if cooldownMinutes <= 0 {
 				cooldownMinutes = 10
@@ -812,6 +818,11 @@ func (s *RateLimitService) handle403(ctx context.Context, account *Account, upst
 }
 
 func (s *RateLimitService) handleOpenAI403(ctx context.Context, account *Account, upstreamMsg string, responseBody []byte) (shouldDisable bool) {
+	// 全局"禁止临时停止调度"开关开启时整体跳过：403 计数/冷却机制以临时停用为前提，
+	// 只跳过冷却会让连续计数快速达到阈值并升级为永久禁用，反而违背开关意图。
+	if tempUnschedDisabledSkip(ctx, account.Platform, account.ID, "openai_403") {
+		return true
+	}
 	msg := buildForbiddenErrorMessage(
 		"Access forbidden (403):",
 		upstreamMsg,
@@ -2140,6 +2151,11 @@ func (s *RateLimitService) triggerTempUnschedulable(ctx context.Context, account
 	if rule.DurationMinutes <= 0 {
 		return false
 	}
+	// 全局"禁止临时停止调度"开关开启时（仅 Anthropic 账号）按"已命中但跳过标记"处理：
+	// 返回 true 让当前请求正常切换账号，但不落任何临时停用状态。
+	if tempUnschedDisabledSkip(ctx, account.Platform, account.ID, "temp_unsched_rule") {
+		return true
+	}
 
 	now := time.Now()
 	until := now.Add(time.Duration(rule.DurationMinutes) * time.Minute)
@@ -2246,6 +2262,9 @@ func (s *RateLimitService) HandleStreamTimeout(ctx context.Context, account *Acc
 
 // triggerStreamTimeoutTempUnsched 触发流超时临时不可调度
 func (s *RateLimitService) triggerStreamTimeoutTempUnsched(ctx context.Context, account *Account, settings *StreamTimeoutSettings, model string) bool {
+	if tempUnschedDisabledSkip(ctx, account.Platform, account.ID, "stream_timeout") {
+		return false
+	}
 	now := time.Now()
 	until := now.Add(time.Duration(settings.TempUnschedMinutes) * time.Minute)
 

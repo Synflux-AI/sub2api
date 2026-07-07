@@ -526,6 +526,8 @@ func ProvideSettingService(settingRepo SettingRepository, groupRepo GroupReposit
 		logger.LegacyPrintf("service.setting", "Warning: migrate codex body fingerprint to signals failed: %v", err)
 	}
 	antigravity.SetUserAgentVersionResolver(svc.GetAntigravityUserAgentVersion)
+	// 注册"禁止临时停止调度"全局开关解析器，供无法持有 SettingService 的触发点查询
+	SetTempUnschedDisabledResolver(svc.IsTempUnschedDisabled)
 	return svc
 }
 
