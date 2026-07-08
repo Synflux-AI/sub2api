@@ -13,7 +13,7 @@ import (
 // TempUnscheduler 用于 HandleFailoverError 中同账号重试耗尽后的临时封禁。
 // GatewayService 隐式实现此接口。
 type TempUnscheduler interface {
-	TempUnscheduleRetryableError(ctx context.Context, accountID int64, failoverErr *service.UpstreamFailoverError)
+	TempUnscheduleRetryableError(ctx context.Context, accountID int64, platform string, failoverErr *service.UpstreamFailoverError)
 }
 
 // FailoverAction 表示 failover 错误处理后的下一步动作
@@ -93,7 +93,7 @@ func (s *FailoverState) HandleFailoverError(
 
 	// 同账号重试用尽，执行临时封禁
 	if failoverErr.RetryableOnSameAccount {
-		gatewayService.TempUnscheduleRetryableError(ctx, accountID, failoverErr)
+		gatewayService.TempUnscheduleRetryableError(ctx, accountID, platform, failoverErr)
 	}
 
 	// 加入失败列表
