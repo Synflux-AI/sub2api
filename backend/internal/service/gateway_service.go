@@ -602,8 +602,13 @@ func (e *sseStreamErrorEventError) Error() string { return "have error in stream
 
 // TempUnscheduleRetryableError 对 RetryableOnSameAccount 类型的 failover 错误触发临时封禁。
 // 由 handler 层在同账号重试全部用尽、切换账号时调用。
-func (s *GatewayService) TempUnscheduleRetryableError(ctx context.Context, accountID int64, failoverErr *UpstreamFailoverError) {
+func (s *GatewayService) TempUnscheduleRetryableError(ctx context.Context, accountID int64, platform string, failoverErr *UpstreamFailoverError) {
 	if failoverErr == nil || !failoverErr.RetryableOnSameAccount {
+		return
+	}
+	// 全局"禁止临时停止调度"开关开启时（仅 Anthropic/OpenAI 账号）跳过临时封禁，
+	// 换号 failover 本身不受影响（由 handler 层的失败列表保证本次请求不再选中该账号）。
+	if tempUnschedDisabledSkip(ctx, platform, accountID, "retryable_failover") {
 		return
 	}
 	// 根据状态码选择封禁策略

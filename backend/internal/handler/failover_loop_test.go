@@ -21,11 +21,12 @@ type mockTempUnscheduler struct {
 
 type tempUnscheduleCall struct {
 	accountID   int64
+	platform    string
 	failoverErr *service.UpstreamFailoverError
 }
 
-func (m *mockTempUnscheduler) TempUnscheduleRetryableError(_ context.Context, accountID int64, failoverErr *service.UpstreamFailoverError) {
-	m.calls = append(m.calls, tempUnscheduleCall{accountID: accountID, failoverErr: failoverErr})
+func (m *mockTempUnscheduler) TempUnscheduleRetryableError(_ context.Context, accountID int64, platform string, failoverErr *service.UpstreamFailoverError) {
+	m.calls = append(m.calls, tempUnscheduleCall{accountID: accountID, platform: platform, failoverErr: failoverErr})
 }
 
 // ---------------------------------------------------------------------------
