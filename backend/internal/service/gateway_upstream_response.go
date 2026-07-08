@@ -459,9 +459,8 @@ func (s *GatewayService) handleErrorResponse(ctx context.Context, resp *http.Res
 	var statusCode int
 
 	switch resp.StatusCode {
-	case 400, 413, 422:
-		// 客户端错误：状态码与响应体原样透传，客户端需要真实原因（参数不合法/请求过大）才能修正请求。
-		c.Data(resp.StatusCode, "application/json", body)
+	case 400:
+		c.Data(http.StatusBadRequest, "application/json", body)
 		summary := upstreamMsg
 		if summary == "" {
 			summary = truncateForLog(body, 512)
