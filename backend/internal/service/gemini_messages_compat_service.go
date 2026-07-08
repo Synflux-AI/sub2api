@@ -1808,6 +1808,26 @@ func (s *GeminiMessagesCompatService) writeGeminiMappedError(c *gin.Context, acc
 		if errMsg == "" {
 			errMsg = "Resource not found"
 		}
+	case 413:
+		if statusCode == 0 {
+			statusCode = http.StatusRequestEntityTooLarge
+		}
+		if errType == "" {
+			errType = "request_too_large"
+		}
+		if errMsg == "" {
+			errMsg = "Request payload too large"
+		}
+	case 422:
+		if statusCode == 0 {
+			statusCode = http.StatusUnprocessableEntity
+		}
+		if errType == "" {
+			errType = "invalid_request_error"
+		}
+		if errMsg == "" {
+			errMsg = "Upstream could not process the request"
+		}
 	case 429:
 		if statusCode == 0 {
 			statusCode = http.StatusTooManyRequests
