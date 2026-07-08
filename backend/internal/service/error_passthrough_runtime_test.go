@@ -53,14 +53,9 @@ func TestGatewayHandleErrorResponse_NoRuleKeepsDefault(t *testing.T) {
 
 	_, err := svc.handleErrorResponse(context.Background(), resp, c, account)
 	require.Error(t, err)
-	assert.Equal(t, http.StatusBadGateway, rec.Code)
-
-	var payload map[string]any
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &payload))
-	errField, ok := payload["error"].(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, "upstream_error", errField["type"])
-	assert.Equal(t, "Upstream request failed", errField["message"])
+	// 无透传规则时，422 属于客户端错误：状态码与响应体原样透传。
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+	assert.Equal(t, respBody, rec.Body.Bytes())
 }
 
 func TestOpenAIHandleErrorResponse_NoRuleKeepsDefault(t *testing.T) {
@@ -79,14 +74,15 @@ func TestOpenAIHandleErrorResponse_NoRuleKeepsDefault(t *testing.T) {
 
 	_, err := svc.handleErrorResponse(context.Background(), resp, c, account, nil)
 	require.Error(t, err)
-	assert.Equal(t, http.StatusBadGateway, rec.Code)
+	// 无透传规则时，422 属于客户端错误：保留真实状态码与上游错误消息。
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 
 	var payload map[string]any
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &payload))
 	errField, ok := payload["error"].(map[string]any)
 	require.True(t, ok)
-	assert.Equal(t, "upstream_error", errField["type"])
-	assert.Equal(t, "Upstream request failed", errField["message"])
+	assert.Equal(t, "invalid_request_error", errField["type"])
+	assert.Equal(t, "Invalid schema for field messages", errField["message"])
 }
 
 func TestOpenAIHandleErrorResponse_ContextWindow502KeepsMessageWithoutFailover(t *testing.T) {
@@ -129,6 +125,7 @@ func TestGeminiWriteGeminiMappedError_NoRuleKeepsDefault(t *testing.T) {
 
 	err := svc.writeGeminiMappedError(c, account, http.StatusUnprocessableEntity, "req-2", respBody)
 	require.Error(t, err)
+	// body 内 INVALID_ARGUMENT 映射优先（400/invalid_request_error），422 分支补充默认消息。
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 
 	var payload map[string]any
@@ -136,7 +133,7 @@ func TestGeminiWriteGeminiMappedError_NoRuleKeepsDefault(t *testing.T) {
 	errField, ok := payload["error"].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, "invalid_request_error", errField["type"])
-	assert.Equal(t, "Upstream request failed", errField["message"])
+	assert.Equal(t, "Upstream could not process the request", errField["message"])
 }
 
 func TestGatewayHandleErrorResponse_AppliesRuleFor422(t *testing.T) {

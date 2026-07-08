@@ -415,6 +415,14 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 	var statusCode int
 
 	switch resp.StatusCode {
+	case 400, 413, 422:
+		// 客户端错误：保留真实状态码与上游错误消息，避免"请求过大/参数不合法"被伪装成 502 后客户端盲目重试。
+		statusCode = resp.StatusCode
+		errType = "invalid_request_error"
+		errMsg = "Upstream rejected the request"
+		if upstreamMsg != "" {
+			errMsg = upstreamMsg
+		}
 	case 401:
 		statusCode = http.StatusBadGateway
 		errType = "upstream_error"
