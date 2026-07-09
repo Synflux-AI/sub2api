@@ -25,8 +25,8 @@ pipeline {
   environment {
     REPO          = 'Synflux-AI/sub2api'
     GHCR_IMAGE    = 'ghcr.io/synflux-ai/sub2api'
-    GO_IMAGE      = 'golang:1.26.4-alpine'
-    GO_FULL_IMAGE = 'golang:1.26.4'
+    GO_IMAGE      = 'golang:1.26.5-alpine'
+    GO_FULL_IMAGE = 'golang:1.26.5'
     NODE_IMAGE    = 'node:20-alpine'
     LINT_IMAGE    = 'golangci/golangci-lint:v2.9-alpine'
     PY_IMAGE      = 'python:3-slim'
