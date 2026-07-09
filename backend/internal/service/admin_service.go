@@ -201,6 +201,8 @@ type CreateGroupInput struct {
 	ImageRateMultiplier          *float64
 	BatchImageDiscountMultiplier *float64
 	BatchImageHoldMultiplier     *float64
+	VideoRateIndependent         bool
+	VideoRateMultiplier          *float64
 	// 高峰时段倍率配置（PeakRateMultiplier 为 nil 时按 1.0 处理）
 	PeakRateEnabled    bool
 	PeakStart          string
@@ -209,6 +211,9 @@ type CreateGroupInput struct {
 	ImagePrice1K       *float64
 	ImagePrice2K       *float64
 	ImagePrice4K       *float64
+	VideoPrice480P     *float64
+	VideoPrice720P     *float64
+	VideoPrice1080P    *float64
 	ClaudeCodeOnly     bool   // 仅允许 Claude Code 客户端
 	CodexCLIOnly       bool   // 仅允许 Codex 官方客户端（OpenAI 平台）
 	FallbackGroupID    *int64 // 降级分组 ID
@@ -251,6 +256,8 @@ type UpdateGroupInput struct {
 	ImageRateMultiplier          *float64
 	BatchImageDiscountMultiplier *float64
 	BatchImageHoldMultiplier     *float64
+	VideoRateIndependent         *bool
+	VideoRateMultiplier          *float64
 	// 高峰时段倍率配置（nil 表示不修改）
 	PeakRateEnabled    *bool
 	PeakStart          *string
@@ -259,6 +266,9 @@ type UpdateGroupInput struct {
 	ImagePrice1K       *float64
 	ImagePrice2K       *float64
 	ImagePrice4K       *float64
+	VideoPrice480P     *float64
+	VideoPrice720P     *float64
+	VideoPrice1080P    *float64
 	ClaudeCodeOnly     *bool  // 仅允许 Claude Code 客户端
 	CodexCLIOnly       *bool  // 仅允许 Codex 官方客户端（OpenAI 平台）
 	FallbackGroupID    *int64 // 降级分组 ID

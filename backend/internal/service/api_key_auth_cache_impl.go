@@ -14,7 +14,10 @@ import (
 	"github.com/dgraph-io/ristretto"
 )
 
-const apiKeyAuthSnapshotVersion = 14 // v14: usage_1d/window_1d_start/usage_7d/window_7d_start for middleware rate-limit check + exclusive group authorization fields + group peak rate fields
+// v15: 合并双方 v14——本仓库(usage_1d/window_1d_start/usage_7d/window_7d_start
+// + exclusive group authorization + group peak rate)与上游(group video pricing)
+// 各自升到 14 但字段集不同,合并后快照与任一方 v14 均不兼容,升 15 强制失效。
+const apiKeyAuthSnapshotVersion = 15
 
 type apiKeyAuthCacheConfig struct {
 	l1Size        int
@@ -269,6 +272,11 @@ func (s *APIKeyService) snapshotFromAPIKey(ctx context.Context, apiKey *APIKey) 
 			ImagePrice1K:                    apiKey.Group.ImagePrice1K,
 			ImagePrice2K:                    apiKey.Group.ImagePrice2K,
 			ImagePrice4K:                    apiKey.Group.ImagePrice4K,
+			VideoRateIndependent:            apiKey.Group.VideoRateIndependent,
+			VideoRateMultiplier:             apiKey.Group.VideoRateMultiplier,
+			VideoPrice480P:                  apiKey.Group.VideoPrice480P,
+			VideoPrice720P:                  apiKey.Group.VideoPrice720P,
+			VideoPrice1080P:                 apiKey.Group.VideoPrice1080P,
 			ClaudeCodeOnly:                  apiKey.Group.ClaudeCodeOnly,
 			CodexCLIOnly:                    apiKey.Group.CodexCLIOnly,
 			FallbackGroupID:                 apiKey.Group.FallbackGroupID,
@@ -352,6 +360,11 @@ func (s *APIKeyService) snapshotToAPIKey(key string, snapshot *APIKeyAuthSnapsho
 			ImagePrice1K:                    snapshot.Group.ImagePrice1K,
 			ImagePrice2K:                    snapshot.Group.ImagePrice2K,
 			ImagePrice4K:                    snapshot.Group.ImagePrice4K,
+			VideoRateIndependent:            snapshot.Group.VideoRateIndependent,
+			VideoRateMultiplier:             snapshot.Group.VideoRateMultiplier,
+			VideoPrice480P:                  snapshot.Group.VideoPrice480P,
+			VideoPrice720P:                  snapshot.Group.VideoPrice720P,
+			VideoPrice1080P:                 snapshot.Group.VideoPrice1080P,
 			ClaudeCodeOnly:                  snapshot.Group.ClaudeCodeOnly,
 			CodexCLIOnly:                    snapshot.Group.CodexCLIOnly,
 			FallbackGroupID:                 snapshot.Group.FallbackGroupID,
