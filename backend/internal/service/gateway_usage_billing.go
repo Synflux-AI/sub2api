@@ -187,6 +187,16 @@ func postUsageBilling(ctx context.Context, p *postUsageBillingParams, deps *bill
 	// by the caller after recording the usage log.
 }
 
+// clientRequestIDFromContext 取出端到端关联键（issue #60），供 usage_log 落库。
+// 无值时返回空串，落库为 NULL。
+func clientRequestIDFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	v, _ := ctx.Value(ctxkey.ClientRequestID).(string)
+	return strings.TrimSpace(v)
+}
+
 func resolveUsageBillingRequestID(ctx context.Context, upstreamRequestID string) string {
 	if ctx != nil {
 		if clientRequestID, _ := ctx.Value(ctxkey.ClientRequestID).(string); strings.TrimSpace(clientRequestID) != "" {
@@ -905,6 +915,7 @@ func (s *GatewayService) buildRecordUsageLog(
 		APIKeyID:              apiKey.ID,
 		AccountID:             account.ID,
 		RequestID:             requestID,
+		ClientRequestID:       clientRequestIDFromContext(ctx),
 		Model:                 result.Model,
 		RequestedModel:        requestedModel,
 		UpstreamModel:         optionalNonEqualStringPtr(result.UpstreamModel, result.Model),

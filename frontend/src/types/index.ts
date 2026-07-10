@@ -1317,6 +1317,8 @@ export interface UsageLog {
   api_key_id: number
   account_id: number | null
   request_id: string
+  // 端到端关联键，跨级联实例贯穿同一请求链路（issue #60）
+  client_request_id?: string | null
   model: string
   service_tier?: string | null
   reasoning_effort?: string | null

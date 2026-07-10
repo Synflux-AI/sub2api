@@ -3,6 +3,8 @@ package service
 import (
 	"net/http"
 	"strings"
+
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 )
 
 // protectedCustomHeaderNames 列出禁止由 Account.CustomHeaders 覆盖的 header 名（不区分大小写）。
@@ -68,9 +70,12 @@ func (a *Account) IsCustomHeadersEnabled() bool {
 //   - 仅当 CustomHeadersEnabled=true 且 CustomHeaders 非空时生效。
 //   - 跳过 protectedCustomHeaderNames 中的受保护 header，避免破坏 HTTP 语义或代理逻辑。
 //   - 跳过键名为空的条目；对单个键的多次设置取最后一次。
+//   - 值支持模板变量展开（见 expandCustomHeaderValue），用于级联部署下注入
+//     每请求动态的关联 id，如 `X-Client-Request-ID: {{client_request_id}}`。
 //   - 使用 Set 而非 Add：覆盖此前由 gateway 设置的同名 header（管理员显式覆盖）。
 //
 // 调用约定：必须在 gateway 完成所有内置 header 设置之后、http client 发起请求之前调用一次。
+// 各 builder 均以 http.NewRequestWithContext 构造 req，故此处可直接从 req.Context() 取值。
 func (a *Account) ApplyCustomHeaders(req *http.Request) {
 	if req == nil || !a.IsCustomHeadersEnabled() {
 		return
@@ -83,6 +88,69 @@ func (a *Account) ApplyCustomHeaders(req *http.Request) {
 		if _, blocked := protectedCustomHeaderNames[strings.ToLower(key)]; blocked {
 			continue
 		}
-		req.Header.Set(key, value)
+		expanded, ok := expandCustomHeaderValue(value, req)
+		if !ok {
+			// 含已知模板变量但其运行时值为空：跳过该 header，
+			// 不外发空值/字面模板（例如 ctx 无 client_request_id 时）。
+			continue
+		}
+		req.Header.Set(key, expanded)
 	}
+}
+
+// expandCustomHeaderValue 展开自定义 header 值中的 `{{var}}` 模板变量。
+//
+// 支持的变量：
+//   - client_request_id: 取 req.Context() 里的 ClientRequestID（端到端关联键）。
+//
+// 规则：
+//   - 无模板标记时原样返回。
+//   - 已知变量在运行时值为空 → 返回 ok=false，调用方跳过整个 header。
+//   - 未知变量 → 保留字面量（含 `{{ }}`），便于将来扩展且不静默吞掉配置。
+//   - 未闭合的 `{{` → 剩余内容原样保留。
+func expandCustomHeaderValue(value string, req *http.Request) (string, bool) {
+	if !strings.Contains(value, "{{") {
+		return value, true
+	}
+
+	var b strings.Builder
+	rest := value
+	skip := false
+	for {
+		start := strings.Index(rest, "{{")
+		if start < 0 {
+			b.WriteString(rest)
+			break
+		}
+		b.WriteString(rest[:start])
+		closeIdx := strings.Index(rest[start:], "}}")
+		if closeIdx < 0 {
+			// 无闭合标记：剩余原样保留
+			b.WriteString(rest[start:])
+			break
+		}
+		end := start + closeIdx
+		name := strings.TrimSpace(rest[start+2 : end])
+		switch name {
+		case "client_request_id":
+			v := ""
+			if req != nil {
+				v, _ = req.Context().Value(ctxkey.ClientRequestID).(string)
+			}
+			v = strings.TrimSpace(v)
+			if v == "" {
+				skip = true
+			}
+			b.WriteString(v)
+		default:
+			// 未知变量：保留字面量 `{{name}}`
+			b.WriteString(rest[start : end+2])
+		}
+		rest = rest[end+2:]
+	}
+
+	if skip {
+		return "", false
+	}
+	return b.String(), true
 }

@@ -600,6 +600,7 @@ func usageLogFromServiceUser(l *service.UsageLog) UsageLog {
 		APIKeyID:              l.APIKeyID,
 		AccountID:             l.AccountID,
 		RequestID:             l.RequestID,
+		ClientRequestID:       l.ClientRequestID,
 		Model:                 requestedModel,
 		ServiceTier:           l.ServiceTier,
 		ReasoningEffort:       l.ReasoningEffort,

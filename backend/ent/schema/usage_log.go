@@ -38,6 +38,14 @@ func (UsageLog) Fields() []ent.Field {
 		field.String("request_id").
 			MaxLen(64).
 			NotEmpty(),
+		// ClientRequestID 端到端关联键，跨级联实例贯穿同一请求链路。
+		// 值来自入站 X-Client-Request-ID（校验后沿用）或本实例生成。
+		// NULL 表示历史行或未参与关联的请求。线上索引由 SQL 迁移创建
+		// WHERE client_request_id IS NOT NULL 的部分索引（历史行全为 NULL，省空间）。
+		field.String("client_request_id").
+			MaxLen(64).
+			Optional().
+			Nillable(),
 		field.String("model").
 			MaxLen(100).
 			NotEmpty(),

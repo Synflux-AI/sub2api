@@ -3,10 +3,78 @@
 package service
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 )
+
+// newRequestWithClientRequestID 构造带 ClientRequestID ctx 的出站请求。
+func newRequestWithClientRequestID(t *testing.T, id string) *http.Request {
+	t.Helper()
+	req := newRequest(t)
+	if id != "" {
+		ctx := context.WithValue(req.Context(), ctxkey.ClientRequestID, id)
+		req = req.WithContext(ctx)
+	}
+	return req
+}
+
+func TestApplyCustomHeaders_ExpandsClientRequestIDTemplate(t *testing.T) {
+	req := newRequestWithClientRequestID(t, "corr-123")
+	a := &Account{
+		CustomHeadersEnabled: true,
+		CustomHeaders: map[string]string{
+			"X-Client-Request-ID": "{{client_request_id}}",
+			"X-Trace":             "prefix-{{client_request_id}}-suffix",
+		},
+	}
+	a.ApplyCustomHeaders(req)
+
+	if got := req.Header.Get("X-Client-Request-ID"); got != "corr-123" {
+		t.Fatalf("template not expanded; got %q", got)
+	}
+	if got := req.Header.Get("X-Trace"); got != "prefix-corr-123-suffix" {
+		t.Fatalf("embedded template not expanded; got %q", got)
+	}
+}
+
+func TestApplyCustomHeaders_SkipsHeaderWhenClientRequestIDEmpty(t *testing.T) {
+	// ctx 无 client_request_id：含该模板变量的 header 整体跳过，不外发空值/字面模板。
+	req := newRequestWithClientRequestID(t, "")
+	a := &Account{
+		CustomHeadersEnabled: true,
+		CustomHeaders: map[string]string{
+			"X-Client-Request-ID": "{{client_request_id}}",
+			"X-Static":            "keep-me",
+		},
+	}
+	a.ApplyCustomHeaders(req)
+
+	if _, ok := req.Header["X-Client-Request-Id"]; ok {
+		t.Fatalf("header with empty client_request_id should be skipped, not set to empty/literal")
+	}
+	if got := req.Header.Get("X-Static"); got != "keep-me" {
+		t.Fatalf("static header should still be applied; got %q", got)
+	}
+}
+
+func TestApplyCustomHeaders_UnknownTemplateKeptLiteral(t *testing.T) {
+	req := newRequestWithClientRequestID(t, "corr-1")
+	a := &Account{
+		CustomHeadersEnabled: true,
+		CustomHeaders: map[string]string{
+			"X-Unknown": "a-{{not_a_var}}-b",
+		},
+	}
+	a.ApplyCustomHeaders(req)
+
+	if got := req.Header.Get("X-Unknown"); got != "a-{{not_a_var}}-b" {
+		t.Fatalf("unknown template var should be kept literal; got %q", got)
+	}
+}
 
 func newRequest(t *testing.T) *http.Request {
 	t.Helper()

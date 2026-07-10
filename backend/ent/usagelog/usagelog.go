@@ -22,6 +22,8 @@ const (
 	FieldAccountID = "account_id"
 	// FieldRequestID holds the string denoting the request_id field in the database.
 	FieldRequestID = "request_id"
+	// FieldClientRequestID holds the string denoting the client_request_id field in the database.
+	FieldClientRequestID = "client_request_id"
 	// FieldModel holds the string denoting the model field in the database.
 	FieldModel = "model"
 	// FieldRequestedModel holds the string denoting the requested_model field in the database.
@@ -152,6 +154,7 @@ var Columns = []string{
 	FieldAPIKeyID,
 	FieldAccountID,
 	FieldRequestID,
+	FieldClientRequestID,
 	FieldModel,
 	FieldRequestedModel,
 	FieldUpstreamModel,
@@ -204,6 +207,8 @@ func ValidColumn(column string) bool {
 var (
 	// RequestIDValidator is a validator for the "request_id" field. It is called by the builders before save.
 	RequestIDValidator func(string) error
+	// ClientRequestIDValidator is a validator for the "client_request_id" field. It is called by the builders before save.
+	ClientRequestIDValidator func(string) error
 	// ModelValidator is a validator for the "model" field. It is called by the builders before save.
 	ModelValidator func(string) error
 	// RequestedModelValidator is a validator for the "requested_model" field. It is called by the builders before save.
@@ -292,6 +297,11 @@ func ByAccountID(opts ...sql.OrderTermOption) OrderOption {
 // ByRequestID orders the results by the request_id field.
 func ByRequestID(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldRequestID, opts...).ToFunc()
+}
+
+// ByClientRequestID orders the results by the client_request_id field.
+func ByClientRequestID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldClientRequestID, opts...).ToFunc()
 }
 
 // ByModel orders the results by the model field.

@@ -457,7 +457,9 @@ type UsageLog struct {
 	APIKeyID  int64  `json:"api_key_id"`
 	AccountID int64  `json:"account_id"`
 	RequestID string `json:"request_id"`
-	Model     string `json:"model"`
+	// ClientRequestID 端到端关联键，跨级联实例贯穿同一请求链路（issue #60）。
+	ClientRequestID string `json:"client_request_id,omitempty"`
+	Model           string `json:"model"`
 	// ServiceTier records the OpenAI service tier used for billing, e.g. "priority" / "flex".
 	ServiceTier *string `json:"service_tier,omitempty"`
 	// ReasoningEffort is the request's reasoning effort level.

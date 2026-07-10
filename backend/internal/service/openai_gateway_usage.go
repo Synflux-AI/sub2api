@@ -219,6 +219,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		APIKeyID:            apiKey.ID,
 		AccountID:           account.ID,
 		RequestID:           requestID,
+		ClientRequestID:     clientRequestIDFromContext(ctx),
 		Model:               result.Model,
 		RequestedModel:      requestedModel,
 		UpstreamModel:       optionalNonEqualStringPtr(result.UpstreamModel, result.Model),

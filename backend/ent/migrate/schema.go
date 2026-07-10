@@ -1578,6 +1578,7 @@ var (
 	UsageLogsColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeInt64, Increment: true},
 		{Name: "request_id", Type: field.TypeString, Size: 64},
+		{Name: "client_request_id", Type: field.TypeString, Nullable: true, Size: 64},
 		{Name: "model", Type: field.TypeString, Size: 100},
 		{Name: "requested_model", Type: field.TypeString, Nullable: true, Size: 100},
 		{Name: "upstream_model", Type: field.TypeString, Nullable: true, Size: 100},
@@ -1627,31 +1628,31 @@ var (
 		ForeignKeys: []*schema.ForeignKey{
 			{
 				Symbol:     "usage_logs_api_keys_usage_logs",
-				Columns:    []*schema.Column{UsageLogsColumns[37]},
+				Columns:    []*schema.Column{UsageLogsColumns[38]},
 				RefColumns: []*schema.Column{APIKeysColumns[0]},
 				OnDelete:   schema.NoAction,
 			},
 			{
 				Symbol:     "usage_logs_accounts_usage_logs",
-				Columns:    []*schema.Column{UsageLogsColumns[38]},
+				Columns:    []*schema.Column{UsageLogsColumns[39]},
 				RefColumns: []*schema.Column{AccountsColumns[0]},
 				OnDelete:   schema.NoAction,
 			},
 			{
 				Symbol:     "usage_logs_groups_usage_logs",
-				Columns:    []*schema.Column{UsageLogsColumns[39]},
+				Columns:    []*schema.Column{UsageLogsColumns[40]},
 				RefColumns: []*schema.Column{GroupsColumns[0]},
 				OnDelete:   schema.SetNull,
 			},
 			{
 				Symbol:     "usage_logs_users_usage_logs",
-				Columns:    []*schema.Column{UsageLogsColumns[40]},
+				Columns:    []*schema.Column{UsageLogsColumns[41]},
 				RefColumns: []*schema.Column{UsersColumns[0]},
 				OnDelete:   schema.NoAction,
 			},
 			{
 				Symbol:     "usage_logs_user_subscriptions_usage_logs",
-				Columns:    []*schema.Column{UsageLogsColumns[41]},
+				Columns:    []*schema.Column{UsageLogsColumns[42]},
 				RefColumns: []*schema.Column{UserSubscriptionsColumns[0]},
 				OnDelete:   schema.SetNull,
 			},
@@ -1660,42 +1661,42 @@ var (
 			{
 				Name:    "usagelog_user_id",
 				Unique:  false,
-				Columns: []*schema.Column{UsageLogsColumns[40]},
+				Columns: []*schema.Column{UsageLogsColumns[41]},
 			},
 			{
 				Name:    "usagelog_api_key_id",
 				Unique:  false,
-				Columns: []*schema.Column{UsageLogsColumns[37]},
+				Columns: []*schema.Column{UsageLogsColumns[38]},
 			},
 			{
 				Name:    "usagelog_account_id",
 				Unique:  false,
-				Columns: []*schema.Column{UsageLogsColumns[38]},
+				Columns: []*schema.Column{UsageLogsColumns[39]},
 			},
 			{
 				Name:    "usagelog_group_id",
 				Unique:  false,
-				Columns: []*schema.Column{UsageLogsColumns[39]},
+				Columns: []*schema.Column{UsageLogsColumns[40]},
 			},
 			{
 				Name:    "usagelog_subscription_id",
 				Unique:  false,
-				Columns: []*schema.Column{UsageLogsColumns[41]},
+				Columns: []*schema.Column{UsageLogsColumns[42]},
 			},
 			{
 				Name:    "usagelog_created_at",
 				Unique:  false,
-				Columns: []*schema.Column{UsageLogsColumns[36]},
+				Columns: []*schema.Column{UsageLogsColumns[37]},
 			},
 			{
 				Name:    "usagelog_model",
 				Unique:  false,
-				Columns: []*schema.Column{UsageLogsColumns[2]},
+				Columns: []*schema.Column{UsageLogsColumns[3]},
 			},
 			{
 				Name:    "usagelog_requested_model",
 				Unique:  false,
-				Columns: []*schema.Column{UsageLogsColumns[3]},
+				Columns: []*schema.Column{UsageLogsColumns[4]},
 			},
 			{
 				Name:    "usagelog_request_id",
@@ -1705,17 +1706,17 @@ var (
 			{
 				Name:    "usagelog_user_id_created_at",
 				Unique:  false,
-				Columns: []*schema.Column{UsageLogsColumns[40], UsageLogsColumns[36]},
+				Columns: []*schema.Column{UsageLogsColumns[41], UsageLogsColumns[37]},
 			},
 			{
 				Name:    "usagelog_api_key_id_created_at",
 				Unique:  false,
-				Columns: []*schema.Column{UsageLogsColumns[37], UsageLogsColumns[36]},
+				Columns: []*schema.Column{UsageLogsColumns[38], UsageLogsColumns[37]},
 			},
 			{
 				Name:    "usagelog_group_id_created_at",
 				Unique:  false,
-				Columns: []*schema.Column{UsageLogsColumns[39], UsageLogsColumns[36]},
+				Columns: []*schema.Column{UsageLogsColumns[40], UsageLogsColumns[37]},
 			},
 		},
 	}

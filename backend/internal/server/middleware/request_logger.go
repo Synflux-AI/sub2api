@@ -28,12 +28,12 @@ func RequestLogger() gin.HandlerFunc {
 		c.Header(requestIDHeader, requestID)
 
 		ctx := context.WithValue(c.Request.Context(), ctxkey.RequestID, requestID)
-		clientRequestID, _ := ctx.Value(ctxkey.ClientRequestID).(string)
 
+		// 不在此处注入 client_request_id：它由下游 ClientRequestID 中间件在
+		// 生成/沿用后追加。若这里先以空值注入，会与之构成重复的 zap key。
 		requestLogger := logger.With(
 			zap.String("component", "http"),
 			zap.String("request_id", requestID),
-			zap.String("client_request_id", strings.TrimSpace(clientRequestID)),
 			zap.String("path", c.Request.URL.Path),
 			zap.String("method", c.Request.Method),
 		)
