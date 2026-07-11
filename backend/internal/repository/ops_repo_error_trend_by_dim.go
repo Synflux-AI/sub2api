@@ -116,5 +116,13 @@ func (r *opsRepository) GetErrorTrendByDim(ctx context.Context, filter *service.
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+
+	// 逐桶请求总数分母（错误率虚线用），只随实体筛选变、不随 view 维度变。
+	totals, err := r.getRequestTotalsByBucket(ctx, filter, bucketSeconds)
+	if err != nil {
+		return nil, err
+	}
+	resp.RequestTotals = totals
+
 	return resp, nil
 }
