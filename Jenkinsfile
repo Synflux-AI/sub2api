@@ -275,10 +275,19 @@ def failureDetail() {
   def keys = fails.readLines()
   def out = "❌ **失败阶段**: ${keys.join(', ')}"
   def first = keys[0]
-  // 去掉反引号防破坏代码块围栏，每行截断 200 字符
-  def tail = sh(returnStdout: true,
-    script: "tail -n 6 ci-logs/${first}.log 2>/dev/null | cut -c1-200 | sed 's/`//g' || true").trim()
-  if (tail) out += "\n\n**${first} 末尾输出**:\n```\n${tail}\n```"
+  def log = "ci-logs/${first}.log"
+  // 优先摘出报错特征行(命中真错因，如 ENOENT/编译错/测试失败/进程非零退出)，命中不到再退回
+  // 日志末尾——盲 tail 常抓到无关的收尾输出而错过靠前的真错。去反引号防破坏代码块围栏，
+  // 每行截断 200 字符。
+  def pat = 'error|fail|✖|✗|ENOENT|ELIFECYCLE|exception|traceback|exited with|command failed|panic:'
+  def snippet = sh(returnStdout: true, script: """
+    if grep -qiE '${pat}' ${log} 2>/dev/null; then
+      grep -iE '${pat}' ${log} | tail -n 12
+    else
+      tail -n 8 ${log} 2>/dev/null
+    fi | cut -c1-200 | sed 's/`//g' || true
+  """).trim()
+  if (snippet) out += "\n\n**${first} 关键日志**:\n```\n${snippet}\n```"
   return out
 }
 

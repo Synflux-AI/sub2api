@@ -12,3 +12,8 @@ dist/
 # 忽略缓存
 .cache/
 .vite/
+
+# 忽略 vite/vitest 加载配置时生成的瞬时临时文件(vite.config.ts.timestamp-*.mjs /
+# vitest.config.ts.timestamp-*.mjs)。CI 里 eslint 与 vitest 并发跑在同一目录，
+# eslint 扫 .mjs 时可能枚举到该临时文件、vitest 随即删掉，导致 eslint 读取 ENOENT 崩溃。
+*.timestamp-*.mjs
