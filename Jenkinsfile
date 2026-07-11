@@ -55,6 +55,8 @@ pipeline {
             env.STATUS_SHA = env.GIT_COMMIT ?: ''
           }
           echo "RELEASE_TAG='${env.RELEASE_TAG}' CHANGE_ID='${env.CHANGE_ID ?: ''}' STATUS_SHA='${env.STATUS_SHA}'"
+          // 采集发版信息(changelog/贡献者/tagger/tag说明)供飞书卡片使用；仅 tag 构建需要，全程容错。
+          if (env.RELEASE_TAG?.trim()) { computeReleaseInfo(env.RELEASE_TAG) }
         }
       }
     }
@@ -112,6 +114,7 @@ pipeline {
     always  { script { publishReport() } }
     success { script { notifyFeishu('success') } }
     failure { script { notifyFeishu('failure') } }
+    aborted { script { notifyFeishu('aborted') } }
   }
 }
 
@@ -144,19 +147,225 @@ def publishReport() {
   }
 }
 
+// 飞书交互卡片通知(移植自主仓 linkyrouter Jenkinsfile 的发版卡片，适配 sub2api：
+// 单镜像、多分支 PR/branch 上下文、轻量 tag)。tag 构建=完整发版卡片(说明+分组changelog
+// +贡献者+版本跨度+镜像)；PR/branch 构建=精简状态卡片。字段拿不到就跳过该行，绝不失败。
 def notifyFeishu(String result) {
-  def ref = env.RELEASE_TAG?.trim() ? "tag ${env.RELEASE_TAG}" : (env.BRANCH_NAME ?: 'release')
-  def pushed = env.RELEASE_TAG?.trim() ? "\\n镜像: ${env.GHCR_IMAGE}:${env.RELEASE_TAG.replaceFirst(/^v/, '')}" : ''
-  def emoji = result == 'success' ? '✅' : '❌'
-  def title = "${emoji} Sub2API CI/CD ${result == 'success' ? '成功' : '失败'}"
-  def text  = "${title}\\n引用: ${ref}\\n构建: #${env.BUILD_NUMBER}${pushed}\\n${env.BUILD_URL}"
+  def colorMap = [
+    success:  'green',
+    failure:  'red',
+    aborted:  'grey',
+    unstable: 'orange',
+  ]
+  def emojiMap = [
+    success:  '✅',
+    failure:  '❌',
+    aborted:  '🚫',
+    unstable: '⚠️',
+  ]
+  def color = colorMap.get(result, 'blue')
+  def emoji = emojiMap.get(result, '🔔')
+
+  def isRelease = env.RELEASE_TAG?.trim() as boolean
+  def ref = isRelease ? env.RELEASE_TAG
+          : (env.CHANGE_ID ? "PR #${env.CHANGE_ID}" : (env.BRANCH_NAME ?: 'build'))
+
+  // 状态措辞按场景区分：tag 构建=发版(含构建并推送镜像)；PR/branch 构建=CI 检查。
+  // 让标题一眼看出"成功的是什么"，而不是笼统的成功/失败。
+  def status
+  if (result == 'success')       status = isRelease ? '发版成功' : 'CI 通过'
+  else if (result == 'failure')  status = isRelease ? '发版失败' : 'CI 失败'
+  else if (result == 'aborted')  status = '已中断'
+  else if (result == 'unstable') status = 'CI 不稳定'
+  else                           status = result
+
+  def title = "sub2api  ${ref}  ·  ${status} ${emoji}"
+  def url = env.BUILD_URL ?: ''
+
+  // 触发来源(GitHub push / 手动 / SCM 轮询)；沙箱拿不到就留空
+  def trigger = ''
   try {
-    withCredentials([string(credentialsId: 'sub2api-feishu-webhook', variable: 'FEISHU_URL')]) {
-      sh """
-        curl -s -X POST "\$FEISHU_URL" -H 'Content-Type: application/json' -d '{"msg_type":"text","content":{"text":"${text}"}}' || true
-      """
+    trigger = currentBuild.getBuildCauses().collect { it.shortDescription }.findAll { it }.join('；')
+  } catch (ignored) { trigger = '' }
+
+  def elements = []
+  if (isRelease) {
+    // 📌 发版说明(annotated tag 的说明)；轻量 tag 拿到的常是 Merge 提交标题，无意义则跳过
+    if (env.TAG_NOTE && !(env.TAG_NOTE =~ /^Merge\s/)) {
+      elements << [tag: 'div', text: [tag: 'lark_md', content: "📌 **发版说明**\n${env.TAG_NOTE}"]]
+      elements << [tag: 'hr']
+    }
+    // 改动内容(按 commit 类型分组的两列分栏)
+    def changelogEls = buildChangelogElements(env.RELEASE_TAG, env.PREV_TAG, 15)
+    if (changelogEls) {
+      elements.addAll(changelogEls)
+      elements << [tag: 'hr']
+    }
+  }
+
+  // 元信息:拿不到的字段整行跳过
+  def meta = []
+  if (isRelease) {
+    if (env.TAGGER) meta << "👤 **发版人(tag)**: ${env.TAGGER}"
+    if (trigger)    meta << "🔔 **触发**: ${trigger}"
+    meta << "🏷️ **版本**: ${env.PREV_TAG ? env.PREV_TAG + ' → ' : ''}**${env.RELEASE_TAG}**"
+    meta << "📦 **镜像**: sub2api `:${env.RELEASE_TAG.replaceFirst(/^v/, '')}`  ·  Build #${env.BUILD_NUMBER}"
+  } else {
+    if (env.CHANGE_ID) {
+      def prTitle = env.CHANGE_TITLE ? ": ${env.CHANGE_TITLE}" : ''
+      meta << "🔀 **PR**: #${env.CHANGE_ID}${prTitle}"
+      def author = env.CHANGE_AUTHOR_DISPLAY_NAME ?: env.CHANGE_AUTHOR
+      if (author) {
+        def login = (env.CHANGE_AUTHOR && env.CHANGE_AUTHOR != author) ? " (@${env.CHANGE_AUTHOR})" : ''
+        meta << "👤 **提交人**: ${author}${login}"
+      }
+      if (env.CHANGE_BRANCH) meta << "🌿 **分支**: ${env.CHANGE_BRANCH}${env.CHANGE_TARGET ? ' → ' + env.CHANGE_TARGET : ''}"
+    } else {
+      if (env.BRANCH_NAME) meta << "🌿 **分支**: ${env.BRANCH_NAME}"
+      def author = sh(returnStdout: true,
+        script: "git log -1 --pretty=format:'%an' 2>/dev/null || true").trim()
+      def commit = sh(returnStdout: true,
+        script: "git log -1 --pretty=format:'%h  %s' 2>/dev/null || true").trim()
+      if (author) meta << "👤 **提交人**: ${author}"
+      if (commit) meta << "📝 **提交**: ${commit}"
+    }
+    if (trigger) meta << "🔔 **触发**: ${trigger}"
+    meta << "🧱 **构建**: #${env.BUILD_NUMBER}"
+  }
+  elements << [tag: 'div', text: [tag: 'lark_md', content: meta.join('\n')]]
+
+  // 失败详情:哪些 CI 阶段挂了 + 首个失败阶段日志尾部(GitHub PR 评论里有完整日志)
+  if (result == 'failure' || result == 'unstable') {
+    def fd = failureDetail()
+    if (fd) {
+      elements << [tag: 'hr']
+      elements << [tag: 'div', text: [tag: 'lark_md', content: fd]]
+    }
+  }
+
+  if (url) {
+    elements << [tag: 'action', actions: [[tag: 'button', text: [tag: 'plain_text', content: 'Open in Jenkins'], type: 'primary', url: url]]]
+  }
+
+  try {
+    withCredentials([string(credentialsId: 'sub2api-feishu-webhook', variable: 'FEISHU_HOOK')]) {
+      def payload = groovy.json.JsonOutput.toJson([
+        msg_type: 'interactive',
+        card: [
+          config: [wide_screen_mode: true],
+          header: [template: color, title: [tag: 'plain_text', content: title]],
+          elements: elements
+        ]
+      ])
+      writeFile file: '.feishu-payload.json', text: payload
+      sh(label: 'feishu notify',
+         script: 'curl -sS -m 10 -H "Content-Type: application/json" --data-binary @.feishu-payload.json "$FEISHU_HOOK" || true; rm -f .feishu-payload.json')
     }
   } catch (ignored) {
     echo 'Feishu webhook credential not configured; skipping notification.'
   }
+}
+
+// 从 ci-logs/*.status 找出失败的 CI 阶段(ciStage 每阶段写 pass/fail)，附首个失败阶段的
+// 日志尾部。构建/推送镜像阶段失败时没有 .status 文件，返回空串,由卡片头部+Jenkins 链接兜底。
+def failureDetail() {
+  def fails = sh(returnStdout: true,
+    script: "grep -l fail ci-logs/*.status 2>/dev/null | sed 's#.*/##; s#\\.status\$##' || true").trim()
+  if (!fails) return ''
+  def keys = fails.readLines()
+  def out = "❌ **失败阶段**: ${keys.join(', ')}"
+  def first = keys[0]
+  // 去掉反引号防破坏代码块围栏，每行截断 200 字符
+  def tail = sh(returnStdout: true,
+    script: "tail -n 6 ci-logs/${first}.log 2>/dev/null | cut -c1-200 | sed 's/`//g' || true").trim()
+  if (tail) out += "\n\n**${first} 末尾输出**:\n```\n${tail}\n```"
+  return out
+}
+
+// 采集发版信息并写入 env（供 notifyFeishu 使用）。全程容错，任何一步失败都只是留空、不中断构建。
+def computeReleaseInfo(String tag) {
+  // Jenkins checkout 可能是 shallow / 没抓全 tag，先补全，否则 git log 区间和 tagger 拿不到
+  sh(label: 'fetch history+tags', script: '''
+    set +e
+    if [ "$(git rev-parse --is-shallow-repository 2>/dev/null)" = "true" ]; then
+      git fetch --unshallow --tags --force >/dev/null 2>&1
+    else
+      git fetch --tags --force >/dev/null 2>&1
+    fi
+    true
+  ''')
+
+  def prev = sh(returnStdout: true,
+    script: "git describe --tags --abbrev=0 '${tag}^' 2>/dev/null || true").trim()
+  env.PREV_TAG = prev
+
+  // 发版人(tagger) + 发版说明：annotated tag 才有，lightweight tag 则为空
+  // (不采集贡献者：本仓从公开上游 fork 合并后发版，作者列表全是上游噪音)
+  env.TAGGER = sh(returnStdout: true,
+    script: "git for-each-ref 'refs/tags/${tag}' --format='%(taggername)' 2>/dev/null || true").trim()
+  def note = sh(returnStdout: true,
+    script: "git for-each-ref 'refs/tags/${tag}' --format='%(contents:subject)' 2>/dev/null || true").trim()
+  env.TAG_NOTE = stripVersionPrefix(note)
+}
+
+// 去掉 tag 说明里冗余的版本号前缀，如 "v0.1.24: xxx" / "0.1.24：xxx" -> "xxx"（头部已显示版本）
+def stripVersionPrefix(String s) {
+  if (!s) return ''
+  return s.replaceFirst(/^\s*[vV]?\d[\w.\-]*\s*[:：]\s*/, '').trim()
+}
+
+// 把区间内的 commit 按类型(feat/fix/perf)分组成飞书两列分栏元素：
+//   左栏(72px)= 组标题 + 各 commit 短 hash(加粗)，标题与 hash 同列左对齐
+//   右栏(weighted)= 占位空行 + 各 commit 消息，逐行与左栏 hash 对齐
+// 其余类型(docs/chore/ci/...)与 Merge 折叠成一句“+N 项杂项”；每组超 cap 条折叠“还有 N 条”。
+def buildChangelogElements(String tag, String prev, int cap) {
+  if (!tag) return []
+  def range = prev ? "${prev}..${tag}" : tag
+  def raw = sh(returnStdout: true,
+    script: "git log --no-merges --pretty=format:'%s%x1f%h' ${range} 2>/dev/null || true").trim()
+  if (!raw) return []
+  def sections = [
+    [key: 'feat', title: '✨ 功能'],
+    [key: 'fix',  title: '🐛 修复'],
+    [key: 'perf', title: '⚡ 优化'],
+  ]
+  def bucket = [feat: [], fix: [], perf: []]
+  int misc = 0
+  raw.readLines().each { line ->
+    int i = line.indexOf('')
+    if (i < 0) return
+    def subj = line.substring(0, i)
+    def hash = line.substring(i + 1)
+    def mm = (subj =~ /^(\w+)(?:\([^)]*\))?!?[:：]/)
+    def type = mm.find() ? mm.group(1).toLowerCase() : ''
+    if (bucket.containsKey(type)) {
+      def clean = subj.replaceFirst(/^\w+(?:\([^)]*\))?!?[:：]\s*/, '')
+      bucket[type] << [hash: hash, msg: clean]
+    } else {
+      misc++
+    }
+  }
+  def els = []
+  sections.each { s ->
+    def items = bucket[s.key]
+    if (!items) return
+    def shown = items.take(cap)
+    def extra = items.size() - shown.size()
+    def leftLines  = ["**${s.title}**"] + shown.collect { "**${it.hash}**" }
+    def rightLines = ['　']          + shown.collect { it.msg }
+    if (extra > 0) { leftLines << '　'; rightLines << "…还有 ${extra} 条" }
+    els << [
+      tag: 'column_set', flex_mode: 'none',
+      columns: [
+        [tag: 'column', width: '72px', vertical_align: 'top',
+         elements: [[tag: 'div', text: [tag: 'lark_md', content: leftLines.join('\n')]]]],
+        [tag: 'column', width: 'weighted', weight: 1, vertical_align: 'top',
+         elements: [[tag: 'div', text: [tag: 'lark_md', content: rightLines.join('\n')]]]],
+      ]
+    ]
+  }
+  if (misc > 0) {
+    els << [tag: 'div', text: [tag: 'lark_md', content: "+ ${misc} 项杂项(docs·chore·ci 等)"]]
+  }
+  return els
 }
