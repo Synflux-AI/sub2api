@@ -70,11 +70,17 @@ pipeline {
         stage('govulncheck') {
           steps { ciStage('govulncheck', '''docker run --rm -v "$WORKSPACE":/w -w /w/backend -v jenkins-sub2api-gomod:/go/pkg/mod -v jenkins-sub2api-gocache:/root/.cache/go-build -v jenkins-sub2api-gobin:/go/bin -e GOPROXY -e GOSUMDB "$GO_FULL_IMAGE" sh -c 'go install golang.org/x/vuln/cmd/govulncheck@latest && govulncheck ./...' ''') }
         }
-        // Frontend lint/typecheck/test + audit share one pnpm install. Kept in a
+        // Frontend lint/typecheck/test + audit share one pnpm install (kept in a
         // single stage on purpose: running two `pnpm install` in parallel against
-        // the same store/node_modules races (ERR_PNPM_ENOENT).
+        // the same store/node_modules races and corrupts the pnpm store,
+        // ERR_PNPM_ENOENT). Once install is done, lint/typecheck/vitest/audit are
+        // independent read-only checks against the same node_modules, so they run
+        // as background jobs and are waited on together instead of chained
+        // sequentially — this is the dominant cost of the whole pipeline
+        // (~136s serialized: eslint ~56s + vue-tsc ~67s + vitest ~13s), so running
+        // them concurrently cuts it to roughly the slowest of the three.
         stage('Frontend') {
-          steps { ciStage('frontend', '''docker run --rm -v "$WORKSPACE":/w -w /w/frontend -v jenkins-sub2api-pnpm:/pnpm-store "$NODE_IMAGE" sh -c 'set -e; corepack enable; corepack prepare pnpm@9 --activate; pnpm config set store-dir /pnpm-store; pnpm install --frozen-lockfile; pnpm run lint:check; pnpm run typecheck; pnpm exec vitest run '"$FE_CRITICAL"'; pnpm audit --prod --audit-level=high --json > audit.json || true' && docker run --rm -v "$WORKSPACE":/w -w /w "$PY_IMAGE" python tools/check_pnpm_audit_exceptions.py --audit frontend/audit.json --exceptions .github/audit-exceptions.yml''') }
+          steps { ciStage('frontend', '''docker run --rm -v "$WORKSPACE":/w -w /w/frontend -v jenkins-sub2api-pnpm:/pnpm-store "$NODE_IMAGE" sh -c 'set -e; corepack enable; corepack prepare pnpm@9 --activate; pnpm config set store-dir /pnpm-store; pnpm install --frozen-lockfile; set +e; pnpm run lint:check >lint.log 2>&1 & p_lint=$!; pnpm run typecheck >typecheck.log 2>&1 & p_tsc=$!; pnpm exec vitest run '"$FE_CRITICAL"' >vitest.log 2>&1 & p_vitest=$!; pnpm audit --prod --audit-level=high --json >audit.json 2>audit.log & p_audit=$!; wait $p_lint; rc_lint=$?; wait $p_tsc; rc_tsc=$?; wait $p_vitest; rc_vitest=$?; wait $p_audit; echo "--- lint:check ---"; cat lint.log; echo "--- typecheck ---"; cat typecheck.log; echo "--- vitest ---"; cat vitest.log; echo "--- audit ---"; cat audit.log; [ $rc_lint -eq 0 ] && [ $rc_tsc -eq 0 ] && [ $rc_vitest -eq 0 ]' && docker run --rm -v "$WORKSPACE":/w -w /w "$PY_IMAGE" python tools/check_pnpm_audit_exceptions.py --audit frontend/audit.json --exceptions .github/audit-exceptions.yml''') }
         }
       }
     }
