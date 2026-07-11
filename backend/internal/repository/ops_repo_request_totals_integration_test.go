@@ -35,14 +35,18 @@ func TestGetErrorTrendByDim_RequestTotals_Invariants_Integration(t *testing.T) {
 	k1 := mustCreateApiKey(t, integrationEntClient, &service.APIKey{UserID: u1.ID})
 	k2 := mustCreateApiKey(t, integrationEntClient, &service.APIKey{UserID: u2.ID})
 
-	now := time.Now().UTC()
-	start := now.Add(-20 * time.Minute)
-	end := now.Add(20 * time.Minute)
-	at := now.Add(-1 * time.Minute)
+	// 用固定且唯一的时间窗（避开其它集成测试用的 2025-06/2026-07/2025-01 及 now 附近）：
+	// base/owner 是无实体过滤的全表窗口计数，会被同一共享库里别的测试 seed 到 now 附近的
+	// usage/error 行污染（CI 上 base 9→12 即此故）。锚到远处的固定时刻即可隔离。
+	anchor := time.Date(2019, 2, 17, 3, 47, 11, 0, time.UTC)
+	start := anchor.Add(-20 * time.Minute)
+	end := anchor.Add(20 * time.Minute)
+	at := anchor
 
+	// 按时间窗清理（而非按 user_id）：确保该窗口内只有本测试的数据，base/owner 计数才确定。
 	cleanup := func() {
-		_, _ = integrationDB.ExecContext(ctx, `DELETE FROM ops_error_logs WHERE user_id IN ($1,$2)`, u1.ID, u2.ID)
-		_, _ = integrationDB.ExecContext(ctx, `DELETE FROM usage_logs WHERE user_id IN ($1,$2)`, u1.ID, u2.ID)
+		_, _ = integrationDB.ExecContext(ctx, `DELETE FROM ops_error_logs WHERE created_at >= $1 AND created_at < $2`, start, end)
+		_, _ = integrationDB.ExecContext(ctx, `DELETE FROM usage_logs WHERE created_at >= $1 AND created_at < $2`, start, end)
 	}
 	cleanup()
 	t.Cleanup(cleanup)
