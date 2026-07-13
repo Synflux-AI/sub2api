@@ -14,10 +14,10 @@ import (
 	"github.com/dgraph-io/ristretto"
 )
 
-// v15: 合并双方 v14——本仓库(usage_1d/window_1d_start/usage_7d/window_7d_start
-// + exclusive group authorization + group peak rate)与上游(group video pricing)
-// 各自升到 14 但字段集不同,合并后快照与任一方 v14 均不兼容,升 15 强制失效。
-const apiKeyAuthSnapshotVersion = 15
+// v16: 双方再次撞号——本仓库 v15(合并 v14 双方字段集)与上游 v15(group web
+// search per-call pricing)字段集不同,合并后快照与任一方 v15 均不兼容,升 16 强制失效。
+// 注:本仓库与上游各自独立演进该版本号,每次 sync 合并若双方都动过快照结构,需继续递增。
+const apiKeyAuthSnapshotVersion = 16
 
 type apiKeyAuthCacheConfig struct {
 	l1Size        int
@@ -277,6 +277,7 @@ func (s *APIKeyService) snapshotFromAPIKey(ctx context.Context, apiKey *APIKey) 
 			VideoPrice480P:                  apiKey.Group.VideoPrice480P,
 			VideoPrice720P:                  apiKey.Group.VideoPrice720P,
 			VideoPrice1080P:                 apiKey.Group.VideoPrice1080P,
+			WebSearchPricePerCall:           apiKey.Group.WebSearchPricePerCall,
 			ClaudeCodeOnly:                  apiKey.Group.ClaudeCodeOnly,
 			CodexCLIOnly:                    apiKey.Group.CodexCLIOnly,
 			FallbackGroupID:                 apiKey.Group.FallbackGroupID,
@@ -365,6 +366,7 @@ func (s *APIKeyService) snapshotToAPIKey(key string, snapshot *APIKeyAuthSnapsho
 			VideoPrice480P:                  snapshot.Group.VideoPrice480P,
 			VideoPrice720P:                  snapshot.Group.VideoPrice720P,
 			VideoPrice1080P:                 snapshot.Group.VideoPrice1080P,
+			WebSearchPricePerCall:           snapshot.Group.WebSearchPricePerCall,
 			ClaudeCodeOnly:                  snapshot.Group.ClaudeCodeOnly,
 			CodexCLIOnly:                    snapshot.Group.CodexCLIOnly,
 			FallbackGroupID:                 snapshot.Group.FallbackGroupID,
