@@ -102,6 +102,7 @@ func TestOpsServiceCleanupSystemLogs_SuccessAndAudit(t *testing.T) {
 	now := time.Now().UTC()
 	filter := &OpsSystemLogCleanupFilter{
 		StartTime:       &now,
+		Host:            "api-node-1",
 		Level:           "warn",
 		RequestID:       "req-1",
 		ClientRequestID: "creq-1",
@@ -120,6 +121,9 @@ func TestOpsServiceCleanupSystemLogs_SuccessAndAudit(t *testing.T) {
 	if audit == nil {
 		t.Fatalf("expected cleanup audit")
 		return
+	}
+	if !strings.Contains(audit.Conditions, `"host":"api-node-1"`) {
+		t.Fatalf("audit conditions should include host: %s", audit.Conditions)
 	}
 	if !strings.Contains(audit.Conditions, `"client_request_id":"creq-1"`) {
 		t.Fatalf("audit conditions should include client_request_id: %s", audit.Conditions)
