@@ -322,10 +322,34 @@ func filterVerifiedEmails(entries []NotifyEmailEntry) []string {
 	return recipients
 }
 
-// collectBalanceNotifyRecipients returns verified, non-disabled email recipients.
-// Only emails with verified=true and disabled=false are included.
+// collectBalanceNotifyRecipients returns deduplicated email recipients.
+//
+// 邮箱注册用户（SignupSource=="email"）的登录邮箱是本人填写、可投递的真实地址
+// （开启邮箱验证时还过了验证码），默认加入收件人——这样勾选开关+阈值即生效，
+// 无需再手动添加额外邮箱。OAuth 用户的登录邮箱可能是合成/占位地址，不默认加入，
+// 仅通过已验证的额外邮箱（verified=true && disabled=false）接收。
+// 登录邮箱与额外邮箱按小写去重，登录邮箱优先。
 func (s *BalanceNotifyService) collectBalanceNotifyRecipients(user *User) []string {
-	return filterVerifiedEmails(user.BalanceNotifyExtraEmails)
+	recipients := make([]string, 0)
+	seen := make(map[string]bool)
+
+	if user.SignupSource == "email" {
+		if email := strings.TrimSpace(user.Email); email != "" {
+			seen[strings.ToLower(email)] = true
+			recipients = append(recipients, email)
+		}
+	}
+
+	for _, email := range filterVerifiedEmails(user.BalanceNotifyExtraEmails) {
+		lower := strings.ToLower(email)
+		if seen[lower] {
+			continue
+		}
+		seen[lower] = true
+		recipients = append(recipients, email)
+	}
+
+	return recipients
 }
 
 // sendEmails sends an email to all recipients with shared timeout and error logging.
