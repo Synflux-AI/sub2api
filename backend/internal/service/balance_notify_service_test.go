@@ -278,3 +278,44 @@ func TestCollectBalanceNotifyRecipients_TrimsWhitespace(t *testing.T) {
 	got := s.collectBalanceNotifyRecipients(u)
 	require.Equal(t, []string{"trimmed@example.com"}, got)
 }
+
+// 邮箱注册用户即使没有配置额外邮箱，也应收到登录邮箱通知（修复的核心场景）。
+func TestCollectBalanceNotifyRecipients_EmailSignupIncludesLoginEmail(t *testing.T) {
+	s := &BalanceNotifyService{}
+	u := &User{
+		Email:                    "login@example.com",
+		SignupSource:             "email",
+		BalanceNotifyExtraEmails: nil,
+	}
+	got := s.collectBalanceNotifyRecipients(u)
+	require.Equal(t, []string{"login@example.com"}, got)
+}
+
+// 登录邮箱在前，额外验证邮箱去重后追加；与登录邮箱大小写重复的额外邮箱被去掉。
+func TestCollectBalanceNotifyRecipients_EmailSignupDedupesLoginAndExtra(t *testing.T) {
+	s := &BalanceNotifyService{}
+	u := &User{
+		Email:        "Login@Example.com",
+		SignupSource: "email",
+		BalanceNotifyExtraEmails: []NotifyEmailEntry{
+			{Email: "login@example.com", Verified: true}, // 与登录邮箱重复（大小写不同）
+			{Email: "extra@example.com", Verified: true},
+		},
+	}
+	got := s.collectBalanceNotifyRecipients(u)
+	require.Equal(t, []string{"Login@Example.com", "extra@example.com"}, got)
+}
+
+// 非邮箱注册（如 OAuth）用户的登录邮箱可能是合成地址，不默认加入；只发已验证的额外邮箱。
+func TestCollectBalanceNotifyRecipients_NonEmailSignupExcludesLoginEmail(t *testing.T) {
+	s := &BalanceNotifyService{}
+	u := &User{
+		Email:        "synthetic@oauth.local",
+		SignupSource: "oidc",
+		BalanceNotifyExtraEmails: []NotifyEmailEntry{
+			{Email: "verified-extra@example.com", Verified: true},
+		},
+	}
+	got := s.collectBalanceNotifyRecipients(u)
+	require.Equal(t, []string{"verified-extra@example.com"}, got)
+}
