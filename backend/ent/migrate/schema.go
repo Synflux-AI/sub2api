@@ -920,7 +920,7 @@ var (
 			{
 				Name:    "group_sort_order",
 				Unique:  false,
-				Columns: []*schema.Column{GroupsColumns[42]},
+				Columns: []*schema.Column{GroupsColumns[43]},
 			},
 			{
 				Name:    "idx_groups_duplicate_operation_id_active",
