@@ -1068,21 +1068,24 @@ func TestOpenAIGatewayService_APIKeyPassthrough_RebuildsUpstreamErrors(t *testin
 			wantStatus:   http.StatusNotImplemented,
 			wantMessage:  "Upstream service temporarily unavailable",
 		},
+		// 400/422 对 API-key 账号已改走多账号 failover（见
+		// OpenAIPassthrough_RetryableStatusesTriggerFailover），此处改用 404
+		// 等非 failover 4xx 状态码，继续覆盖净化重建路径。
 		{
 			name:         "unstructured 4xx",
-			statusCode:   http.StatusBadRequest,
+			statusCode:   http.StatusNotFound,
 			contentType:  "text/plain",
 			responseBody: `proxy secret-upstream.example rejected the request`,
-			wantStatus:   http.StatusBadRequest,
+			wantStatus:   http.StatusNotFound,
 			wantMessage:  "Upstream request failed",
 		},
 		{
 			name:         "malicious valid json 4xx",
-			statusCode:   http.StatusBadRequest,
+			statusCode:   http.StatusNotFound,
 			contentType:  "application/json",
 			responseBody: `{"error":{"message":"secret-upstream.example invalid parameter","type":"invalid_request_error","code":"upstream_secret_code","param":"private_field","internal_token":"sk-upstream-secret"},"rate_limit":{"remaining":0,"reset":"internal-window"},"debug":{"admin":"root"},"redirect":"https://secret-upstream.example/admin"}`,
 			retryAfter:   "not-a-valid-delay",
-			wantStatus:   http.StatusBadRequest,
+			wantStatus:   http.StatusNotFound,
 			wantMessage:  "Upstream request failed",
 		},
 	}
@@ -1207,7 +1210,8 @@ func TestOpenAIGatewayService_APIKeyPassthrough_CompactErrorBeforeKeepaliveIsSin
 	svc := &OpenAIGatewayService{
 		cfg: &config.Config{Gateway: config.GatewayConfig{ForceCodexCLI: false}},
 		httpUpstream: &httpUpstreamRecorder{resp: &http.Response{
-			StatusCode: http.StatusBadRequest,
+			// 400/422 对 API-key 账号已改走 failover，改用 404 覆盖净化写回路径。
+			StatusCode: http.StatusNotFound,
 			Header:     http.Header{"Content-Type": []string{"application/json"}},
 			Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"secret-upstream.example invalid request"}}`)),
 		}},
@@ -1221,7 +1225,7 @@ func TestOpenAIGatewayService_APIKeyPassthrough_CompactErrorBeforeKeepaliveIsSin
 	_, err := svc.Forward(context.Background(), c, account, []byte(`{"model":"gpt-5.2","input":"hello"}`))
 
 	require.Error(t, err)
-	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Equal(t, http.StatusNotFound, rec.Code)
 	require.True(t, gjson.Valid(rec.Body.String()))
 	require.Equal(t, "upstream_error", gjson.Get(rec.Body.String(), "error.type").String())
 	require.NotContains(t, rec.Body.String(), "event:")
@@ -1242,7 +1246,8 @@ func TestOpenAIGatewayService_APIKeyPassthrough_CompactErrorAfterKeepaliveIsFail
 	svc := &OpenAIGatewayService{
 		cfg: &config.Config{Gateway: config.GatewayConfig{ForceCodexCLI: false}},
 		httpUpstream: &httpUpstreamRecorder{resp: &http.Response{
-			StatusCode: http.StatusBadRequest,
+			// 400/422 对 API-key 账号已改走 failover，改用 404 覆盖净化写回路径。
+			StatusCode: http.StatusNotFound,
 			Header:     http.Header{"Content-Type": []string{"application/json"}},
 			Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"secret-upstream.example invalid request"}}`)),
 		}},
@@ -1385,6 +1390,39 @@ func TestOpenAIGatewayService_OpenAIPassthrough_RetryableStatusesTriggerFailover
 				require.Empty(t, repo.rateLimitCalls)
 				require.Len(t, repo.overloadCalls, 1)
 				require.WithinDuration(t, start.Add(10*time.Minute), repo.overloadCalls[0], 5*time.Second)
+			},
+		},
+		{
+			name:           "apikey_400_bad_request",
+			accountType:    AccountTypeAPIKey,
+			statusCode:     http.StatusBadRequest,
+			body:           `{"error":{"message":"invalid signature in request","type":"invalid_request_error"}}`,
+			expectFailover: true,
+			assertRepo: func(t *testing.T, repo *openAIPassthroughFailoverRepo, _ time.Time) {
+				require.Empty(t, repo.rateLimitCalls)
+				require.Empty(t, repo.overloadCalls)
+			},
+		},
+		{
+			name:           "apikey_422_unprocessable",
+			accountType:    AccountTypeAPIKey,
+			statusCode:     http.StatusUnprocessableEntity,
+			body:           `{"error":{"message":"unprocessable entity","type":"invalid_request_error"}}`,
+			expectFailover: true,
+			assertRepo: func(t *testing.T, repo *openAIPassthroughFailoverRepo, _ time.Time) {
+				require.Empty(t, repo.rateLimitCalls)
+				require.Empty(t, repo.overloadCalls)
+			},
+		},
+		{
+			name:           "oauth_400_bad_request",
+			accountType:    AccountTypeOAuth,
+			statusCode:     http.StatusBadRequest,
+			body:           `{"error":{"message":"invalid request","type":"invalid_request_error"}}`,
+			expectFailover: false,
+			assertRepo: func(t *testing.T, repo *openAIPassthroughFailoverRepo, _ time.Time) {
+				require.Empty(t, repo.rateLimitCalls)
+				require.Empty(t, repo.overloadCalls)
 			},
 		},
 	}
