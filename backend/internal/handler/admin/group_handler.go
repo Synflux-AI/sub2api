@@ -540,11 +540,12 @@ func (h *GroupHandler) GetUsageSummary(c *gin.Context) {
 	now := timezone.NowInUserLocation(userTZ)
 	todayStart := timezone.StartOfDayInUserLocation(now, userTZ)
 
-	results, err := h.dashboardService.GetGroupUsageSummary(c.Request.Context(), todayStart)
+	results, hit, err := h.getGroupUsageSummaryCached(c.Request.Context(), todayStart)
 	if err != nil {
 		response.Error(c, 500, "Failed to get group usage summary")
 		return
 	}
+	c.Header("X-Snapshot-Cache", cacheStatusValue(hit))
 
 	response.Success(c, results)
 }
