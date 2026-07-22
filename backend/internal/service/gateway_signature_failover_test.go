@@ -26,6 +26,9 @@ var signatureErrorBody = []byte(`{"error":{"message":"messages.3.content.0: inva
 // nonSignatureErrorBody 一个与签名无关的 400 错误体。
 var nonSignatureErrorBody = []byte(`{"error":{"message":"max_tokens: must be greater than 0","type":"invalid_request_error"}}`)
 
+// deserializeErrorBody 复刻中转上游对请求体反序列化失败时返回的 422 错误体。
+var deserializeErrorBody = []byte(`{"error":{"message":"Failed to deserialize request body at ` + "`messages[29].content`" + `: data did not match any variant of untagged enum MessageContent (request id: 202607221023229216699078268d9d6Kxd185Ke)","type":"upstream_error"},"type":"error"}`)
+
 const strictModel = "claude-sonnet-4-5"
 
 func TestShouldFailoverSignatureError(t *testing.T) {
@@ -100,6 +103,26 @@ func TestShouldFailoverSignatureError(t *testing.T) {
 			model:    "deepseek-chat",
 			want:     false,
 		},
+		{
+			name:    "deserialize error matched by custom pattern -> failover",
+			account: apiKeyAccount,
+			settings: &RectifierSettings{
+				Enabled:                        true,
+				APIKeySignatureFailoverEnabled: true,
+				APIKeySignaturePatterns:        []string{"Failed to deserialize request body"},
+			},
+			body:  deserializeErrorBody,
+			model: strictModel,
+			want:  true,
+		},
+		{
+			name:     "deserialize error without matching pattern -> no failover",
+			account:  apiKeyAccount,
+			settings: &RectifierSettings{Enabled: true, APIKeySignatureFailoverEnabled: true},
+			body:     deserializeErrorBody,
+			model:    strictModel,
+			want:     false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -108,5 +131,15 @@ func TestShouldFailoverSignatureError(t *testing.T) {
 			got := svc.shouldFailoverSignatureError(context.Background(), tt.account, tt.body, tt.model)
 			require.Equal(t, tt.want, got)
 		})
+	}
+}
+
+// TestIsSignatureFailoverStatus 固化「签名/关键词切换账号」判定的状态码范围：
+// 400（签名错误常规状态码）与 422（中转上游反序列化失败）参与判定，其余不参与。
+func TestIsSignatureFailoverStatus(t *testing.T) {
+	require.True(t, isSignatureFailoverStatus(400))
+	require.True(t, isSignatureFailoverStatus(422))
+	for _, status := range []int{401, 403, 404, 409, 413, 429, 500, 529} {
+		require.False(t, isSignatureFailoverStatus(status), "status %d", status)
 	}
 }
