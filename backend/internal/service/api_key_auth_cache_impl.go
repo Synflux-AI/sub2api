@@ -14,10 +14,11 @@ import (
 	"github.com/dgraph-io/ristretto"
 )
 
-// v16: 双方再次撞号——本仓库 v15(合并 v14 双方字段集)与上游 v15(group web
-// search per-call pricing)字段集不同,合并后快照与任一方 v15 均不兼容,升 16 强制失效。
+// v17: 双方再次撞号——本仓库 v16(group web search per-call pricing)与上游 v16
+// (group reasoning effort ceiling + mappings)字段集不同,合并后快照与任一方 v16
+// 均不兼容,升 17 强制失效。
 // 注:本仓库与上游各自独立演进该版本号,每次 sync 合并若双方都动过快照结构,需继续递增。
-const apiKeyAuthSnapshotVersion = 16
+const apiKeyAuthSnapshotVersion = 17
 
 type apiKeyAuthCacheConfig struct {
 	l1Size        int
@@ -421,6 +422,8 @@ func (s *APIKeyService) snapshotFromAPIKey(ctx context.Context, apiKey *APIKey) 
 			MessagesDispatchModelConfig:     apiKey.Group.MessagesDispatchModelConfig,
 			ModelsListConfig:                apiKey.Group.ModelsListConfig,
 			RPMLimit:                        apiKey.Group.RPMLimit,
+			MaxReasoningEffort:              apiKey.Group.MaxReasoningEffort,
+			ReasoningEffortMappings:         apiKey.Group.ReasoningEffortMappings,
 			PeakRateEnabled:                 apiKey.Group.PeakRateEnabled,
 			PeakStart:                       apiKey.Group.PeakStart,
 			PeakEnd:                         apiKey.Group.PeakEnd,
@@ -510,6 +513,8 @@ func (s *APIKeyService) snapshotToAPIKey(key string, snapshot *APIKeyAuthSnapsho
 			MessagesDispatchModelConfig:     snapshot.Group.MessagesDispatchModelConfig,
 			ModelsListConfig:                snapshot.Group.ModelsListConfig,
 			RPMLimit:                        snapshot.Group.RPMLimit,
+			MaxReasoningEffort:              snapshot.Group.MaxReasoningEffort,
+			ReasoningEffortMappings:         snapshot.Group.ReasoningEffortMappings,
 			PeakRateEnabled:                 snapshot.Group.PeakRateEnabled,
 			PeakStart:                       snapshot.Group.PeakStart,
 			PeakEnd:                         snapshot.Group.PeakEnd,
