@@ -16,6 +16,7 @@ type AnnouncementService struct {
 	readRepo         AnnouncementReadRepository
 	userRepo         UserRepository
 	userSubRepo      UserSubscriptionRepository
+	audienceRepo     AnnouncementAudienceRepository
 }
 
 func NewAnnouncementService(
@@ -23,12 +24,14 @@ func NewAnnouncementService(
 	readRepo AnnouncementReadRepository,
 	userRepo UserRepository,
 	userSubRepo UserSubscriptionRepository,
+	audienceRepo AnnouncementAudienceRepository,
 ) *AnnouncementService {
 	return &AnnouncementService{
 		announcementRepo: announcementRepo,
 		readRepo:         readRepo,
 		userRepo:         userRepo,
 		userSubRepo:      userSubRepo,
+		audienceRepo:     audienceRepo,
 	}
 }
 
@@ -354,18 +357,17 @@ func (s *AnnouncementService) ListUserReadStatus(
 	if err != nil {
 		return nil, nil, fmt.Errorf("get read map: %w", err)
 	}
+	activeGroupIDsByUser := make(ActiveGroupIDsByUser)
+	if len(userIDs) > 0 {
+		activeGroupIDsByUser, err = s.audienceRepo.GetActiveGroupIDsByUserIDs(ctx, userIDs)
+		if err != nil {
+			return nil, nil, fmt.Errorf("get active subscription groups: %w", err)
+		}
+	}
 
 	out := make([]AnnouncementUserReadStatus, 0, len(users))
 	for i := range users {
 		u := users[i]
-		subs, err := s.userSubRepo.ListActiveByUserID(ctx, u.ID)
-		if err != nil {
-			return nil, nil, fmt.Errorf("list active subscriptions: %w", err)
-		}
-		activeGroupIDs := make(map[int64]struct{}, len(subs))
-		for j := range subs {
-			activeGroupIDs[subs[j].GroupID] = struct{}{}
-		}
 
 		readAt, ok := readMap[u.ID]
 		var ptr *time.Time
@@ -379,7 +381,7 @@ func (s *AnnouncementService) ListUserReadStatus(
 			Email:    u.Email,
 			Username: u.Username,
 			Balance:  u.Balance,
-			Eligible: domain.AnnouncementTargeting(ann.Targeting).Matches(u.Balance, activeGroupIDs),
+			Eligible: domain.AnnouncementTargeting(ann.Targeting).Matches(u.Balance, activeGroupIDsByUser[u.ID]),
 			ReadAt:   ptr,
 		})
 	}

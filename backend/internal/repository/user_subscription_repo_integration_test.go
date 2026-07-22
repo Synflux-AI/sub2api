@@ -279,6 +279,27 @@ func (s *UserSubscriptionRepoSuite) TestListActiveByUserID() {
 	s.Require().Equal(service.SubscriptionStatusActive, subs[0].Status)
 }
 
+func (s *UserSubscriptionRepoSuite) TestGetActiveGroupIDsByUserIDs() {
+	user1 := s.mustCreateUser("active-groups-1@test.com", service.RoleUser)
+	user2 := s.mustCreateUser("active-groups-2@test.com", service.RoleUser)
+	group1 := s.mustCreateGroup("g-active-batch-1")
+	group2 := s.mustCreateGroup("g-active-batch-2")
+	group3 := s.mustCreateGroup("g-expired-batch")
+
+	s.mustCreateSubscription(user1.ID, group1.ID, nil)
+	s.mustCreateSubscription(user2.ID, group2.ID, nil)
+	s.mustCreateSubscription(user1.ID, group3.ID, func(c *dbent.UserSubscriptionCreate) {
+		c.SetStatus(service.SubscriptionStatusExpired)
+		c.SetExpiresAt(time.Now().Add(-24 * time.Hour))
+	})
+
+	groupsByUser, err := s.repo.GetActiveGroupIDsByUserIDs(s.ctx, []int64{user1.ID, user2.ID})
+
+	s.Require().NoError(err)
+	s.Require().Equal(map[int64]struct{}{group1.ID: {}}, groupsByUser[user1.ID])
+	s.Require().Equal(map[int64]struct{}{group2.ID: {}}, groupsByUser[user2.ID])
+}
+
 // --- ListByGroupID ---
 
 func (s *UserSubscriptionRepoSuite) TestListByGroupID() {

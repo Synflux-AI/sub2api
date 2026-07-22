@@ -22,6 +22,10 @@ func NewUserSubscriptionRepository(client *dbent.Client) service.UserSubscriptio
 	return &userSubscriptionRepository{client: client}
 }
 
+func NewAnnouncementAudienceRepository(client *dbent.Client) service.AnnouncementAudienceRepository {
+	return &userSubscriptionRepository{client: client}
+}
+
 func (r *userSubscriptionRepository) Create(ctx context.Context, sub *service.UserSubscription) error {
 	if sub == nil {
 		return service.ErrSubscriptionNilInput
@@ -198,6 +202,40 @@ func (r *userSubscriptionRepository) ListActiveByUserID(ctx context.Context, use
 		return nil, err
 	}
 	return userSubscriptionEntitiesToService(subs), nil
+}
+
+func (r *userSubscriptionRepository) GetActiveGroupIDsByUserIDs(ctx context.Context, userIDs []int64) (service.ActiveGroupIDsByUser, error) {
+	result := make(service.ActiveGroupIDsByUser)
+	if len(userIDs) == 0 {
+		return result, nil
+	}
+
+	var rows []struct {
+		UserID  int64 `json:"user_id"`
+		GroupID int64 `json:"group_id"`
+	}
+	client := clientFromContext(ctx, r.client)
+	err := client.UserSubscription.Query().
+		Where(
+			usersubscription.UserIDIn(userIDs...),
+			usersubscription.StatusEQ(service.SubscriptionStatusActive),
+			usersubscription.ExpiresAtGT(time.Now()),
+		).
+		Select(usersubscription.FieldUserID, usersubscription.FieldGroupID).
+		Scan(ctx, &rows)
+	if err != nil {
+		return nil, err
+	}
+
+	for i := range rows {
+		groupIDs := result[rows[i].UserID]
+		if groupIDs == nil {
+			groupIDs = make(map[int64]struct{})
+			result[rows[i].UserID] = groupIDs
+		}
+		groupIDs[rows[i].GroupID] = struct{}{}
+	}
+	return result, nil
 }
 
 func (r *userSubscriptionRepository) ListByGroupID(ctx context.Context, groupID int64, params pagination.PaginationParams) ([]service.UserSubscription, *pagination.PaginationResult, error) {

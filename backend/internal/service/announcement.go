@@ -83,3 +83,9 @@ type AnnouncementReadRepository interface {
 	GetReadMapByUsers(ctx context.Context, announcementID int64, userIDs []int64) (map[int64]time.Time, error)
 	CountByAnnouncementID(ctx context.Context, announcementID int64) (int64, error)
 }
+
+type ActiveGroupIDsByUser map[int64]map[int64]struct{}
+
+type AnnouncementAudienceRepository interface {
+	GetActiveGroupIDsByUserIDs(ctx context.Context, userIDs []int64) (ActiveGroupIDsByUser, error)
+}
