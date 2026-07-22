@@ -53,7 +53,9 @@ func (c *snapshotCache) Get(key string) (snapshotCacheEntry, bool) {
 	}
 	if now.After(entry.ExpiresAt) {
 		c.mu.Lock()
-		delete(c.items, key)
+		if current, exists := c.items[key]; exists && now.After(current.ExpiresAt) {
+			delete(c.items, key)
+		}
 		c.mu.Unlock()
 		return snapshotCacheEntry{}, false
 	}
@@ -64,15 +66,23 @@ func (c *snapshotCache) Set(key string, payload any) snapshotCacheEntry {
 	if c == nil {
 		return snapshotCacheEntry{}
 	}
+	now := time.Now()
 	entry := snapshotCacheEntry{
 		ETag:      buildETagFromAny(payload),
 		Payload:   payload,
-		ExpiresAt: time.Now().Add(c.ttl),
+		ExpiresAt: now.Add(c.ttl),
 	}
 	if key == "" {
 		return entry
 	}
 	c.mu.Lock()
+	// A key may never be read again after it expires, so prune all stale
+	// entries on writes instead of relying only on Get to remove them.
+	for existingKey, existing := range c.items {
+		if now.After(existing.ExpiresAt) {
+			delete(c.items, existingKey)
+		}
+	}
 	c.items[key] = entry
 	c.mu.Unlock()
 	return entry

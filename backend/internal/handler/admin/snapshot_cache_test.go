@@ -33,6 +33,19 @@ func TestSnapshotCache_Expiration(t *testing.T) {
 	require.False(t, ok, "expired entry should not be returned")
 }
 
+func TestSnapshotCache_SetPrunesExpiredEntries(t *testing.T) {
+	c := newSnapshotCache(5 * time.Second)
+	c.items["expired"] = snapshotCacheEntry{
+		Payload:   "old-value",
+		ExpiresAt: time.Now().Add(-time.Second),
+	}
+
+	c.Set("current", "new-value")
+
+	require.NotContains(t, c.items, "expired")
+	require.Contains(t, c.items, "current")
+}
+
 func TestSnapshotCache_GetEmptyKey(t *testing.T) {
 	c := newSnapshotCache(5 * time.Second)
 	_, ok := c.Get("")

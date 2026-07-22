@@ -776,8 +776,9 @@ func (r *usageLogRepository) GetUserBreakdownStats(ctx context.Context, startTim
 // GetAllGroupUsageSummary returns today's and cumulative actual_cost for every group.
 // todayStart is the start-of-day in the caller's timezone (UTC-based).
 // TODO(perf): This query scans ALL usage_logs rows for total_cost aggregation.
-// When usage_logs exceeds ~1M rows, consider adding a short-lived cache (30s)
-// or a materialized view / pre-aggregation table for cumulative costs.
+// A short-lived handler cache protects repeated dashboard refreshes. When
+// usage_logs exceeds ~1M rows, consider a materialized view or pre-aggregation
+// table for cumulative costs.
 func (r *usageLogRepository) GetAllGroupUsageSummary(ctx context.Context, todayStart time.Time) ([]usagestats.GroupUsageSummary, error) {
 	query := `
 		SELECT
