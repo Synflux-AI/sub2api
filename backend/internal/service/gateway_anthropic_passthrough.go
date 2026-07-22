@@ -258,9 +258,9 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 	}
 
 	// 签名错误切换账号（直传路径）：直传禁止去签名重试（会改写请求体），
-	// 但切换账号不改写 body，故签名相关 400 直接触发 failover 换号。
+	// 但切换账号不改写 body，故签名相关 400/422 直接触发 failover 换号。
 	// 复用 shouldFailoverSignatureError，受同一个「API Key 签名错误切换账号」开关控制。
-	if resp.StatusCode == 400 {
+	if isSignatureFailoverStatus(resp.StatusCode) {
 		respBody, readErr := s.readUpstreamErrorBody(resp)
 		if readErr == nil {
 			_ = resp.Body.Close()

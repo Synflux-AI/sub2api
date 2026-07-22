@@ -126,6 +126,13 @@ func (s *GatewayService) shouldRectifySignatureError(ctx context.Context, accoun
 	return s.isThinkingBlockSignatureError(respBody) && s.settingService.IsSignatureRectifierEnabled(ctx)
 }
 
+// isSignatureFailoverStatus 判断状态码是否在「签名/关键词错误切换账号」的适用范围内。
+// 400 是签名错误的常规状态码；422 是部分 Claude 中转上游在请求体反序列化失败等
+// 场景下返回的状态码，同样允许经内置模式/自定义关键词匹配后切换账号。
+func isSignatureFailoverStatus(statusCode int) bool {
+	return statusCode == http.StatusBadRequest || statusCode == http.StatusUnprocessableEntity
+}
+
 // shouldFailoverSignatureError 判断签名错误是否应切换账号（仅 API Key）。
 // 与 shouldRectifySignatureError 配合实现「先重试再切换」：同账号去签名重试仍是签名 400
 // 时，由本方法判定是否把错误包装成 UpstreamFailoverError 触发 failover 到其他账号。

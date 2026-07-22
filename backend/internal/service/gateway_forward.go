@@ -724,7 +724,9 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 	if resp.StatusCode >= 400 {
 		// 签名错误切换账号：同账号去签名重试仍是签名 400 时（重试发生在上面的 for 循环内），
 		// 若开启「API Key 签名错误切换账号」，包装成 UpstreamFailoverError 触发 failover 换号。
-		if resp.StatusCode == 400 {
+		// 422 同样参与判定：部分中转上游对请求体反序列化失败返回 422（无对应的去签名
+		// 重试，命中内置模式/自定义关键词后直接切号）。
+		if isSignatureFailoverStatus(resp.StatusCode) {
 			respBody, readErr := s.readUpstreamErrorBody(resp)
 			if readErr == nil {
 				_ = resp.Body.Close()
