@@ -64,6 +64,37 @@ func TestBuildUpstreamRequestBedrock_ToggleOffKeepsSignedHeaders(t *testing.T) {
 	require.NotContains(t, strings.ToLower(req.Header.Get("Authorization")), strings.ToLower(traceid.Header))
 }
 
+// TestApplyCustomHeaders_CannotOverwriteTraceHeader 锁住 x-trace-id 进入
+// protectedCustomHeaderNames 这一决定：自定义 header 不得覆盖已注入的链路 ID。
+// 在 Bedrock SigV4 路径上这不只是语义问题——ApplyCustomHeaders 在 SignRequest 之后执行，
+// 覆写一个已签名的 header 会让 wire 值与 SignedHeaders 不一致，AWS 返回 403。
+func TestApplyCustomHeaders_CannotOverwriteTraceHeader(t *testing.T) {
+	const traceValue = "trace-protected-1"
+	ctx := context.WithValue(context.Background(), ctxkey.TraceID, traceValue)
+	signer := NewBedrockSigner("AKIAEXAMPLE", "secretexample", "", "us-east-1")
+	svc := &GatewayService{}
+
+	account := bedrockTraceAccount(true)
+	account.CustomHeadersEnabled = true
+	account.CustomHeaders = map[string]string{
+		"X-Trace-Id":   "custom-override-attempt",
+		"x-trace-id":   "custom-override-lowercase",
+		"X-Extra-Head": "passes-through",
+	}
+
+	req, err := svc.buildUpstreamRequestBedrock(ctx, []byte(`{"messages":[]}`), "anthropic.claude-3-5-sonnet-20241022-v2:0", "us-east-1", false, signer, account)
+	require.NoError(t, err)
+
+	// 模拟真实调用序列：executeBedrockUpstream 在签名之后调用 ApplyCustomHeaders
+	account.ApplyCustomHeaders(req)
+
+	require.Equal(t, traceValue, req.Header.Get(traceid.Header),
+		"自定义 header 不得覆盖已注入（且已签名）的 X-Trace-Id")
+	require.Len(t, req.Header.Values(traceid.Header), 1)
+	require.Equal(t, "passes-through", req.Header.Get("X-Extra-Head"),
+		"非受保护的自定义 header 仍应生效")
+}
+
 // TestBuildUpstreamRequestBedrockAPIKey_TraceHeader 覆盖 Bearer Token 路径（无签名约束）。
 func TestBuildUpstreamRequestBedrockAPIKey_TraceHeader(t *testing.T) {
 	const traceValue = "trace-bedrock-apikey"
