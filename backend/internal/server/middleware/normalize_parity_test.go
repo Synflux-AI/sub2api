@@ -39,8 +39,8 @@ func TestNormalizeCorrelationIDMatchesTraceidNormalize(t *testing.T) {
 		{name: "surrounding CRLF trimmed to valid", input: "\r\ntrace-abc\r\n"},
 		{name: "surrounding DEL not whitespace", input: "\x7ftrace-abc\x7f"},
 		// C1 / Unicode 控制字符：两侧都放行（规则只覆盖 ASCII 控制字符）
-		{name: "C1 control U+0085", input: "traceid"},
-		{name: "zero width space U+200B", input: "trace​id"},
+		{name: "C1 control U+0085", input: "trace\u0085id"},
+		{name: "zero width space U+200B", input: "trace\u200bid"},
 	}
 
 	for _, tc := range cases {

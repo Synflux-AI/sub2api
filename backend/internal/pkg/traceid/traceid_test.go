@@ -103,14 +103,14 @@ func TestNormalize(t *testing.T) {
 		{
 			// 仅覆盖 ASCII 控制字符：C1 是多字节序列，放行
 			name:   "C1 control U+0085 accepted",
-			input:  "traceid",
-			want:   "traceid",
+			input:  "trace\u0085id",
+			want:   "trace\u0085id",
 			wantOK: true,
 		},
 		{
 			name:   "zero width space U+200B accepted",
-			input:  "trace​id",
-			want:   "trace​id",
+			input:  "trace\u200bid",
+			want:   "trace\u200bid",
 			wantOK: true,
 		},
 	}
