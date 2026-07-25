@@ -1045,6 +1045,8 @@ export interface Account {
     antigravity_credits_overages?: Record<string, { activated_at: string; active_until: string }>
     upstream_billing_probe_enabled?: boolean
     upstream_billing_probe?: UpstreamBillingProbeSnapshot
+    // 出站注入 X-Trace-Id（账号级开关，对所有平台/类型生效，默认关闭）
+    trace_id_passthrough?: boolean
   } & Record<string, unknown>)
   // Advanced mode: custom outbound HTTP headers merged into upstream requests.
   // Disabled by default; UI surfaces these via a collapsible advanced panel.
