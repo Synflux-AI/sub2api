@@ -9,8 +9,12 @@ import (
 )
 
 // injectTraceHeader 在账号开启 trace_id_passthrough 时，为出站上游请求注入 X-Trace-Id。
-// 在客户端 header 白名单拷贝之后调用，确保覆盖客户端可能自带的同名头；
-// 放在 ApplyHeaderOverrides / ApplyCustomHeaders 之前，使管理员的显式覆写仍能胜出。
+// 在客户端 header 白名单拷贝之后调用，确保覆盖客户端可能自带的同名头。
+// 落点位于 ApplyHeaderOverrides / ApplyCustomHeaders 之前，但这不代表管理员覆写能胜出：
+// x-trace-id 已在 headerOverrideBlockedNames（前后端两侧）中，覆写根本无法保存。
+// 原因是 header 覆写是账号级静态值，若允许覆写就会把该账号的所有请求钉死在同一个
+// trace id 上，链路关联彻底失效——与 session_id 被拉黑的理由一致。
+// 因此这里注入的值就是最终出站值，调整落点顺序不会改变行为。
 //
 // ctx 应传承载入站请求的原始 context（由 middleware.RequestLogger 写入 ctxkey.TraceID），
 // 而不是 detachUpstreamContext 派生出的 upstream context。

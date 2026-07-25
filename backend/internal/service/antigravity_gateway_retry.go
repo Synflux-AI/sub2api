@@ -198,6 +198,8 @@ func (s *AntigravityGatewayService) handleSmartRetry(p antigravityRetryLoopParam
 			}
 
 			// 智能重试：创建新请求
+			// 注意：每次重试都会重建 req，注入必须放在循环内，否则重试请求会丢链路 ID
+			// （首次请求带头、重试不带头是最坏情况：正是排查失败请求时最需要 trace 的时候）。
 			retryReq, err := antigravity.NewAPIRequestWithURL(p.ctx, baseURL, p.action, p.accessToken, p.body)
 			if err != nil {
 				logger.LegacyPrintf("service.antigravity_gateway", "%s status=smart_retry_request_build_failed error=%v", p.prefix, err)
@@ -212,6 +214,7 @@ func (s *AntigravityGatewayService) handleSmartRetry(p antigravityRetryLoopParam
 				}
 			}
 
+			injectTraceHeader(p.ctx, retryReq, p.account)
 			p.account.ApplyCustomHeaders(retryReq)
 			retryResp, retryErr := p.httpUpstream.Do(retryReq, p.proxyURL, p.account.ID, p.account.Concurrency)
 			if retryErr == nil && retryResp != nil && retryResp.StatusCode != http.StatusTooManyRequests && retryResp.StatusCode != http.StatusServiceUnavailable {
@@ -388,6 +391,8 @@ func (s *AntigravityGatewayService) handleSingleAccountRetryInPlace(
 			break
 		}
 
+		// 单账号原地重试同样每轮重建 req，注入必须放在循环内
+		injectTraceHeader(p.ctx, retryReq, p.account)
 		p.account.ApplyCustomHeaders(retryReq)
 		retryResp, retryErr := p.httpUpstream.Do(retryReq, p.proxyURL, p.account.ID, p.account.Concurrency)
 		if retryErr == nil && retryResp != nil && retryResp.StatusCode != http.StatusTooManyRequests && retryResp.StatusCode != http.StatusServiceUnavailable {
@@ -532,6 +537,8 @@ urlFallbackLoop:
 				p.c.Set(OpsUpstreamRequestBodyKey, string(p.body))
 			}
 
+			// URL fallback + attempt 双层循环，每个 attempt 都重建 req，注入必须在此处
+			injectTraceHeader(p.ctx, upstreamReq, p.account)
 			p.account.ApplyCustomHeaders(upstreamReq)
 			resp, err = p.httpUpstream.Do(upstreamReq, p.proxyURL, p.account.ID, p.account.Concurrency)
 			if err == nil && resp == nil {

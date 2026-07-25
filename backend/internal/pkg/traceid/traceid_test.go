@@ -54,6 +54,65 @@ func TestNormalize(t *testing.T) {
 			want:   "trace--id",
 			wantOK: true,
 		},
+		{
+			// 纵深防御：CRLF 在下游已被 zap 编码器与 header writer 挡住，
+			// 这里额外拒绝，避免落库/落日志的 trace_id 含控制字符。
+			name:   "embedded CRLF rejected",
+			input:  "trace\r\nfake-line",
+			want:   "trace\r\nfake-line",
+			wantOK: false,
+		},
+		{
+			name:   "embedded NUL rejected",
+			input:  "trace\x00id",
+			want:   "trace\x00id",
+			wantOK: false,
+		},
+		{
+			name:   "embedded vertical tab rejected",
+			input:  "trace\x0bid",
+			want:   "trace\x0bid",
+			wantOK: false,
+		},
+		{
+			name:   "embedded DEL rejected",
+			input:  "trace\x7fid",
+			want:   "trace\x7fid",
+			wantOK: false,
+		},
+		{
+			name:   "embedded tab rejected",
+			input:  "trace\tid",
+			want:   "trace\tid",
+			wantOK: false,
+		},
+		{
+			// 首尾的 \r\n 属空白，TrimSpace 先剔除，剩余部分合法
+			name:   "surrounding CRLF trimmed then accepted",
+			input:  "\r\ntrace-abc\r\n",
+			want:   "trace-abc",
+			wantOK: true,
+		},
+		{
+			// DEL 不属 unicode.IsSpace，TrimSpace 不会剔除
+			name:   "surrounding DEL rejected",
+			input:  "\x7ftrace-abc\x7f",
+			want:   "\x7ftrace-abc\x7f",
+			wantOK: false,
+		},
+		{
+			// 仅覆盖 ASCII 控制字符：C1 是多字节序列，放行
+			name:   "C1 control U+0085 accepted",
+			input:  "traceid",
+			want:   "traceid",
+			wantOK: true,
+		},
+		{
+			name:   "zero width space U+200B accepted",
+			input:  "trace​id",
+			want:   "trace​id",
+			wantOK: true,
+		},
 	}
 
 	for _, tc := range cases {
