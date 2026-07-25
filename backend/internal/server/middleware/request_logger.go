@@ -57,6 +57,8 @@ func RequestLogger() gin.HandlerFunc {
 		)
 
 		if rejectedTraceID {
+			// 注：若原始值整体为非法 UTF-8（如 "\xff\xfe"），normalizePersistentText 会将其
+			// 清空为 ""，此时诊断字段为空串——这是已知的信息损失，不影响 warn 是否触发。
 			requestLogger.Warn("inbound X-Trace-Id rejected",
 				zap.String("trace_id_rejected", normalizePersistentText(rawTraceID, maxPersistentRequestIDBytes)),
 			)
