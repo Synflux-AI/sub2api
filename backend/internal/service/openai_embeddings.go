@@ -78,6 +78,11 @@ func (s *OpenAIGatewayService) ForwardEmbeddings(
 			}
 		}
 	}
+
+	// 链路关联 ID（账号开启 trace_id_passthrough 时才注入）。
+	// 传入站原始 ctx 而非 upstreamCtx：trace 值来自入站请求链路。
+	injectTraceHeader(ctx, upstreamReq, account)
+
 	if customUA := account.GetOpenAIUserAgent(); customUA != "" {
 		upstreamReq.Header.Set("user-agent", customUA)
 	}
