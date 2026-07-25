@@ -272,6 +272,9 @@ func (s *OpenAIGatewayService) buildInputTokensUpstreamRequest(
 		}
 	}
 
+	// 全链路 trace：在客户端头透传之后注入，覆盖客户端可能自带的同名头
+	injectTraceHeader(ctx, req, account)
+
 	// 账号级请求头覆写（仅 openai api_key 账号启用时生效；OAuth 路径 no-op）
 	account.ApplyHeaderOverrides(req.Header)
 

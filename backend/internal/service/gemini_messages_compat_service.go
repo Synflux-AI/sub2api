@@ -784,6 +784,9 @@ func (s *GeminiMessagesCompatService) Forward(ctx context.Context, c *gin.Contex
 			c.Set(OpsUpstreamRequestBodyKey, string(body))
 		}
 
+		// 全链路 trace：buildReq 是各账号类型的唯一构造出口，每次重试都重新注入；
+		// 放在 ApplyCustomHeaders 之前，使管理员的显式覆写仍能胜出
+		injectTraceHeader(ctx, upstreamReq, account)
 		account.ApplyCustomHeaders(upstreamReq)
 		resp, err = s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
 		if err != nil {
@@ -1318,6 +1321,9 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 			c.Set(OpsUpstreamRequestBodyKey, string(body))
 		}
 
+		// 全链路 trace：buildReq 是各账号类型的唯一构造出口，每次重试都重新注入；
+		// 放在 ApplyCustomHeaders 之前，使管理员的显式覆写仍能胜出
+		injectTraceHeader(ctx, upstreamReq, account)
 		account.ApplyCustomHeaders(upstreamReq)
 		resp, err = s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
 		if err != nil {
