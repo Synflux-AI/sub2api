@@ -93,10 +93,10 @@ api.sub2api.com {
 			roll_keep_for 720h
 		}
 		format json
-		# log_append 需要 Caddy 2.9+；对于旧版本，可改用 JSON log 的 request>headers 字段
-		log_append trace_id {http.request.header.X-Trace-Id}
 		level INFO
 	}
+	# log_append 需要 Caddy 2.8+；对于旧版本，可改用 JSON log 的 request>headers 字段
+	log_append trace_id {http.request.header.X-Trace-Id}
 
 	# =========================================================================
 	# 错误处理
