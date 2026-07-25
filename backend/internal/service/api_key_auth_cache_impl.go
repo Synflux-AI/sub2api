@@ -17,8 +17,9 @@ import (
 // v17: 双方再次撞号——本仓库 v16(group web search per-call pricing)与上游 v16
 // (group reasoning effort ceiling + mappings)字段集不同,合并后快照与任一方 v16
 // 均不兼容,升 17 强制失效。
+// v18 补齐余额通知收件人判定依赖的 signup_source,避免邮箱注册用户被还原为空来源。
 // 注:本仓库与上游各自独立演进该版本号,每次 sync 合并若双方都动过快照结构,需继续递增。
-const apiKeyAuthSnapshotVersion = 17
+const apiKeyAuthSnapshotVersion = 18
 
 type apiKeyAuthCacheConfig struct {
 	l1Size        int
@@ -367,6 +368,7 @@ func (s *APIKeyService) snapshotFromAPIKey(ctx context.Context, apiKey *APIKey) 
 			AllowedGroups:              apiKey.User.AllowedGroups,
 			Email:                      apiKey.User.Email,
 			Username:                   apiKey.User.Username,
+			SignupSource:               apiKey.User.SignupSource,
 			BalanceNotifyEnabled:       apiKey.User.BalanceNotifyEnabled,
 			BalanceNotifyThresholdType: apiKey.User.BalanceNotifyThresholdType,
 			BalanceNotifyThreshold:     apiKey.User.BalanceNotifyThreshold,
@@ -465,6 +467,7 @@ func (s *APIKeyService) snapshotToAPIKey(key string, snapshot *APIKeyAuthSnapsho
 			AllowedGroups:              snapshot.User.AllowedGroups,
 			Email:                      snapshot.User.Email,
 			Username:                   snapshot.User.Username,
+			SignupSource:               snapshot.User.SignupSource,
 			BalanceNotifyEnabled:       snapshot.User.BalanceNotifyEnabled,
 			BalanceNotifyThresholdType: snapshot.User.BalanceNotifyThresholdType,
 			BalanceNotifyThreshold:     snapshot.User.BalanceNotifyThreshold,
