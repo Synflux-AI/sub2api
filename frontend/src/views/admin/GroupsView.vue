@@ -1447,6 +1447,39 @@
           </div>
         </div>
 
+        <!-- OpenAI Live 开关（仅 openai 平台） -->
+        <div
+          v-if="createForm.platform === 'openai'"
+          class="border-t border-gray-200 dark:border-dark-400 pt-4 mt-4"
+        >
+          <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">
+            {{ t("admin.groups.openaiLive.title") }}
+          </h4>
+          <div class="flex items-center justify-between">
+            <label class="text-sm text-gray-600 dark:text-gray-400">{{
+              t("admin.groups.openaiLive.allow")
+            }}</label>
+            <button
+              type="button"
+              @click="toggleLive('create')"
+              class="relative inline-flex h-6 w-12 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none"
+              :class="
+                createForm.allow_live
+                  ? 'bg-primary-500'
+                  : 'bg-gray-300 dark:bg-dark-600'
+              "
+            >
+              <span
+                class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out"
+                :class="createForm.allow_live ? 'translate-x-6' : 'translate-x-1'"
+              />
+            </button>
+          </div>
+          <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+            {{ t("admin.groups.openaiLive.hint") }}
+          </p>
+        </div>
+
         <!-- OpenAI Messages 调度配置（仅 openai 平台） -->
         <div
           v-if="createForm.platform === 'openai'"
@@ -3018,6 +3051,39 @@
           </div>
         </div>
 
+        <!-- OpenAI Live 开关（仅 openai 平台） -->
+        <div
+          v-if="editForm.platform === 'openai'"
+          class="border-t border-gray-200 dark:border-dark-400 pt-4 mt-4"
+        >
+          <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">
+            {{ t("admin.groups.openaiLive.title") }}
+          </h4>
+          <div class="flex items-center justify-between">
+            <label class="text-sm text-gray-600 dark:text-gray-400">{{
+              t("admin.groups.openaiLive.allow")
+            }}</label>
+            <button
+              type="button"
+              @click="toggleLive('edit')"
+              class="relative inline-flex h-6 w-12 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none"
+              :class="
+                editForm.allow_live
+                  ? 'bg-primary-500'
+                  : 'bg-gray-300 dark:bg-dark-600'
+              "
+            >
+              <span
+                class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out"
+                :class="editForm.allow_live ? 'translate-x-6' : 'translate-x-1'"
+              />
+            </button>
+          </div>
+          <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+            {{ t("admin.groups.openaiLive.hint") }}
+          </p>
+        </div>
+
         <!-- OpenAI Messages 调度配置（仅 openai 平台） -->
         <div
           v-if="editForm.platform === 'openai'"
@@ -3600,6 +3666,17 @@
       :danger="true"
       @confirm="confirmDelete"
       @cancel="showDeleteDialog = false"
+    />
+
+    <ConfirmDialog
+      :show="showUnsupportedLiveConfirm"
+      :title="t('admin.groups.openaiLive.unsupportedTitle')"
+      :message="t('admin.groups.openaiLive.unsupportedMessage')"
+      :confirm-text="t('admin.groups.openaiLive.enableAnyway')"
+      :cancel-text="t('common.cancel')"
+      :danger="true"
+      @confirm="confirmUnsupportedLive"
+      @cancel="cancelUnsupportedLive"
     />
 
     <!-- Sort Order Modal -->
@@ -4539,6 +4616,15 @@ let abortController: AbortController | null = null;
 const showCreateModal = ref(false);
 const showEditModal = ref(false);
 const showDeleteDialog = ref(false);
+const pendingLiveForm = ref<"create" | "edit" | null>(null);
+const showUnsupportedLiveConfirm = computed(
+  () => pendingLiveForm.value !== null,
+);
+const liveCapability = ref<{ supported: boolean; reason?: string } | null>(null);
+let liveCapabilityRequest: Promise<{
+  supported: boolean;
+  reason?: string;
+}> | null = null;
 const showSortModal = ref(false);
 const submitting = ref(false);
 const sortSubmitting = ref(false);
@@ -4643,6 +4729,7 @@ const createForm = reactive({
   codex_cli_only: false,
   // OpenAI Messages 调度配置（仅 openai 平台使用）
   allow_messages_dispatch: false,
+  allow_live: false,
   opus_mapped_model: createMessagesDispatchDefaults.opus_mapped_model,
   sonnet_mapped_model: createMessagesDispatchDefaults.sonnet_mapped_model,
   haiku_mapped_model: createMessagesDispatchDefaults.haiku_mapped_model,
@@ -4994,6 +5081,7 @@ const editForm = reactive({
   codex_cli_only: false,
   // OpenAI Messages 调度配置（仅 openai 平台使用）
   allow_messages_dispatch: false,
+  allow_live: false,
   default_mapped_model: '',
   opus_mapped_model: editMessagesDispatchDefaults.opus_mapped_model,
   sonnet_mapped_model: editMessagesDispatchDefaults.sonnet_mapped_model,
@@ -5190,6 +5278,44 @@ const deleteConfirmMessage = computed(() => {
   }
   return t("admin.groups.deleteConfirm", { name: deletingGroup.value.name });
 });
+
+const loadLiveCapability = async () => {
+  if (liveCapability.value) return liveCapability.value;
+  if (!liveCapabilityRequest) {
+    liveCapabilityRequest = adminAPI.groups
+      .getLiveCapability()
+      .catch(() => ({ supported: false }))
+      .finally(() => {
+        liveCapabilityRequest = null;
+      });
+  }
+  liveCapability.value = await liveCapabilityRequest;
+  return liveCapability.value ?? { supported: false };
+};
+
+const toggleLive = async (target: "create" | "edit") => {
+  const form = target === "create" ? createForm : editForm;
+  if (form.allow_live) {
+    form.allow_live = false;
+    return;
+  }
+  const capability = await loadLiveCapability();
+  if (capability.supported) {
+    form.allow_live = true;
+    return;
+  }
+  pendingLiveForm.value = target;
+};
+
+const confirmUnsupportedLive = () => {
+  if (pendingLiveForm.value === "create") createForm.allow_live = true;
+  if (pendingLiveForm.value === "edit") editForm.allow_live = true;
+  pendingLiveForm.value = null;
+};
+
+const cancelUnsupportedLive = () => {
+  pendingLiveForm.value = null;
+};
 
 const loadGroups = async () => {
   if (abortController) {
@@ -5398,6 +5524,7 @@ const closeCreateModal = () => {
   createForm.fallback_group_id = null;
   createForm.fallback_group_id_on_invalid_request = null;
   resetMessagesDispatchFormState(createForm);
+  createForm.allow_live = false;
   createForm.require_oauth_only = false;
   createForm.require_privacy_set = false;
   createForm.supported_model_scopes = ["claude", "gemini_text", "gemini_image"];
@@ -5586,6 +5713,7 @@ const handleEdit = async (group: AdminGroup) => {
   editForm.allow_messages_dispatch =
     group.allow_messages_dispatch ||
     messagesDispatchFormState.allow_messages_dispatch;
+  editForm.allow_live = group.allow_live ?? false;
   editForm.opus_mapped_model = messagesDispatchFormState.opus_mapped_model;
   editForm.sonnet_mapped_model = messagesDispatchFormState.sonnet_mapped_model;
   editForm.haiku_mapped_model = messagesDispatchFormState.haiku_mapped_model;
@@ -5642,6 +5770,7 @@ const closeEditModal = () => {
   editForm.video_price_1080p = null;
   editForm.web_search_price_per_call = null;
   resetMessagesDispatchFormState(editForm);
+  editForm.allow_live = false;
   resetModelsListState(editModelsListState);
 };
 
@@ -6046,6 +6175,7 @@ watch(
     }
     if (newVal !== "openai") {
       resetMessagesDispatchFormState(createForm);
+      createForm.allow_live = false;
     }
     createForm.max_reasoning_effort = normalizeReasoningEffortForPlatform(
       newVal,
@@ -6088,6 +6218,7 @@ watch(
     }
     if (newVal !== "openai") {
       resetMessagesDispatchFormState(editForm);
+      editForm.allow_live = false;
     }
     editForm.max_reasoning_effort = normalizeReasoningEffortForPlatform(
       newVal,
@@ -6132,6 +6263,7 @@ watch(
     }
     if (newVal !== 'openai') {
       editForm.allow_messages_dispatch = false
+      editForm.allow_live = false
       editForm.default_mapped_model = ''
     }
   }
@@ -6197,6 +6329,7 @@ const saveSortOrder = async () => {
 
 onMounted(() => {
   loadGroups();
+  void loadLiveCapability();
   loadModelsListCandidates("create", 0, createForm.platform);
   document.addEventListener("click", handleClickOutside);
 });
