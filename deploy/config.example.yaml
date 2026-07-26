@@ -46,6 +46,8 @@ server:
   # 停止接受新连接，因此调大不会延长对外不可用时间。流式响应可能持续十几分钟，滚动
   # 升级时调大可避免掐断；同时需让容器 stop_grace_period 比该值更长，否则进程会先被
   # SIGKILL。非正值回退为 5。
+  # 可用环境变量 SERVER_SHUTDOWN_TIMEOUT 覆盖本项（环境变量优先级高于本文件）。
+  # Override with env SERVER_SHUTDOWN_TIMEOUT (env takes precedence over this file).
   shutdown_timeout: 5
   # Trusted proxies used when security.trust_forwarded_ip_for_api_key_acl is false.
   # List only the exact proxy addresses that connect directly to Sub2API.
