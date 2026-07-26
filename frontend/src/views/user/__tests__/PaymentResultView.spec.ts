@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { flushPromises, mount } from '@vue/test-utils'
+import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
+
+// 每个用例结束后自动卸载 mount 出来的组件：本文件的用例会断言若干 spy「从未被调用」，
+// 而 PaymentResultView 挂载后会发起异步恢复流程。若上一个用例的组件残留未卸载，
+// 它的异步回调可能在下一个用例 beforeEach 重置 spy 之后才触发，导致计数由 0 变 1
+// （表现为 CI 上偶发失败、本地难复现）。
+enableAutoUnmount(afterEach)
 
 const routeState = vi.hoisted(() => ({
   query: {} as Record<string, unknown>,
