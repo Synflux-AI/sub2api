@@ -7,11 +7,13 @@ const {
   probeUpstreamBillingMock,
   importCodexSessionMock,
   createOpenAICodexPATMock,
+  refreshGrokTokenMock,
 } = vi.hoisted(() => ({
   createAccountMock: vi.fn(),
   probeUpstreamBillingMock: vi.fn(),
   importCodexSessionMock: vi.fn(),
   createOpenAICodexPATMock: vi.fn(),
+  refreshGrokTokenMock: vi.fn(),
 }))
 
 vi.mock('@/stores/app', () => ({
@@ -41,6 +43,9 @@ vi.mock('@/api/admin', () => ({
     },
     tlsFingerprintProfiles: {
       list: vi.fn().mockResolvedValue([]),
+    },
+    grok: {
+      refreshGrokToken: refreshGrokTokenMock,
     },
   },
 }))
@@ -75,11 +80,12 @@ const OAuthAuthorizationFlowStub = defineComponent({
     initialInputMethod: String,
   },
   data: () => ({ inputMethod: 'manual' }),
-  emits: ['import-codex-session', 'import-codex-pat'],
+  emits: ['import-codex-session', 'import-codex-pat', 'validate-refresh-token'],
   template: `
     <div>
       <button data-testid="import-codex-session" @click="$emit('import-codex-session', 'session-json')">session</button>
       <button data-testid="import-codex-pat" @click="$emit('import-codex-pat', 'pat-token')">pat</button>
+      <button data-testid="validate-refresh-token" @click="$emit('validate-refresh-token', 'grok-rt-1')">rt</button>
     </div>
   `,
 })
@@ -290,5 +296,104 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     await flushPromises()
 
     expect(createOpenAICodexPATMock.mock.calls[0]?.[0]?.extra?.openai_long_context_billing_enabled).toBe(false)
+  })
+})
+
+// 出站注入 X-Trace-Id：withTraceIdExtra 包裹了全部 6 处 create 调用出口，
+// 这里同时覆盖主提交路径与一条 OAuth 批量路径（grok RT），
+// 保证任何一处 wrapper 被删掉都会让测试变红。
+describe('CreateAccountModal X-Trace-Id passthrough toggle', () => {
+  const TRACE_ID_TOGGLE = '#create-account-trace-id-passthrough-toggle'
+
+  beforeEach(() => {
+    createAccountMock.mockReset().mockResolvedValue({ id: 7, platform: 'anthropic', type: 'apikey' })
+    probeUpstreamBillingMock.mockReset().mockResolvedValue({})
+    refreshGrokTokenMock.mockReset().mockResolvedValue({
+      access_token: 'grok-access',
+      refresh_token: 'grok-refresh',
+      token_type: 'Bearer',
+      email: 'grok@example.com',
+    })
+  })
+
+  it('defaults to off and exposes aria-pressed state', async () => {
+    const wrapper = mountModal()
+    const toggle = wrapper.get(TRACE_ID_TOGGLE)
+
+    expect(toggle.attributes('aria-pressed')).toBe('false')
+
+    await toggle.trigger('click')
+
+    expect(wrapper.get(TRACE_ID_TOGGLE).attributes('aria-pressed')).toBe('true')
+  })
+
+  it('sends extra.trace_id_passthrough=true through the main submit path when enabled', async () => {
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'admin.accounts.claudeConsole')
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('trace on')
+    await wrapper.get('form#create-account-form input[type="password"]').setValue('test-api-key')
+    await wrapper.get(TRACE_ID_TOGGLE).trigger('click')
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(createAccountMock).toHaveBeenCalledTimes(1)
+    expect(createAccountMock.mock.calls[0]?.[0]?.extra?.trace_id_passthrough).toBe(true)
+  })
+
+  it('never writes false through the main submit path when toggled on then back off', async () => {
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'admin.accounts.claudeConsole')
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('trace off')
+    await wrapper.get('form#create-account-form input[type="password"]').setValue('test-api-key')
+    // 开→关，确保走过 delete 分支而不是从未被设置过
+    await wrapper.get(TRACE_ID_TOGGLE).trigger('click')
+    await wrapper.get(TRACE_ID_TOGGLE).trigger('click')
+    expect(wrapper.get(TRACE_ID_TOGGLE).attributes('aria-pressed')).toBe('false')
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(createAccountMock).toHaveBeenCalledTimes(1)
+    const payload = createAccountMock.mock.calls[0]?.[0]
+    // 该路径本身不产生 extra，因此 extra 缺失是预期的；关键是不能出现 false。
+    // 非空过性由本 describe 的 ON 用例与 grok 批量 OFF 用例（extra 为真实对象）共同保证。
+    expect(payload?.name).toBe('trace off')
+    expect(payload?.extra?.trace_id_passthrough).toBeUndefined()
+    expect(JSON.stringify(payload ?? {})).not.toContain('trace_id_passthrough')
+  })
+
+  it('applies the toggle on the grok OAuth refresh-token batch path', async () => {
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'Grok')
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('grok batch')
+    await wrapper.get(TRACE_ID_TOGGLE).trigger('click')
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    await wrapper.get('[data-testid="validate-refresh-token"]').trigger('click')
+    await flushPromises()
+
+    expect(refreshGrokTokenMock).toHaveBeenCalledTimes(1)
+    expect(createAccountMock).toHaveBeenCalledTimes(1)
+    const payload = createAccountMock.mock.calls[0]?.[0]
+    expect(payload?.platform).toBe('grok')
+    expect(payload?.type).toBe('oauth')
+    expect(payload?.extra?.trace_id_passthrough).toBe(true)
+  })
+
+  it('leaves the key off the grok batch payload when the toggle is off', async () => {
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'Grok')
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('grok batch off')
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    await wrapper.get('[data-testid="validate-refresh-token"]').trigger('click')
+    await flushPromises()
+
+    expect(createAccountMock).toHaveBeenCalledTimes(1)
+    const payload = createAccountMock.mock.calls[0]?.[0]
+    expect(payload?.extra).toBeTypeOf('object')
+    expect(payload?.extra).not.toBeNull()
+    expect(payload?.extra).not.toHaveProperty('trace_id_passthrough')
   })
 })

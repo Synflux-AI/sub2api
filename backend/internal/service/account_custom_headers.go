@@ -7,12 +7,22 @@ import (
 
 // protectedCustomHeaderNames 列出禁止由 Account.CustomHeaders 覆盖的 header 名（不区分大小写）。
 //
-// 包含两类：
+// 包含三类：
 //   - 由 net/http 库自动管理或会破坏请求语义的：Host、Content-Length。
 //   - RFC 7230 定义的 hop-by-hop header，逐跳传输不应跨代理转发。
+//   - x-trace-id：逐请求链路关联 ID，见下方说明。
 //
 // 业务相关的 header（Authorization、x-api-key、anthropic-version 等）不在黑名单中：
 // 管理员显式开启高级模式即代表知情同意，可以为对接企业代理等场景覆盖。
+//
+// x-trace-id 是上述「知情同意」策略的**刻意例外**，两条理由都不是知情同意能解决的：
+//  1. 它是逐请求生成的链路关联 ID。账号级静态覆写会把该账号的所有请求钉死在同一个
+//     trace 上，链路关联彻底失效——这不是「管理员想要的覆写」，而是配置必然出错的形状。
+//     与 headerOverrideBlockedNames 中同名条目的理由一致。
+//  2. Bedrock 路径上它会被 SigV4 签名（injectTraceHeader 在 SignRequest 之前注入，
+//     x-trace-id 不在 AWS SDK 的 IgnoredHeaders 中，故进入 SignedHeaders），而
+//     ApplyCustomHeaders 在签名之后执行（gateway_bedrock.go）。若允许覆盖，签名后被
+//     改写的头与 SignedHeaders 不一致，AWS 直接返回 403——即知情同意也换不到可用请求。
 var protectedCustomHeaderNames = map[string]struct{}{
 	"host":                {},
 	"content-length":      {},
@@ -25,6 +35,7 @@ var protectedCustomHeaderNames = map[string]struct{}{
 	"trailers":            {},
 	"transfer-encoding":   {},
 	"upgrade":             {},
+	"x-trace-id":          {},
 }
 
 // sanitizeCustomHeaders 规整传入的自定义 header 映射用于持久化：

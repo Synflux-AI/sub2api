@@ -1076,6 +1076,8 @@ func buildGrokResponsesRequest(ctx context.Context, c *gin.Context, account *Acc
 			req.Header.Set("OpenAI-Beta", v)
 		}
 	}
+	// 全链路 trace：在客户端头透传之后注入，覆盖客户端可能自带的同名头
+	injectTraceHeader(ctx, req, account)
 	// 账号级请求头覆写最后应用，使配置值优先于上面的内置默认头；
 	// 打到官方 CLI 网关时身份头仍由共享传输层最终强制。
 	account.ApplyHeaderOverrides(req.Header)

@@ -1850,6 +1850,19 @@ func (a *Account) IsAnthropicAPIKeyPassthroughEnabled() bool {
 	return ok && enabled
 }
 
+// IsTraceIDPassthroughEnabled 返回该账号是否启用出站注入 X-Trace-Id。
+// 字段：accounts.extra.trace_id_passthrough。
+// 仅在上游为自己的中转实例（sub2api / 其他支持该头的中转）时开启；
+// 对真实供应商开启会给出站请求多带一个自定义头，破坏客户端指纹一致性。
+// 字段缺失或类型不正确时，按 false（关闭）处理。
+func (a *Account) IsTraceIDPassthroughEnabled() bool {
+	if a == nil || a.Extra == nil {
+		return false
+	}
+	enabled, ok := a.Extra["trace_id_passthrough"].(bool)
+	return ok && enabled
+}
+
 // WebSearch 模拟三态常量
 const (
 	WebSearchModeDefault  = "default"  // 跟随渠道配置

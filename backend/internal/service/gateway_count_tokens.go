@@ -411,6 +411,9 @@ func (s *GatewayService) buildCountTokensRequestAnthropicAPIKeyPassthrough(
 		}
 	}
 
+	// 全链路 trace：在白名单拷贝之后注入，覆盖客户端可能自带的同名头
+	injectTraceHeader(ctx, req, account)
+
 	req.Header.Del("authorization")
 	req.Header.Del("x-api-key")
 	req.Header.Del("x-goog-api-key")
@@ -528,6 +531,9 @@ func (s *GatewayService) buildCountTokensRequest(ctx context.Context, c *gin.Con
 			}
 		}
 	}
+
+	// 全链路 trace：在白名单拷贝之后注入，覆盖客户端可能自带的同名头
+	injectTraceHeader(ctx, req, account)
 
 	// OAuth 账号：应用指纹到请求头（受设置开关控制）
 	if ctEnableFP && ctFingerprint != nil {

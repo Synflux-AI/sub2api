@@ -1461,6 +1461,35 @@
         />
       </div>
 
+      <!-- 出站注入 X-Trace-Id（所有账号类型可用，默认关闭） -->
+      <div class="border-t border-gray-200 pt-4 dark:border-dark-600">
+        <div class="flex items-center justify-between">
+          <div>
+            <label class="input-label mb-0">{{ t('admin.accounts.traceId.passthrough') }}</label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.traceId.passthroughDesc') }}
+            </p>
+          </div>
+          <button
+            id="edit-account-trace-id-passthrough-toggle"
+            type="button"
+            @click="traceIdPassthroughEnabled = !traceIdPassthroughEnabled"
+            :class="[
+              'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
+              traceIdPassthroughEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
+            ]"
+            :aria-pressed="traceIdPassthroughEnabled"
+          >
+            <span
+              :class="[
+                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+                traceIdPassthroughEnabled ? 'translate-x-5' : 'translate-x-0'
+              ]"
+            />
+          </button>
+        </div>
+      </div>
+
       <!-- OpenAI 自动透传开关（OAuth/API Key） -->
       <div
         v-if="account?.platform === 'openai' && (account?.type === 'oauth' || account?.type === 'setup-token' || account?.type === 'apikey')"
@@ -2868,6 +2897,8 @@ type CodexImageToolMode = 'inherit' | 'enabled' | 'disabled' | 'block'
 const codexImageToolMode = ref<CodexImageToolMode>('inherit')
 type AnthropicAPIKeyAuthScheme = 'x_api_key' | 'authorization_bearer'
 const anthropicPassthroughEnabled = ref(false)
+// 出站注入 X-Trace-Id：对所有平台/类型生效，默认关闭
+const traceIdPassthroughEnabled = ref(false)
 const anthropicAPIKeyAuthScheme = ref<AnthropicAPIKeyAuthScheme>('x_api_key')
 const webSearchEmulationMode = ref('default')
 const webSearchGlobalEnabled = ref(false)
@@ -3307,6 +3338,8 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   anthropicPassthroughEnabled.value = false
   anthropicAPIKeyAuthScheme.value = 'x_api_key'
   webSearchEmulationMode.value = 'default'
+  // 出站注入 X-Trace-Id：对所有平台/类型生效，直接按 extra 回填（无平台分支）
+  traceIdPassthroughEnabled.value = extra?.trace_id_passthrough === true
   if (newAccount.platform === 'openai' && (newAccount.type === 'oauth' || newAccount.type === 'setup-token' || newAccount.type === 'apikey')) {
     openaiPassthroughEnabled.value = extra?.openai_passthrough === true || extra?.openai_oauth_passthrough === true
     const longContextBillingValue = extra?.openai_long_context_billing_enabled
@@ -4677,6 +4710,23 @@ const handleSubmit = async () => {
       // Quota notify config
       writeQuotaNotifyToExtra(newExtra, 'update')
       updatePayload.extra = newExtra
+    }
+
+    // 出站注入 X-Trace-Id：对所有平台/类型生效，因此放在全部平台专属 extra 块之后，
+    // 复用（而非覆盖）前面已组装好的 updatePayload.extra；关闭时删除 key 而非写 false。
+    // 仅在需要写入或需要清理旧 key 时才落 extra，避免给原本不带 extra 的请求凭空加上该字段。
+    {
+      const currentExtra = (updatePayload.extra as Record<string, unknown>) ||
+        (props.account.extra as Record<string, unknown>) || {}
+      if (traceIdPassthroughEnabled.value) {
+        const newExtra: Record<string, unknown> = { ...currentExtra }
+        newExtra.trace_id_passthrough = true
+        updatePayload.extra = newExtra
+      } else if ('trace_id_passthrough' in currentExtra) {
+        const newExtra: Record<string, unknown> = { ...currentExtra }
+        delete newExtra.trace_id_passthrough
+        updatePayload.extra = newExtra
+      }
     }
 
     const canContinue = await ensureAntigravityMixedChannelConfirmed(async () => {

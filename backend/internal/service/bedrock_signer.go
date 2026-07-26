@@ -55,7 +55,13 @@ func NewBedrockSignerFromAccount(account *Account) (*BedrockSigner, error) {
 // 重要约束：调用此方法前，req 应只包含 AWS 相关的 header（如 Content-Type、Accept）。
 // 非 AWS header（如 anthropic-beta）会参与签名计算，如果 Bedrock 服务端不识别这些 header，
 // 签名验证可能失败。litellm 通过 _filter_headers_for_aws_signature 实现头过滤，
-// 当前实现中 buildUpstreamRequestBedrock 仅设置了 Content-Type 和 Accept，因此是安全的。
+// 当前实现中 buildUpstreamRequestBedrock 只设置 Content-Type、Accept，以及账号开启
+// trace_id_passthrough 时的 X-Trace-Id（注入必须在本方法之前，见该函数注释），因此是安全的。
+//
+// 另一条约束在签名之后：executeBedrockUpstream 会在本方法返回后调用
+// account.ApplyCustomHeaders，它用 Set 覆写同名 header。任何**已被签名**的 header 若在
+// 那里被改写，wire 上的值就与 SignedHeaders 不一致，AWS 返回 403。因此凡是签名前写入的
+// header 都必须同时列入 protectedCustomHeaderNames（x-trace-id 已列入）。
 func (s *BedrockSigner) SignRequest(ctx context.Context, req *http.Request, body []byte) error {
 	payloadHash := sha256Hash(body)
 	return s.signer.SignHTTP(ctx, s.credentials, req, payloadHash, "bedrock", s.region, time.Now())

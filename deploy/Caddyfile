@@ -95,6 +95,8 @@ api.sub2api.com {
 		format json
 		level INFO
 	}
+	# log_append 需要 Caddy 2.8+；对于旧版本，可改用 JSON log 的 request>headers 字段
+	log_append trace_id {http.request.header.X-Trace-Id}
 
 	# =========================================================================
 	# 错误处理
