@@ -177,9 +177,16 @@ func runMainServer() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
-	log.Println("Shutting down server...")
+	// 排空超时：Shutdown 会立即停止接受新连接，只等待在飞请求结束。流式响应可能持续
+	// 十几分钟（见 internal/server/http.go 未设 WriteTimeout），过短会把正在传输的流掐断，
+	// 故做成可配置；默认 5 秒保持既有行为。
+	shutdownTimeout := time.Duration(cfg.Server.ShutdownTimeout) * time.Second
+	if shutdownTimeout <= 0 {
+		shutdownTimeout = 5 * time.Second
+	}
+	log.Printf("Shutting down server (drain timeout %s)...", shutdownTimeout)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 
 	if err := app.Server.Shutdown(ctx); err != nil {
