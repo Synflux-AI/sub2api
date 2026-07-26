@@ -36,6 +36,17 @@ server:
   # Keep-alive idle timeout in seconds.
   # Keep-Alive 空闲连接超时（秒）。
   idle_timeout: 120
+  # Graceful shutdown drain timeout in seconds: upper bound on waiting for in-flight
+  # requests after SIGTERM. New connections stop immediately either way, so raising it
+  # does not extend downtime. Streaming responses can last many minutes; raise this to
+  # avoid cutting them off during rolling upgrades, and keep the container
+  # stop_grace_period longer than this value or the process is SIGKILLed first.
+  # Non-positive values fall back to 5.
+  # 优雅关闭排空超时（秒）：收到 SIGTERM 后等待在飞请求完成的上限。无论如何都会立即
+  # 停止接受新连接，因此调大不会延长对外不可用时间。流式响应可能持续十几分钟，滚动
+  # 升级时调大可避免掐断；同时需让容器 stop_grace_period 比该值更长，否则进程会先被
+  # SIGKILL。非正值回退为 5。
+  shutdown_timeout: 5
   # Trusted proxies used when security.trust_forwarded_ip_for_api_key_acl is false.
   # List only the exact proxy addresses that connect directly to Sub2API.
   # Set [] explicitly to disable forwarded-IP trust in high-security mode.

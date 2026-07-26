@@ -665,6 +665,7 @@ type ServerConfig struct {
 	ReadHeaderTimeout        int       `mapstructure:"read_header_timeout"`   // 读取请求头超时（秒）
 	MaxHeaderBytes           int       `mapstructure:"max_header_bytes"`      // 请求头最大字节数（HTTP/2 映射为 header-list 上限）
 	IdleTimeout              int       `mapstructure:"idle_timeout"`          // 空闲连接超时（秒）
+	ShutdownTimeout          int       `mapstructure:"shutdown_timeout"`      // 优雅关闭排空超时（秒）：等待在飞请求完成的上限
 	TrustedProxies           []string  `mapstructure:"trusted_proxies"`       // 可信代理列表（CIDR/IP）
 	TrustedProxiesConfigured bool      `mapstructure:"-" json:"-" yaml:"-"`   // 是否显式配置了可信代理列表
 	MaxRequestBodySize       int64     `mapstructure:"max_request_body_size"` // 全局最大请求体限制
@@ -1833,6 +1834,10 @@ func setDefaults() {
 	viper.SetDefault("server.read_header_timeout", 10) // 10秒读取请求头
 	viper.SetDefault("server.max_header_bytes", 64*1024)
 	viper.SetDefault("server.idle_timeout", 120) // 120秒空闲超时
+	// 优雅关闭排空超时。默认沿用历史行为的 5 秒；流式场景（响应可持续十几分钟）应按
+	// 实际请求时长分布调大，例如 SERVER_SHUTDOWN_TIMEOUT=300，
+	// 并让容器 stop_grace_period 比它更长，否则进程先被 SIGKILL、排空时间白配。
+	viper.SetDefault("server.shutdown_timeout", 5)
 	viper.SetDefault("server.max_request_body_size", int64(256*1024*1024))
 	// H2C 默认配置
 	viper.SetDefault("server.h2c.enabled", false)
