@@ -549,6 +549,10 @@ type UsageLog struct {
 // AdminUsageLog 是管理员接口使用的 usage log DTO（包含管理员字段）。
 type AdminUsageLog struct {
 	UsageLog
+	// UserEmail/UserNotes are admin-only identity fields used by the global usage log.
+	// Keep notes out of UsageLog because that DTO is also returned to regular users.
+	UserEmail string `json:"user_email"`
+	UserNotes string `json:"user_notes"`
 
 	// UpstreamModel is the actual model sent to the upstream provider after mapping.
 	// Omitted when no mapping was applied (requested model was used as-is).

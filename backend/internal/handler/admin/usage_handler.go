@@ -368,10 +368,11 @@ func (h *UsageHandler) SearchUsers(c *gin.Context) {
 		return
 	}
 
-	// Return simplified user list (only id, email and deleted flag)
+	// Return the identity fields needed by the usage-log user selector.
 	type SimpleUser struct {
 		ID      int64  `json:"id"`
 		Email   string `json:"email"`
+		Notes   string `json:"notes"`
 		Deleted bool   `json:"deleted"`
 	}
 
@@ -380,6 +381,7 @@ func (h *UsageHandler) SearchUsers(c *gin.Context) {
 		result[i] = SimpleUser{
 			ID:      u.ID,
 			Email:   u.Email,
+			Notes:   u.Notes,
 			Deleted: u.DeletedAt != nil,
 		}
 	}
@@ -409,11 +411,13 @@ func (h *UsageHandler) SearchAPIKeys(c *gin.Context) {
 		return
 	}
 
-	// Return simplified API key list (only id and name)
+	// Return the key and its owner identity for the usage-log selector.
 	type SimpleAPIKey struct {
-		ID     int64  `json:"id"`
-		Name   string `json:"name"`
-		UserID int64  `json:"user_id"`
+		ID        int64  `json:"id"`
+		Name      string `json:"name"`
+		UserID    int64  `json:"user_id"`
+		UserEmail string `json:"user_email"`
+		UserNotes string `json:"user_notes"`
 	}
 
 	result := make([]SimpleAPIKey, len(keys))
@@ -422,6 +426,10 @@ func (h *UsageHandler) SearchAPIKeys(c *gin.Context) {
 			ID:     k.ID,
 			Name:   k.Name,
 			UserID: k.UserID,
+		}
+		if k.User != nil {
+			result[i].UserEmail = k.User.Email
+			result[i].UserNotes = k.User.Notes
 		}
 	}
 
