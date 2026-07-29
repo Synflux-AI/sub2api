@@ -207,7 +207,13 @@ func flushOpsErrorLogBatch(batch []opsErrorLogJob) {
 	opsErrorLogProcessed.Add(processed)
 }
 
-func enqueueOpsErrorLog(ops *service.OpsService, entry *service.OpsInsertErrorLogInput) {
+// enqueueOpsErrorLog hands one error entry to the async DB writer and, when
+// business events are enabled, projects it to stdout for OpenObserve.
+//
+// ctx must be the request context: the projection reads trace_id / request_id /
+// client_request_id out of it. Callers holding a *gin.Context should pass
+// c.Request.Context(), which is where middleware.RequestLogger stores them.
+func enqueueOpsErrorLog(ctx context.Context, ops *service.OpsService, entry *service.OpsInsertErrorLogInput) {
 	if ops == nil || entry == nil {
 		return
 	}
@@ -251,6 +257,13 @@ func enqueueOpsErrorLog(ops *service.OpsService, entry *service.OpsInsertErrorLo
 		maybeLogOpsErrorLogDrop()
 		return
 	}
+
+	// Emitted before the send, not after: once the job is on the queue a worker
+	// may already be reading entry, and touching it here would race. The cost is
+	// that a queue-full drop below can leave an OpenObserve event whose row never
+	// landed — visible via opsErrorLogDropped, and consistent with the projection
+	// being best-effort rather than a transactional replica of Postgres.
+	emitOpsErrorBusinessEvent(ctx, entry)
 
 	select {
 	case opsErrorLogQueue <- opsErrorLogJob{ops: ops, entry: entry, queuedBytes: queuedBytes}:
@@ -964,7 +977,7 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 				}
 			}
 
-			enqueueOpsErrorLog(ops, entry)
+			enqueueOpsErrorLog(opsErrorLogRequestContext(c), ops, entry)
 			return
 		}
 
@@ -1096,7 +1109,7 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 			entry.ClientIP = &clientIP
 		}
 
-		enqueueOpsErrorLog(ops, entry)
+		enqueueOpsErrorLog(opsErrorLogRequestContext(c), ops, entry)
 	}
 }
 
@@ -1241,7 +1254,7 @@ func logOpsStreamError(c *gin.Context, ops *service.OpsService, wireStatus int) 
 		entry.ClientIP = &clientIP
 	}
 
-	enqueueOpsErrorLog(ops, entry)
+	enqueueOpsErrorLog(opsErrorLogRequestContext(c), ops, entry)
 }
 
 // isCountTokensRequest checks if the request is a count_tokens request

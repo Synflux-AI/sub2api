@@ -1,0 +1,217 @@
+# Vector configuration for the sub2api -> OpenObserve log pipeline.
+#
+# ---------------------------------------------------------------------------
+# Provenance
+#
+# Transcribed from the live /opt/vector/vector.yaml on the three production
+# hosts (144.126.209.169 linkyrouter / 134.199.209.111 crs15 /
+# 129.212.166.106 aihezu), which were byte-identical at
+# sha256 fd6093ad5bd521c85683298aa5e7a3df3a79665040a1d16c7389fe429002448d,
+# then extended for issue #104. Sections added by #104 are marked "#104".
+#
+# Credentials and the host label stay in /opt/vector/.env on each host
+# (OO_USER / OO_TOKEN / OO_HOST_LABEL) and must never be committed: this fork
+# receives periodic sync-main-* merges from upstream.
+#
+# Before deploying, diff against the host's current file rather than
+# overwriting it, in case it drifted after the transcription above.
+# ---------------------------------------------------------------------------
+
+data_dir: /var/lib/vector
+
+sources:
+  sub2api:
+    type: docker_logs
+    include_containers:
+      - sub2api_sub2api
+      - linkyrouter_sub2api
+    multiline:
+      # #104: the alternation `|\{` is required.
+      #
+      # The app logs in zap's console format, so every normal line starts with a
+      # timestamp. Business events are emitted as a single pure-JSON line
+      # starting with `{"level":...`, which does NOT match a timestamp pattern —
+      # and with mode: halt_before, a non-matching line is treated as a
+      # continuation and appended to the PREVIOUS message (that is how Go stack
+      # traces get captured). Without this alternation every business event is
+      # silently glued onto the tail of whatever log line preceded it, corrupting
+      # both records.
+      start_pattern: '^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}|\{)'
+      condition_pattern: '^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}|\{)'
+      mode: halt_before
+      timeout_ms: 1000
+
+transforms:
+  parse:
+    type: remap
+    inputs: [sub2api]
+    source: |
+      raw = to_string(.message) ?? ""
+
+      # 真实主机标签,替代容器 ID 短哈希
+      .host = "${OO_HOST_LABEL}"
+      # swarm 任务名形如 /stack_service.1.<taskid>,taskid 每次部署都变。
+      # container 在 index_fields 里,保留完整名会让索引基数随发版次数增长 -> 只取 stack_service
+      cname = replace(to_string(.container_name) ?? "", r'^/', "")
+      .container = replace(cname, r'\.\d+\..*$', "")
+
+      # 丢掉不需要的 Vector 元字段,省索引和存储
+      # 注意 del(.stream) 删的是 docker_logs 的 stdout/stderr 元字段。业务事件里
+      # 的 stream(bool,是否流式请求)在下面 merge 时才写入,顺序不能调换。
+      del(.container_created_at)
+      del(.container_id)
+      del(.container_name)
+      del(.image)
+      del(.label)
+      del(.source_type)
+      del(.stream)
+      del(.timestamp)
+
+      # multiline 把 Go stack trace 并进了同一条消息,先切出首行
+      nl = split(raw, "\n", limit: 2)
+      head = to_string!(nl[0])
+      if length(nl) > 1 {
+        rest = to_string!(nl[1])
+        if strip_whitespace(rest) != "" { .stack_trace = rest }
+      }
+
+      # 兜底:解析不了也不丢行
+      .level = "unknown"
+      .message = head
+
+      # #104: 业务事件是整行纯 JSON,没有 zap console 的 tab 前缀,
+      # 下面按 \t 切分的分支解析不了(n == 1),必须先单独处理,
+      # 否则 event_kind 不会成为顶层字段,route 永远匹配不到。
+      if starts_with(head, "{") {
+        parsed, perr = parse_json(head)
+        if perr == null {
+          obj, oerr = object(parsed)
+          if oerr == null {
+            . = merge(., obj)
+            .level = downcase(to_string(.level) ?? "info")
+            .message = to_string(.msg) ?? head
+            del(.msg)
+            # 与 console 分支一致:用事件自带时间而非 ingest 时间
+            t, terr = parse_timestamp(to_string(.time) ?? "", "%+")
+            if terr == null { ._timestamp = to_unix_timestamp(t, unit: "microseconds") }
+            del(.time)
+          }
+        }
+      } else {
+        parts = split(head, "\t")
+        n = length(parts)
+
+        # zap: ts \t LEVEL \t [logger \t] caller \t msg \t {json}
+        # logger 段可选 -> 从后往前定位
+        # 注意: VRL 索引不接受变量,必须用 get()
+        if n >= 4 {
+          msg_idx = n - 1
+          last = to_string(get(parts, [n - 1]) ?? "") ?? ""
+
+          if starts_with(last, "{") {
+            parsed, perr = parse_json(last)
+            if perr == null {
+              obj, oerr = object(parsed)
+              if oerr == null {
+                msg_idx = n - 2
+                . = merge(., obj)
+              }
+            }
+          }
+
+          .level = downcase(to_string(parts[1]))
+          .message = to_string(get(parts, [msg_idx]) ?? "") ?? ""
+
+          caller_idx = msg_idx - 1
+          if caller_idx >= 2 {
+            .caller = to_string(get(parts, [caller_idx]) ?? "") ?? ""
+            if caller_idx > 2 { .logger = to_string(parts[2]) }
+          }
+
+          t, terr = parse_timestamp(to_string(parts[0]), "%Y-%m-%dT%H:%M:%S%.f%z")
+          if terr == null { ._timestamp = to_unix_timestamp(t, unit: "microseconds") }
+        }
+      }
+
+  # #104: route on the explicit event_kind marker rather than on `component`, so
+  # renaming a component never silently moves business events between streams.
+  #
+  # No extra service/container guard is needed: the source's include_containers
+  # whitelist already restricts input to the sub2api containers.
+  business_route:
+    type: route
+    inputs: [parse]
+    route:
+      usage_log: '.event_kind == "usage_log"'
+      error_log: '.event_kind == "error_log"'
+
+sinks:
+  # Pre-existing application-log stream.
+  #
+  # #104: inputs changed from [parse] to [business_route._unmatched]. If it kept
+  # consuming `parse` directly, every business event would be written twice —
+  # once here and once into its own stream.
+  oo:
+    type: http
+    inputs: [business_route._unmatched]
+    uri: https://oo.aihezu.dev/api/default/sub2api/_json
+    method: post
+    auth:
+      strategy: basic
+      user: ${OO_USER}
+      password: ${OO_TOKEN}
+    encoding:
+      codec: json
+    batch:
+      max_events: 500
+      timeout_secs: 5
+    buffer:
+      type: disk
+      max_size: 268435488
+      when_full: drop_newest
+    request:
+      retry_attempts: 10
+
+  # #104
+  oo_usage_logs:
+    type: http
+    inputs: [business_route.usage_log]
+    uri: https://oo.aihezu.dev/api/default/usage_logs/_json
+    method: post
+    auth:
+      strategy: basic
+      user: ${OO_USER}
+      password: ${OO_TOKEN}
+    encoding:
+      codec: json
+    batch:
+      max_events: 500
+      timeout_secs: 5
+    buffer:
+      type: disk
+      max_size: 268435488
+      when_full: drop_newest
+    request:
+      retry_attempts: 10
+
+  # #104
+  oo_error_logs:
+    type: http
+    inputs: [business_route.error_log]
+    uri: https://oo.aihezu.dev/api/default/error_logs/_json
+    method: post
+    auth:
+      strategy: basic
+      user: ${OO_USER}
+      password: ${OO_TOKEN}
+    encoding:
+      codec: json
+    batch:
+      max_events: 500
+      timeout_secs: 5
+    buffer:
+      type: disk
+      max_size: 268435488
+      when_full: drop_newest
+    request:
+      retry_attempts: 10
