@@ -22,7 +22,10 @@ func sptr(v string) *string {
 func i16(v int16) *int16 { return &v }
 
 // fullOpsErrorEntry covers every whitelisted dimension plus the payload fields
-// that must never be projected.
+// that must never be projected. Every whitelisted field is populated with a
+// non-zero value — including flag combinations that would not co-occur in
+// production — so TestOpsErrorBusinessEventSchemaIsLocked sees the complete key
+// set rather than a subset trimmed by the omit-when-empty rule.
 func fullOpsErrorEntry() *service.OpsInsertErrorLogInput {
 	return &service.OpsInsertErrorLogInput{
 		RequestID:       "req-def",
@@ -50,7 +53,7 @@ func fullOpsErrorEntry() *service.OpsInsertErrorLogInput {
 		Severity:          "error",
 		StatusCode:        502,
 		IsBusinessLimited: true,
-		IsCountTokens:     false,
+		IsCountTokens:     true,
 
 		ErrorMessage: "upstream RST_STREAM",
 
@@ -134,6 +137,7 @@ func TestOpsErrorBusinessEventProjectsSearchDimensions(t *testing.T) {
 		"status_code":            float64(502),
 		"upstream_status_code":   float64(500),
 		"is_business_limited":    true,
+		"is_count_tokens":        true,
 		"error_source":           "upstream",
 		"error_owner":            "provider",
 		"error_message":          "upstream RST_STREAM",
@@ -145,6 +149,51 @@ func TestOpsErrorBusinessEventProjectsSearchDimensions(t *testing.T) {
 	} {
 		require.Equal(t, want, event[key], "field %q", key)
 	}
+}
+
+// opsErrorEventSchemaV1 is the complete key set of an error_log event whose
+// every whitelisted field is populated. It is a golden list, not a derived one:
+// asserting "the expected fields are present" would still pass after a new
+// column started being projected, and the whole point of the whitelist is that
+// adding a database column must not silently widen what leaves the process.
+//
+// Changing this list means changing the OpenObserve schema. Before editing it,
+// confirm the new field carries no request/response body, prompt, PII or
+// credential material — see the never-projected list on emitOpsErrorBusinessEvent.
+var opsErrorEventSchemaV1 = []string{
+	// zap encoder + emitter base
+	"level", "time", "msg", "service",
+	// envelope
+	"event_kind", "event_schema_version", "event_emitted_at", "ops_system_log_skip",
+	"trace_id", "request_id", "client_request_id",
+	"db_created_at",
+	// identity
+	"user_id", "api_key_id", "account_id", "group_id", "api_key_prefix", "client_ip",
+	// request shape
+	"platform", "model", "requested_model", "upstream_model", "request_path",
+	"inbound_endpoint", "upstream_endpoint", "request_type", "stream", "user_agent",
+	// classification
+	"error_phase", "error_type", "severity", "status_code", "upstream_status_code",
+	"is_business_limited", "is_count_tokens", "error_source", "error_owner", "error_message",
+	// latency breakdown
+	"auth_latency_ms", "routing_latency_ms", "upstream_latency_ms",
+	"response_latency_ms", "time_to_first_token_ms",
+}
+
+// A new column on service.OpsInsertErrorLogInput must not reach OpenObserve
+// just because it was added to the struct — and a projected field must not
+// disappear without someone noticing that an OpenObserve dashboard just lost a
+// dimension. Both directions fail here.
+func TestOpsErrorBusinessEventSchemaIsLocked(t *testing.T) {
+	event, _ := captureErrorEvent(t, fullOpsErrorEntry(), correlatedGatewayContext())
+
+	got := make([]string, 0, len(event))
+	for key := range event {
+		got = append(got, key)
+	}
+	require.ElementsMatch(t, opsErrorEventSchemaV1, got,
+		"error_log event schema drifted: update opsErrorEventSchemaV1 only after confirming "+
+			"the added field carries no body, prompt, PII or credential material")
 }
 
 // The sanitizer upstream of this emitter strips credentials, not prompts or PII,

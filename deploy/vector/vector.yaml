@@ -138,12 +138,20 @@ transforms:
   #
   # No extra service/container guard is needed: the source's include_containers
   # whitelist already restricts input to the sub2api containers.
+  #
+  # A route transform fans out — an event is copied to EVERY output whose
+  # condition matches, there is no first-match-wins — so `business_unknown` has
+  # to exclude the two known kinds by hand. Without that catch-all, an event_kind
+  # this file has not been taught about (a v2 rename, a third record type) would
+  # fall through to _unmatched and quietly pollute default/sub2api, breaking the
+  # invariant that stream contains zero documents carrying event_kind.
   business_route:
     type: route
     inputs: [parse]
     route:
       usage_log: '.event_kind == "usage_log"'
       error_log: '.event_kind == "error_log"'
+      business_unknown: 'exists(.event_kind) && .event_kind != "usage_log" && .event_kind != "error_log"'
 
 sinks:
   # Pre-existing application-log stream.
@@ -167,12 +175,18 @@ sinks:
       timeout_secs: 5
     buffer:
       type: disk
-      max_size: 268435488
+      max_size: 536870912
       when_full: drop_newest
     request:
       retry_attempts: 10
 
   # #104
+  #
+  # The route for usage_log events. It is provisioned ahead of the emitter: the
+  # error side ships first, the usage side lands in a follow-up PR, and Vector
+  # must always be deployed before the application. Until then this sink is
+  # correct and idle — an empty default/usage_logs stream is the expected state,
+  # not a misconfiguration.
   oo_usage_logs:
     type: http
     inputs: [business_route.usage_log]
@@ -189,7 +203,7 @@ sinks:
       timeout_secs: 5
     buffer:
       type: disk
-      max_size: 268435488
+      max_size: 536870912
       when_full: drop_newest
     request:
       retry_attempts: 10
@@ -211,7 +225,31 @@ sinks:
       timeout_secs: 5
     buffer:
       type: disk
-      max_size: 268435488
+      max_size: 536870912
       when_full: drop_newest
+    request:
+      retry_attempts: 10
+
+  # #104: catch-all for an event_kind this config does not know about. Normally
+  # receives nothing; the stream appearing in OpenObserve at all is the signal
+  # that the app started emitting a kind the route was never taught.
+  #
+  # Deliberately no disk buffer: the three streams above already reserve
+  # 3 x 256MiB under data_dir, and a sink that is expected to stay empty must not
+  # add a fourth. Falls back to Vector's default in-memory buffer.
+  oo_business_unknown:
+    type: http
+    inputs: [business_route.business_unknown]
+    uri: https://oo.aihezu.dev/api/default/business_unknown/_json
+    method: post
+    auth:
+      strategy: basic
+      user: ${OO_USER}
+      password: ${OO_TOKEN}
+    encoding:
+      codec: json
+    batch:
+      max_events: 500
+      timeout_secs: 5
     request:
       retry_attempts: 10

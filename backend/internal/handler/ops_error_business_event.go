@@ -30,8 +30,9 @@ const opsBusinessEventMaxErrorMessageBytes = 1024
 //
 // The field list below is an explicit whitelist, deliberately not reflection
 // over service.OpsInsertErrorLogInput: a new database column must not leak to
-// OpenObserve just because someone added it to the struct. The schema tests in
-// ops_error_business_event_test.go fail when this drifts.
+// OpenObserve just because someone added it to the struct. Adding, renaming or
+// removing a field here fails TestOpsErrorBusinessEventSchemaIsLocked, which
+// compares the emitted key set against a golden list.
 //
 // Never projected, by design:
 //
@@ -86,6 +87,9 @@ func emitOpsErrorBusinessEvent(ctx context.Context, entry *service.OpsInsertErro
 	}
 	appendField(zap.Bool("stream", entry.Stream), entry.Stream)
 	// UA reuses the entry-point normalization: valid UTF-8, 512-byte ceiling.
+	// enqueueOpsErrorLog already normalized entry.UserAgent in place; the call is
+	// idempotent and repeated here so the projection's own bound does not depend
+	// on which caller reached it first.
 	appendNonEmpty(&fields, "user_agent", normalizeOpsPersistentUserAgent(entry.UserAgent))
 
 	// Classification
