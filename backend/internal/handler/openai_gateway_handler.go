@@ -2924,7 +2924,7 @@ func (h *OpenAIGatewayHandler) enqueueCyberSessionBlockedOpsEntry(c *gin.Context
 	if apiKey.User != nil {
 		meta.UserID = apiKey.User.ID
 	}
-	enqueueOpsErrorLog(h.opsService, buildCyberSessionBlockedOpsEntry(meta))
+	enqueueOpsErrorLog(requestCtx, h.opsService, buildCyberSessionBlockedOpsEntry(meta))
 }
 
 // recordCyberPolicyIfMarked 在 gateway forward 返回后检查 cyber 标记，异步写风控日志/邮件，
@@ -3013,6 +3013,11 @@ func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarked(c *gin.Context, apiKey 
 		ClientIP:        clientIPStr,
 		CreatedAt:       time.Now(),
 	}
+	// Snapshot the correlation-carrying context before the goroutine starts: gin
+	// pools *gin.Context and reassigns c.Request, so reading it later could
+	// observe another request. WithoutCancel keeps the values after the request
+	// context is done — the projection only reads them.
+	correlationCtx := context.WithoutCancel(opsErrorLogRequestContext(c))
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
@@ -3058,7 +3063,7 @@ func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarked(c *gin.Context, apiKey 
 			gwSvc.MarkCyberSessionBlocked(ctx, cyberBlockKey)
 		}
 		if opsSvc != nil {
-			enqueueOpsErrorLog(opsSvc, buildCyberPolicyOpsErrorEntry(opsMeta, mark))
+			enqueueOpsErrorLog(correlationCtx, opsSvc, buildCyberPolicyOpsErrorEntry(opsMeta, mark))
 		}
 	}()
 }

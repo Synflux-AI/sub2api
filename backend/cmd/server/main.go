@@ -139,6 +139,9 @@ func runMainServer() {
 	if err := logger.Init(logger.OptionsFromConfig(cfg.Log)); err != nil {
 		log.Fatalf("Failed to initialize logger: %v", err)
 	}
+	// Must follow Init: initLocked rebuilds the business-event logger but never
+	// changes the switch, so ordering only matters for the service name.
+	logger.SetBusinessEventsEnabled(cfg.Observability.BusinessEvents.Enabled)
 	if cfg.RunMode == config.RunModeSimple {
 		log.Println("⚠️  WARNING: Running in SIMPLE mode - billing and quota checks are DISABLED")
 	}

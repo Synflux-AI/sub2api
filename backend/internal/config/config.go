@@ -99,6 +99,21 @@ type Config struct {
 	Idempotency             IdempotencyConfig             `mapstructure:"idempotency"`
 	BatchImage              BatchImageConfig              `mapstructure:"batch_image"`
 	ImageStorage            ImageStorageConfig            `mapstructure:"image_storage"`
+	Observability           ObservabilityConfig           `mapstructure:"observability"`
+}
+
+type ObservabilityConfig struct {
+	BusinessEvents BusinessEventsConfig `mapstructure:"business_events"`
+}
+
+// BusinessEventsConfig gates the stdout projection of usage_logs / ops_error_logs
+// consumed by Vector -> OpenObserve. Defaults to off: roll the code out first,
+// then enable node by node while watching Docker log growth and OO ingest.
+//
+// Postgres remains the source of truth; these events are a best-effort
+// observability projection and never participate in a database transaction.
+type BusinessEventsConfig struct {
+	Enabled bool `mapstructure:"enabled"`
 }
 
 type LogConfig struct {
@@ -1886,6 +1901,10 @@ func setDefaults() {
 	viper.SetDefault("log.sampling.enabled", false)
 	viper.SetDefault("log.sampling.initial", 100)
 	viper.SetDefault("log.sampling.thereafter", 100)
+
+	// Observability: business-event projection to stdout is opt-in so it can be
+	// enabled per node after the Vector route and OO streams already exist.
+	viper.SetDefault("observability.business_events.enabled", false)
 
 	// CORS
 	viper.SetDefault("cors.allowed_origins", []string{})

@@ -45,6 +45,38 @@ type LogEvent struct {
 	Fields     map[string]any
 }
 
+// sharedStdoutSyncer / sharedStderrSyncer are created once for the process, not
+// per Init: zapcore.Lock returns a fresh mutex each call, so two wrappers over
+// the same fd would not serialize against each other. Every writer that targets
+// stdout (the main logger and the business-event emitter) must go through these
+// so partial writes cannot interleave into a broken JSON line — Docker's
+// json-file driver splits on newlines, and a spliced line reaches Vector as
+// unparseable JSON.
+var (
+	sharedStdoutSyncer = &lockedStreamSyncer{stream: func() *os.File { return os.Stdout }}
+	sharedStderrSyncer = &lockedStreamSyncer{stream: func() *os.File { return os.Stderr }}
+)
+
+// lockedStreamSyncer serializes writes to one standard stream. The target is
+// resolved per write rather than captured once, so tests that swap os.Stdout
+// still observe output while every writer keeps sharing a single mutex.
+type lockedStreamSyncer struct {
+	mu     sync.Mutex
+	stream func() *os.File
+}
+
+func (s *lockedStreamSyncer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.stream().Write(p)
+}
+
+func (s *lockedStreamSyncer) Sync() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.stream().Sync()
+}
+
 var (
 	mu            sync.RWMutex
 	global        atomic.Pointer[zap.Logger]
@@ -86,6 +118,8 @@ func initLocked(options InitOptions) error {
 	sugar.Store(zl.Sugar())
 	atomicLevel = al
 	initOptions = normalized
+
+	configureBusinessEventLogger(normalized.ServiceName)
 
 	bridgeSlogLocked()
 	bridgeStdLogLocked()
@@ -277,8 +311,8 @@ func buildLogger(options InitOptions) (*zap.Logger, zap.AtomicLevel, error) {
 		errPriority := zap.LevelEnablerFunc(func(lvl zapcore.Level) bool {
 			return lvl >= atomic.Level() && lvl >= zapcore.WarnLevel
 		})
-		cores = append(cores, zapcore.NewCore(enc, zapcore.Lock(os.Stdout), infoPriority))
-		cores = append(cores, zapcore.NewCore(enc, zapcore.Lock(os.Stderr), errPriority))
+		cores = append(cores, zapcore.NewCore(enc, sharedStdoutSyncer, infoPriority))
+		cores = append(cores, zapcore.NewCore(enc, sharedStderrSyncer, errPriority))
 	}
 
 	if options.Output.ToFile {
@@ -295,7 +329,7 @@ func buildLogger(options InitOptions) (*zap.Logger, zap.AtomicLevel, error) {
 	}
 
 	if len(cores) == 0 {
-		cores = append(cores, zapcore.NewCore(enc, zapcore.Lock(os.Stdout), atomic))
+		cores = append(cores, zapcore.NewCore(enc, sharedStdoutSyncer, atomic))
 	}
 
 	core := zapcore.NewTee(cores...)
