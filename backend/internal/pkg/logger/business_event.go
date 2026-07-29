@@ -4,7 +4,6 @@ import (
 	"context"
 	"io"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -46,7 +45,6 @@ const (
 var (
 	businessEventsEnabled atomic.Bool
 	businessEventLogger   atomic.Pointer[zap.Logger]
-	businessEventOnce     sync.Once
 )
 
 // SetBusinessEventsEnabled toggles emission at runtime. Defaults to off so a
@@ -97,9 +95,18 @@ func businessEventEncoderConfig() zapcore.EncoderConfig {
 		StacktraceKey:  zapcore.OmitKey,
 		LineEnding:     zapcore.DefaultLineEnding,
 		EncodeLevel:    zapcore.CapitalLevelEncoder,
-		EncodeTime:     zapcore.RFC3339NanoTimeEncoder,
+		EncodeTime:     businessEventTimeEncoder,
 		EncodeDuration: zapcore.MillisDurationEncoder,
 	}
+}
+
+// businessEventTimeEncoder normalizes every timestamp in the event to UTC.
+// event_emitted_at and db_created_at are already converted by their producers;
+// without this the encoder-owned `time` key would be the only local-zone value
+// in the event, which reads as a bug when comparing the three side by side in
+// OpenObserve.
+func businessEventTimeEncoder(t time.Time, enc zapcore.PrimitiveArrayEncoder) {
+	zapcore.RFC3339NanoTimeEncoder(t.UTC(), enc)
 }
 
 // buildBusinessEventLogger constructs a logger that is deliberately independent
@@ -127,12 +134,15 @@ func businessEventLoggerOrInit() *zap.Logger {
 		return l
 	}
 	// Emission before logger.Init (or in a test binary that never calls it)
-	// still needs a working writer rather than a silent drop.
-	businessEventOnce.Do(func() {
-		if businessEventLogger.Load() == nil {
-			configureBusinessEventLogger("sub2api")
-		}
-	})
+	// still needs a working writer rather than a silent drop. CompareAndSwap
+	// rather than sync.Once: the fallback has to stay available every time the
+	// pointer goes back to nil — a sync.Once fires exactly once, so a later
+	// reset (a test restoring a nil predecessor) would leave the emitter
+	// permanently silent.
+	fallback := buildBusinessEventLogger("sub2api", businessEventWriteSyncer())
+	if businessEventLogger.CompareAndSwap(nil, fallback) {
+		return fallback
+	}
 	return businessEventLogger.Load()
 }
 
