@@ -37,7 +37,7 @@ func TestUsageRecordContextTrimsAndSkipsBlankIDs(t *testing.T) {
 // A background settlement has no inbound request; it must not inherit a
 // neighbouring request's trace.
 func TestUsageRecordContextWithNilParentStaysBare(t *testing.T) {
-	got := usageRecordContext(nil, context.Background())
+	got := usageRecordContext(nil, context.Background()) //nolint:staticcheck // 显式验证 nil parent 的防御分支
 
 	require.Nil(t, got.Value(ctxkey.TraceID))
 	require.Nil(t, got.Value(ctxkey.RequestID))
