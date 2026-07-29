@@ -136,6 +136,10 @@ func newOpenAIModelMappedBodyCache(body []byte, replace openAIModelBodyReplaceFu
 	}
 }
 
+// usageRecordContext copies the request-scoped correlation IDs onto the worker
+// pool's background context. UsageRecordWorkerPool.execute builds task contexts
+// from context.Background(), so anything not copied here is gone by the time the
+// usage row is written — including the business-event projection's trace_id.
 func usageRecordContext(parent context.Context, base context.Context) context.Context {
 	if base == nil {
 		base = context.Background()
@@ -148,6 +152,9 @@ func usageRecordContext(parent context.Context, base context.Context) context.Co
 	}
 	if requestID, _ := parent.Value(ctxkey.RequestID).(string); strings.TrimSpace(requestID) != "" {
 		base = context.WithValue(base, ctxkey.RequestID, strings.TrimSpace(requestID))
+	}
+	if traceID, _ := parent.Value(ctxkey.TraceID).(string); strings.TrimSpace(traceID) != "" {
+		base = context.WithValue(base, ctxkey.TraceID, strings.TrimSpace(traceID))
 	}
 	return base
 }

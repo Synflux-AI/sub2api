@@ -65,9 +65,20 @@ Postgres 是唯一主存储。这两条 stream 是 **best-effort 可观测投影
 | `ops_system_log_skip` | 固定 `true`，防止事件回流进 `ops_system_logs` |
 
 后台写入路径（live settlement、batch image）没有入站链路，`trace_id` 等字段会缺失而不是
-输出空串 —— 每个字段在整条 stream 里保持单一类型。
+输出空串 —— 每个字段在整条 stream 里保持单一类型。这类记录仍保留自身稳定的业务关联 ID
+（`usage_request_id`，如 live 会话的 call hash）。
 
 事件不含重复 JSON key：payload 中与 envelope 同名的字段会被丢弃，envelope 优先。
+
+### usage 事件的 `usage_request_id`
+
+`usage_logs.request_id` 实际是**计费/幂等键**（常见值 `client:...` / `local:...`），与链路语义的
+`request_id` 不是一回事。因此它在事件里叫 `usage_request_id`，envelope 的 `request_id` 保持
+链路语义。error 事件的 `ops_error_logs.request_id` 则与 envelope 同源（handler 直接从请求
+上下文取），不再重复输出。
+
+`db_id` 只在记录已有 ID 时出现。usage 的 best-effort 路径在写库前就投影，所以通常没有
+`db_id` —— 不伪造。
 
 ## 不会出现在 OO 中的字段
 
@@ -83,6 +94,16 @@ error 事件默认 **不输出** 任何响应/请求正文：
 
 API Key 只输出 `api_key_id` 与已有的 8 位脱敏前缀，不输出明文。UA 沿用入口的合法 UTF-8
 归一化与 512 bytes 上限。
+
+usage 事件以 `usage_logs` 的 57 个持久化列为基线，两个字段刻意不投影：
+
+- `image_size_breakdown`：per-size 计数的 map，是明细 blob 不是检索维度，投影成嵌套对象会
+  让该字段的形状逐条不同；
+- `UsageLog` 上的 `MediaType`：根本不是 `usage_logs` 的列。
+
+`UsageLog` 的关联对象（User / APIKey / Account / Group / Subscription）一律不展开，否则会把
+邮箱和 key material 带进 stream。两侧的字段集合都有 schema 测试锁定，新增 DB 列不会自动
+泄露到 OO。
 
 ## OO stream 设置
 
