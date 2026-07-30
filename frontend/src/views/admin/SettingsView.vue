@@ -2007,6 +2007,30 @@
                         {{ t("admin.settings.panelRateLimit.publicIpRpmHint") }}
                       </p>
                     </div>
+
+                    <div>
+                      <label
+                        class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300"
+                      >
+                        {{ t("admin.settings.panelRateLimit.openApiRpm") }}
+                      </label>
+                      <div class="flex items-center gap-2">
+                        <input
+                          v-model.number="panelRateLimitForm.open_api_rpm"
+                          data-testid="panel-rate-limit-open-api-rpm"
+                          type="number"
+                          min="0"
+                          max="100000"
+                          class="input w-32"
+                        />
+                        <span class="text-sm text-gray-500 dark:text-gray-400">
+                          {{ t("admin.settings.panelRateLimit.perMinute") }}
+                        </span>
+                      </div>
+                      <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                        {{ t("admin.settings.panelRateLimit.openApiRpmHint") }}
+                      </p>
+                    </div>
                   </div>
 
                   <div
@@ -8387,6 +8411,7 @@ const panelRateLimitForm = reactive({
   heavy_rpm: 60,
   exempt_admin: true,
   public_ip_rpm: 300,
+  open_api_rpm: 60,
 });
 
 // Stream Timeout 状态
@@ -11123,6 +11148,7 @@ async function savePanelRateLimitSettings() {
       heavy_rpm: panelRateLimitForm.heavy_rpm,
       exempt_admin: panelRateLimitForm.exempt_admin,
       public_ip_rpm: panelRateLimitForm.public_ip_rpm,
+      open_api_rpm: panelRateLimitForm.open_api_rpm,
     });
     Object.assign(panelRateLimitForm, updated);
     appStore.showSuccess(t("admin.settings.panelRateLimit.saved"));
