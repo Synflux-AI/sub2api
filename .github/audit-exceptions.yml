@@ -35,3 +35,17 @@ exceptions:
     mitigation: "Proxy configuration not user-controlled; upgrade when axios releases fix"
     expires_on: "2026-07-10"
     owner: "security@your-domain"
+  - package: postcss
+    advisory: "GHSA-6g55-p6wh-862q"
+    severity: high
+    reason: "postcss only runs at build time on our own CSS sources; no attacker-controlled sourceMappingURL comments in the pipeline"
+    mitigation: "Build-time only dependency (tailwind/vite/@vue/compiler-sfc); upgrade lockfile to postcss >=8.5.18 in a dedicated dependency PR"
+    expires_on: "2026-10-30"
+    owner: "security@your-domain"
+  - package: postcss
+    advisory: "GHSA-r28c-9q8g-f849"
+    severity: high
+    reason: "postcss only runs at build time on our own CSS sources; source map auto-loading path traversal not reachable from user input"
+    mitigation: "Build-time only dependency (tailwind/vite/@vue/compiler-sfc); upgrade lockfile to postcss >=8.5.18 in a dedicated dependency PR"
+    expires_on: "2026-10-30"
+    owner: "security@your-domain"
