@@ -82,7 +82,7 @@ func (s *GatewayService) ForwardAsResponses(
 	reasoningEffort = ApplyThinkingEnabledFallback(reasoningEffort, body, mappedModel)
 	anthropicReq.Model = mappedModel
 
-	logger.L().Debug("gateway forward_as_responses: model mapping applied",
+	logger.C(ctx).Debug("gateway forward_as_responses: model mapping applied",
 		zap.Int64("account_id", account.ID),
 		zap.String("original_model", originalModel),
 		zap.String("mapped_model", mappedModel),
@@ -310,6 +310,12 @@ func (s *GatewayService) handleResponsesBufferedStreamingResponse(
 	clientToolMapping apicompat.ResponsesClientToolMapping,
 ) (*ForwardResult, error) {
 	requestID := resp.Header.Get("x-request-id")
+	// 本函数不接 ctx 参数，日志用的 request-scoped logger 从请求 ctx 取
+	// （middleware.RequestLogger 注入 trace_id / request_id / client_request_id）。
+	ctx := context.Background()
+	if c != nil && c.Request != nil {
+		ctx = c.Request.Context()
+	}
 
 	scanner := bufio.NewScanner(resp.Body)
 	maxLineSize := defaultMaxLineSize
@@ -341,9 +347,9 @@ func (s *GatewayService) handleResponsesBufferedStreamingResponse(
 
 		var event apicompat.AnthropicStreamEvent
 		if err := json.Unmarshal([]byte(payload), &event); err != nil {
-			logger.L().Warn("forward_as_responses buffered: failed to parse event",
+			logger.C(ctx).Warn("forward_as_responses buffered: failed to parse event",
 				zap.Error(err),
-				zap.String("request_id", requestID),
+				zap.String("upstream_request_id", requestID),
 				zap.String("event_type", eventType),
 			)
 			continue
@@ -386,9 +392,9 @@ func (s *GatewayService) handleResponsesBufferedStreamingResponse(
 
 	if err := scanner.Err(); err != nil {
 		if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-			logger.L().Warn("forward_as_responses buffered: read error",
+			logger.C(ctx).Warn("forward_as_responses buffered: read error",
 				zap.Error(err),
-				zap.String("request_id", requestID),
+				zap.String("upstream_request_id", requestID),
 			)
 		}
 	}
@@ -455,6 +461,12 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 	clientToolMapping apicompat.ResponsesClientToolMapping,
 ) (*ForwardResult, error) {
 	requestID := resp.Header.Get("x-request-id")
+	// 本函数不接 ctx 参数，日志用的 request-scoped logger 从请求 ctx 取。
+	// 客户端断开后请求 ctx 会被 cancel，但 logger.C 只读 ctx value，不看 cancel 状态。
+	ctx := context.Background()
+	if c != nil && c.Request != nil {
+		ctx = c.Request.Context()
+	}
 
 	if s.responseHeaderFilter != nil {
 		responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
@@ -514,26 +526,26 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 		for _, evt := range events {
 			payload, err := json.Marshal(evt)
 			if err != nil {
-				logger.L().Warn("forward_as_responses stream: failed to marshal event",
+				logger.C(ctx).Warn("forward_as_responses stream: failed to marshal event",
 					zap.Error(err),
-					zap.String("request_id", requestID),
+					zap.String("upstream_request_id", requestID),
 				)
 				continue
 			}
 			payload = reverseToolNamesIfPresent(c, payload)
 			payloads, _, err := clientToolRestorer.RestoreEvent(payload)
 			if err != nil {
-				logger.L().Warn("forward_as_responses stream: failed to restore client tools",
+				logger.C(ctx).Warn("forward_as_responses stream: failed to restore client tools",
 					zap.Error(err),
-					zap.String("request_id", requestID),
+					zap.String("upstream_request_id", requestID),
 				)
 				continue
 			}
 			for _, restored := range payloads {
 				eventType := gjson.GetBytes(restored, "type").String()
 				if _, err := fmt.Fprintf(c.Writer, "event: %s\ndata: %s\n\n", eventType, restored); err != nil {
-					logger.L().Info("forward_as_responses stream: client disconnected",
-						zap.String("request_id", requestID),
+					logger.C(ctx).Info("forward_as_responses stream: client disconnected",
+						zap.String("upstream_request_id", requestID),
 					)
 					return true // client disconnected
 				}
@@ -580,9 +592,9 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 
 		var event apicompat.AnthropicStreamEvent
 		if err := json.Unmarshal([]byte(payload), &event); err != nil {
-			logger.L().Warn("forward_as_responses stream: failed to parse event",
+			logger.C(ctx).Warn("forward_as_responses stream: failed to parse event",
 				zap.Error(err),
-				zap.String("request_id", requestID),
+				zap.String("upstream_request_id", requestID),
 				zap.String("event_type", eventType),
 			)
 			continue
@@ -595,9 +607,9 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 
 	if err := scanner.Err(); err != nil {
 		if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-			logger.L().Warn("forward_as_responses stream: read error",
+			logger.C(ctx).Warn("forward_as_responses stream: read error",
 				zap.Error(err),
-				zap.String("request_id", requestID),
+				zap.String("upstream_request_id", requestID),
 			)
 		}
 	}

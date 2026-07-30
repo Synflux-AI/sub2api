@@ -77,7 +77,7 @@ func (s *GatewayService) ForwardAsChatCompletions(
 	}
 	anthropicReq.Model = mappedModel
 
-	logger.L().Debug("gateway forward_as_chat_completions: model mapping applied",
+	logger.C(ctx).Debug("gateway forward_as_chat_completions: model mapping applied",
 		zap.Int64("account_id", account.ID),
 		zap.String("original_model", originalModel),
 		zap.String("mapped_model", mappedModel),
@@ -228,6 +228,12 @@ func (s *GatewayService) handleCCBufferedFromAnthropic(
 	startTime time.Time,
 ) (*ForwardResult, error) {
 	requestID := resp.Header.Get("x-request-id")
+	// 本函数不接 ctx 参数，日志用的 request-scoped logger 从请求 ctx 取
+	// （middleware.RequestLogger 注入 trace_id / request_id / client_request_id）。
+	ctx := context.Background()
+	if c != nil && c.Request != nil {
+		ctx = c.Request.Context()
+	}
 
 	scanner := bufio.NewScanner(resp.Body)
 	maxLineSize := defaultMaxLineSize
@@ -295,9 +301,9 @@ func (s *GatewayService) handleCCBufferedFromAnthropic(
 
 	if err := scanner.Err(); err != nil {
 		if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-			logger.L().Warn("forward_as_cc buffered: read error",
+			logger.C(ctx).Warn("forward_as_cc buffered: read error",
 				zap.Error(err),
-				zap.String("request_id", requestID),
+				zap.String("upstream_request_id", requestID),
 			)
 		}
 	}
@@ -362,6 +368,12 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 	includeUsage bool,
 ) (*ForwardResult, error) {
 	requestID := resp.Header.Get("x-request-id")
+	// 本函数不接 ctx 参数，日志用的 request-scoped logger 从请求 ctx 取。
+	// 客户端断开后请求 ctx 会被 cancel，但 logger.C 只读 ctx value，不看 cancel 状态。
+	ctx := context.Background()
+	if c != nil && c.Request != nil {
+		ctx = c.Request.Context()
+	}
 
 	if s.responseHeaderFilter != nil {
 		responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
@@ -474,9 +486,9 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 
 	if err := scanner.Err(); err != nil {
 		if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-			logger.L().Warn("forward_as_cc stream: read error",
+			logger.C(ctx).Warn("forward_as_cc stream: read error",
 				zap.Error(err),
-				zap.String("request_id", requestID),
+				zap.String("upstream_request_id", requestID),
 			)
 		}
 	}
