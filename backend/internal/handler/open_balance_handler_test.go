@@ -6,11 +6,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
@@ -205,4 +208,125 @@ func TestRoundBalanceAmountKeepsFourDecimals(t *testing.T) {
 func TestOpenBalanceTestTokenMatchesServiceFormat(t *testing.T) {
 	require.True(t, service.IsValidAccessTokenFormat(openBalanceTestToken))
 	require.True(t, strings.HasPrefix(openBalanceTestToken, "sat-"))
+}
+
+type openBalanceLogSink struct {
+	mu     sync.Mutex
+	events []*logger.LogEvent
+}
+
+func (s *openBalanceLogSink) WriteLogEvent(event *logger.LogEvent) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.events = append(s.events, event)
+}
+
+func (s *openBalanceLogSink) find(t *testing.T, message string) *logger.LogEvent {
+	t.Helper()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, event := range s.events {
+		if event != nil && event.Message == message {
+			return event
+		}
+	}
+	t.Fatalf("没有 message 为 %q 的日志事件（收到 %d 条）", message, len(s.events))
+	return nil
+}
+
+// snapshot 把所有事件序列化成一段文本，用于哨兵扫描。
+func (s *openBalanceLogSink) snapshot() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var builder strings.Builder
+	for _, event := range s.events {
+		if event == nil {
+			continue
+		}
+		builder.WriteString(event.Message)
+		fmt.Fprintf(&builder, " %v\n", event.Fields)
+	}
+	return builder.String()
+}
+
+func newOpenBalanceLogSink(t *testing.T) *openBalanceLogSink {
+	t.Helper()
+	require.NoError(t, logger.Init(logger.InitOptions{
+		Level:       "debug",
+		Format:      "json",
+		ServiceName: "sub2api",
+		Environment: "test",
+		Output:      logger.OutputOptions{ToStdout: false, ToFile: false},
+		Sampling:    logger.SamplingOptions{Enabled: false},
+	}))
+	sink := &openBalanceLogSink{}
+	logger.SetSink(sink)
+	t.Cleanup(func() { logger.SetSink(nil) })
+	return sink
+}
+
+// 面向客户的 500 必须留下运维可辨识的痕迹：AbortWithError 不打日志，
+// RequestLogger 也不产出 per-request 访问行，不记的话「Redis 与 DB 双挂」和
+// 「用户行消失」在线上完全无法区分。同时：日志绝不能带令牌明文，响应体必须
+// 保持恒定文案、不泄露内部细节。
+func TestOpenBalanceFailurePathsAreLoggedWithoutTokenPlaintext(t *testing.T) {
+	const wantBody = `{"code":"BALANCE_UNAVAILABLE","message":"balance is temporarily unavailable"}`
+
+	t.Run("balance read", func(t *testing.T) {
+		sink := newOpenBalanceLogSink(t)
+		handler := &OpenBalanceHandler{
+			billingCache: &fakeOpenBalanceCache{err: errors.New("redis and db both down")},
+			users:        &fakeOpenBalanceUserReader{user: &service.User{ID: 7}},
+			accessTokens: &fakeOpenBalanceToucher{},
+		}
+
+		recorder := getOpenBalance(newOpenBalanceTestRouter(t, handler, 7, openBalanceTestToken))
+		require.Equal(t, http.StatusInternalServerError, recorder.Code)
+		require.JSONEq(t, wantBody, recorder.Body.String())
+
+		event := sink.find(t, "open_balance_read_failed")
+		require.EqualValues(t, 7, event.Fields["user_id"])
+		require.Contains(t, fmt.Sprint(event.Fields["error"]), "redis and db both down")
+		require.NotContains(t, sink.snapshot(), openBalanceTestToken, "日志里绝不能出现令牌明文")
+	})
+
+	t.Run("user read", func(t *testing.T) {
+		sink := newOpenBalanceLogSink(t)
+		handler := &OpenBalanceHandler{
+			billingCache: &fakeOpenBalanceCache{balance: 5},
+			users:        &fakeOpenBalanceUserReader{err: service.ErrUserNotFound},
+			accessTokens: &fakeOpenBalanceToucher{},
+		}
+
+		recorder := getOpenBalance(newOpenBalanceTestRouter(t, handler, 7, openBalanceTestToken))
+		require.Equal(t, http.StatusInternalServerError, recorder.Code)
+		require.JSONEq(t, wantBody, recorder.Body.String())
+
+		// 两条失败路径分开记：排查方向完全不同，合成一条就白记了。
+		event := sink.find(t, "open_balance_user_read_failed")
+		require.EqualValues(t, 7, event.Fields["user_id"])
+		require.NotContains(t, sink.snapshot(), openBalanceTestToken)
+	})
+
+	t.Run("missing dependencies", func(t *testing.T) {
+		sink := newOpenBalanceLogSink(t)
+		recorder := getOpenBalance(newOpenBalanceTestRouter(t, NewOpenBalanceHandler(nil, nil, nil), 7, openBalanceTestToken))
+		require.Equal(t, http.StatusInternalServerError, recorder.Code)
+		require.JSONEq(t, wantBody, recorder.Body.String())
+
+		event := sink.find(t, "open_balance_dependencies_missing")
+		require.Equal(t, true, event.Fields["billing_cache_missing"])
+		require.Equal(t, true, event.Fields["user_reader_missing"])
+	})
+
+	t.Run("success path stays silent", func(t *testing.T) {
+		sink := newOpenBalanceLogSink(t)
+		handler := &OpenBalanceHandler{
+			billingCache: &fakeOpenBalanceCache{balance: 5},
+			users:        &fakeOpenBalanceUserReader{user: &service.User{ID: 7}},
+			accessTokens: &fakeOpenBalanceToucher{},
+		}
+		require.Equal(t, http.StatusOK, getOpenBalance(newOpenBalanceTestRouter(t, handler, 7, openBalanceTestToken)).Code)
+		require.NotContains(t, sink.snapshot(), "open_balance_", "成功路径不该产生任何 open_balance_* 日志")
+	})
 }

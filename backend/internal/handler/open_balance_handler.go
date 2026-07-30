@@ -6,11 +6,13 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
 )
 
 // balanceSchemaVersion 是 /api/v1/open/balance 响应结构的版本号；字段语义发生
@@ -98,14 +100,27 @@ func (h *OpenBalanceHandler) GetBalance(c *gin.Context) {
 		middleware2.AbortWithError(c, http.StatusUnauthorized, "INVALID_ACCESS_TOKEN", "invalid access token")
 		return
 	}
+	ctx := c.Request.Context()
 	if h.billingCache == nil || h.users == nil {
+		logger.C(ctx).Warn("open_balance_dependencies_missing",
+			zap.Int64("user_id", subject.UserID),
+			zap.Bool("billing_cache_missing", h.billingCache == nil),
+			zap.Bool("user_reader_missing", h.users == nil),
+		)
 		abortBalanceUnavailable(c)
 		return
 	}
 
-	ctx := c.Request.Context()
 	balance, err := h.billingCache.GetUserBalance(ctx, subject.UserID)
 	if err != nil {
+		// 客户拿到的是一句恒定文案，运维侧的可辨识度全靠这条日志：
+		// AbortWithError 不打日志、RequestLogger 也不产出 per-request 访问行，
+		// 不记的话「Redis 与 DB 双挂」和「用户行消失」在线上完全无法区分。
+		// 刻意不记令牌明文。
+		logger.C(ctx).Warn("open_balance_read_failed",
+			zap.Int64("user_id", subject.UserID),
+			zap.Error(err),
+		)
 		// 读取失败时刻意不 touch last_used_at（§15.2）：那个字段的语义是「这枚
 		// 令牌成功取到过数据」，失败请求不该把它推新。
 		abortBalanceUnavailable(c)
@@ -113,6 +128,12 @@ func (h *OpenBalanceHandler) GetBalance(c *gin.Context) {
 	}
 	user, err := h.users.GetByID(ctx, subject.UserID)
 	if err != nil || user == nil {
+		// 与上面分开记：冻结余额来自用户读取，两条失败路径的排查方向完全不同。
+		logger.C(ctx).Warn("open_balance_user_read_failed",
+			zap.Int64("user_id", subject.UserID),
+			zap.Bool("user_missing", user == nil),
+			zap.Error(err),
+		)
 		abortBalanceUnavailable(c)
 		return
 	}

@@ -225,10 +225,35 @@ func TestUserAccessTokenRoutesAreForbiddenForUsersInBackendMode(t *testing.T) {
 	}
 }
 
-// 同一条路由在后台模式下对管理员仍然放行（BackendModeUserGuard 只挡非 admin）。
-func TestUserAccessTokenRoutesStayReachableForAdminInBackendMode(t *testing.T) {
+// 同一条路由在后台模式下对管理员仍然放行（BackendModeUserGuard 只挡非 admin），
+// 且三条自助路由都进了审计中间件。
+//
+// 后台模式的前置断言是必需的：管理员无论开关与否都会被放行，少了这一句本用例在
+// 进程级 backendModeCache 被污染时会静默变成「非后台模式下管理员可访问」的空转。
+//
+// auditedRoutes 的断言把审计表的键钉在**真实注册的** c.FullPath() 上：
+// middleware 侧的 TestAccessTokenSensitiveReadRoutesAreRegistered 断言表里存的是
+// 这几个字面量，两处合起来才能让「键写错一个字符 → 审计静默失效」暴露出来。
+func TestUserAccessTokenRoutesStayReachableAndAuditedForAdminInBackendMode(t *testing.T) {
 	harness := newAccessTokenRouteHarness(t, service.RoleAdmin, "10")
-	requireReachedHandler(t, harness.do(http.MethodGet, "/api/v1/user/access-token"))
+	require.True(t, harness.settingService.IsBackendModeEnabled(context.Background()), "后台模式必须开启，否则本用例没验证任何东西")
+
+	for _, request := range []struct {
+		method string
+		path   string
+	}{
+		{http.MethodGet, "/api/v1/user/access-token"},
+		{http.MethodPost, "/api/v1/user/access-token/rotate"},
+		{http.MethodDelete, "/api/v1/user/access-token"},
+	} {
+		requireReachedHandler(t, harness.do(request.method, request.path))
+	}
+
+	require.Equal(t, []string{
+		"GET /api/v1/user/access-token",
+		"POST /api/v1/user/access-token/rotate",
+		"DELETE /api/v1/user/access-token",
+	}, harness.auditedRoutes, "三条自助令牌路由都必须经过审计中间件，且 FullPath 与审计表的键一致")
 }
 
 // 后台模式下管理员可为目标用户查看 / 生成 / 撤销令牌，三条路由都走到 handler，
@@ -285,14 +310,7 @@ func TestUserAccessTokenRoutesDoNotRequireStepUp(t *testing.T) {
 	requireReachedHandler(t, harness.do(http.MethodGet, "/api/v1/user/access-token"))
 }
 
-// /api/v1/open 组刻意不挂 jwtAuth：未带面板会话的第三方客户请求不该被 401 挡下。
-// 桩认证只写 AuthSubject，若该组混入了 jwtAuth，真实链路上会多一道会话校验——
-// 这里用「注册时该组只有 2 个中间件之后才是 handler」的可观测代理：请求在没有
-// 任何 Authorization 头时依然走到了 handler。
-func TestOpenBalanceRouteHasNoPanelSessionRequirement(t *testing.T) {
-	harness := newAccessTokenRouteHarness(t, service.RoleUser, "10")
-	request := httptest.NewRequest(http.MethodGet, "/api/v1/open/balance", nil)
-	recorder := httptest.NewRecorder()
-	harness.router.ServeHTTP(recorder, request)
-	requireReachedHandler(t, recorder)
-}
+// 「/api/v1/open 组不挂 jwtAuth」这条性质无法在本 harness 里被证伪（jwtAuth 本身
+// 是 passthrough 桩，且从未传给 RegisterOpenAPIRoutes），原先这里的用例只是
+// TestOpenBalanceRouteStaysReachableInBackendMode 的副本，已删除。该性质由
+// routes/open.go 的形参列表在编译期保证：函数根本不接收 jwtAuth。
