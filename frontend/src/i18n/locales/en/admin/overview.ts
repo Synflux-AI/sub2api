@@ -784,6 +784,7 @@ export default {
         revokeFailed: 'Failed to revoke access token',
         loadFailed: 'Failed to load access token',
         loadErrorRetry: 'Retry',
+        userNotFound: 'This user no longer exists or has been deleted',
       }
     },
 

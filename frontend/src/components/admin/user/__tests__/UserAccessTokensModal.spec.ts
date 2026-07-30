@@ -214,6 +214,37 @@ describe('UserAccessTokensModal', () => {
     expect((wrapper.vm as any).showRevokeConfirm).toBe(false)
   })
 
+  it('discards a load response that resolves after the modal has already been closed (stale-request guard)', async () => {
+    // Traces the reviewer-found path: TotpStepUpDialog sits under BaseDialog's
+    // document-level Escape handler (closeOnEscape defaults true) with no
+    // stopPropagation, so Escape while a TOTP prompt is up for user A closes
+    // the underlying modal. Without a sequence guard, `token.value = await
+    // stepUp.run(...)` resolving afterwards would re-populate the (supposedly
+    // cleared) plaintext token in a closed modal's memory.
+    let resolveGet!: (value: typeof ACTIVE_TOKEN) => void
+    getUserAccessToken.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveGet = resolve
+        })
+    )
+    const wrapper = await mountModal()
+    await flushPromises()
+    expect((wrapper.vm as any).loading).toBe(true)
+
+    // Close before the in-flight request resolves.
+    await wrapper.setProps({ show: false })
+    expect((wrapper.vm as any).token).toBeNull()
+    expect((wrapper.vm as any).loading).toBe(false)
+
+    // Now let the stale request resolve.
+    resolveGet(ACTIVE_TOKEN)
+    await flushPromises()
+
+    expect((wrapper.vm as any).token).toBeNull()
+    expect((wrapper.vm as any).loading).toBe(false)
+  })
+
   it('re-fetches a fresh token when reopened for a different user instead of reusing stale state', async () => {
     getUserAccessToken.mockResolvedValueOnce(ACTIVE_TOKEN)
     const wrapper = await mountModal({ user: makeUser({ id: 42 }) })
@@ -249,6 +280,19 @@ describe('UserAccessTokensModal', () => {
     expect(wrapper.get('[data-testid="admin-access-token-value"]').text()).toContain('sat-plaintext-abc123')
   })
 
+  it('shows a localized message (not the raw backend string) when the target user no longer exists (404)', async () => {
+    // Backend admin.go resolveTarget returns a bare 404 with message "User not
+    // found" and no `reason`/`code` marker — must not be shown to the admin
+    // verbatim in English regardless of locale.
+    getUserAccessToken.mockRejectedValueOnce({ status: 404, message: 'User not found' })
+    const wrapper = await mountModal()
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="admin-access-token-load-error"]').exists()).toBe(true)
+    expect(showError).toHaveBeenCalledWith('admin.users.accessToken.userNotFound')
+    expect(showError).not.toHaveBeenCalledWith('User not found')
+  })
+
   it('copies the plaintext token via the clipboard composable without touching localStorage/sessionStorage', async () => {
     getUserAccessToken.mockResolvedValueOnce(ACTIVE_TOKEN)
     const wrapper = await mountModal()
@@ -264,14 +308,43 @@ describe('UserAccessTokensModal', () => {
   it('never persists the plaintext token to localStorage/sessionStorage or logs it to the console', async () => {
     const localSetItem = vi.spyOn(window.localStorage.__proto__, 'setItem')
     const sessionSetItem = vi.spyOn(window.sessionStorage.__proto__, 'setItem')
-    const consoleLog = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const consoleSpies = {
+      log: vi.spyOn(console, 'log').mockImplementation(() => {}),
+      warn: vi.spyOn(console, 'warn').mockImplementation(() => {}),
+      error: vi.spyOn(console, 'error').mockImplementation(() => {}),
+      info: vi.spyOn(console, 'info').mockImplementation(() => {}),
+      debug: vi.spyOn(console, 'debug').mockImplementation(() => {})
+    }
+
+    const touchedToken = (calls: unknown[][]) =>
+      calls.some((args) => args.some((arg) => typeof arg === 'string' && arg.includes('sat-plaintext')))
+
+    // Canary: this is a pure-negative assertion below (nothing contains the
+    // token), which passes trivially if the spies never fire at all. Prove
+    // each spy actually observes a matching write *before* trusting the
+    // negative assertions, so this test can genuinely fail if the component
+    // ever leaks the token through one of these channels. (localStorage and
+    // sessionStorage share the same Storage.prototype in this test
+    // environment, so both spies see both canary writes — clear both after.)
+    window.localStorage.setItem('canary', 'sat-plaintext-canary-proof')
+    window.sessionStorage.setItem('canary', 'sat-plaintext-canary-proof')
+    expect(touchedToken(localSetItem.mock.calls)).toBe(true)
+    expect(touchedToken(sessionSetItem.mock.calls)).toBe(true)
+    localSetItem.mockClear()
+    sessionSetItem.mockClear()
+    window.localStorage.removeItem('canary')
+    window.sessionStorage.removeItem('canary')
 
     getUserAccessToken.mockResolvedValueOnce(ACTIVE_TOKEN)
     rotateUserAccessToken.mockResolvedValueOnce(ROTATED_TOKEN)
     const wrapper = await mountModal()
     await flushPromises()
 
-    // view -> generate/rotate -> copy -> revoke: full lifecycle of the plaintext token
+    // view -> generate/rotate -> copy -> revoke: full lifecycle of the plaintext token.
+    // (copyToClipboard itself is mocked at module level for every test in this file —
+    // this test asserts the *component* never writes the plaintext directly through
+    // these channels; the shared clipboard composable's own hygiene is a separate,
+    // already-generic utility outside this component's responsibility.)
     await wrapper.get('[data-testid="admin-access-token-generate"]').trigger('click')
     await flushPromises()
     const copyButton = wrapper.findAll('button').find((b) => b.text().includes('common.copy'))
@@ -280,14 +353,14 @@ describe('UserAccessTokensModal', () => {
     await wrapper.get('[data-testid="confirm-dialog-confirm"]').trigger('click')
     await flushPromises()
 
-    const touchedToken = (calls: unknown[][]) =>
-      calls.some((args) => args.some((arg) => typeof arg === 'string' && arg.includes('sat-plaintext')))
     expect(touchedToken(localSetItem.mock.calls)).toBe(false)
     expect(touchedToken(sessionSetItem.mock.calls)).toBe(false)
-    expect(touchedToken(consoleLog.mock.calls)).toBe(false)
+    for (const [name, spy] of Object.entries(consoleSpies)) {
+      expect(touchedToken(spy.mock.calls), `console.${name} must never log the plaintext token`).toBe(false)
+    }
 
     localSetItem.mockRestore()
     sessionSetItem.mockRestore()
-    consoleLog.mockRestore()
+    for (const spy of Object.values(consoleSpies)) spy.mockRestore()
   })
 })

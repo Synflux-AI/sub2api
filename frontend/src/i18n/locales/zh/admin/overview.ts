@@ -781,6 +781,7 @@ export default {
         revokeFailed: '撤销访问令牌失败',
         loadFailed: '加载访问令牌失败',
         loadErrorRetry: '重试',
+        userNotFound: '该用户不存在或已被删除',
       }
     },
 

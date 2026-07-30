@@ -131,17 +131,31 @@ const actionBusy = ref(false)
 const token = ref<UserAccessToken | null>(null)
 const showRevokeConfirm = ref(false)
 
+// 单调递增的请求序号：每次弹窗关闭、或发起一个新的 load/rotate/revoke 时递增。
+// load()/rotate()/revoke() 在各自的 await 之后都要比对自己出发时捕获的序号，
+// 序号已经变化（弹窗关了，或又发起了别的请求）就丢弃这次结果，绝不写回 token。
+// 不然会出现：TotpStepUpDialog 挂在 document 级 Escape 监听之下（BaseDialog 的
+// closeOnEscape 默认 true），管理员在等 A 用户的 TOTP 时按了 Escape 关闭弹窗——
+// 关闭分支把 token 清空了，但如果 stepUp.run 稍后才 resolve，不加守卫就会把
+// A 用户的明文令牌重新写回一个已经关闭的弹窗的内存里，白白留了个"已清空"却又
+// 被复活的明文令牌，而这正是清空逻辑本该杜绝的场景。
+let requestSeq = 0
+
 watch(() => props.show, (v) => {
   if (v && props.user) {
     void load()
   } else {
     // 弹窗关闭：清空明文令牌与所有操作状态，避免下次打开（哪怕换了别的用户）
     // 时先闪现上一个用户的令牌或残留一个已经过期的确认框。
+    requestSeq += 1
     token.value = null
     loading.value = false
     loadFailed.value = false
     actionBusy.value = false
     showRevokeConfirm.value = false
+    // 关闭时同时收起 step-up 弹窗、拒绝其挂起的 promise，避免 TOTP 对话框
+    // 在弹窗已经关闭之后仍然悬空展示、没有归属的父弹窗。
+    stepUp.onCancel()
   }
 })
 
@@ -156,11 +170,15 @@ function reportStepUpBlocked(error: unknown): void {
 async function load(): Promise<void> {
   if (!props.user) return
   const userId = props.user.id
+  const seq = ++requestSeq
   loading.value = true
   loadFailed.value = false
   try {
-    token.value = await stepUp.run(() => adminAPI.accessTokens.getUserAccessToken(userId))
+    const result = await stepUp.run(() => adminAPI.accessTokens.getUserAccessToken(userId))
+    if (seq !== requestSeq) return // 弹窗已经关闭（或又发起了新请求），丢弃这次结果
+    token.value = result
   } catch (error) {
+    if (seq !== requestSeq) return // 同上：过期请求的失败也不该再影响当前状态
     // 取消二次验证 / 被 step-up 挡下 / 其它任何失败都不能落入「未生成」空态，
     // 一律停在可重试的错误态（理由见上方模板注释）。
     loadFailed.value = true
@@ -168,11 +186,14 @@ async function load(): Promise<void> {
       // 静默：用户主动取消，不额外弹错误提示
     } else if (isStepUpBlocked(error)) {
       reportStepUpBlocked(error)
+    } else if ((error as { status?: number })?.status === 404) {
+      // 目标用户已不存在：后端返回的原始 message 是英文且未做 i18n，改用本地化文案
+      appStore.showError(t('admin.users.accessToken.userNotFound'))
     } else {
       appStore.showError((error as { message?: string })?.message || t('admin.users.accessToken.loadFailed'))
     }
   } finally {
-    loading.value = false
+    if (seq === requestSeq) loading.value = false
   }
 }
 
@@ -184,9 +205,12 @@ async function handleRotate(): Promise<void> {
   if (!props.user) return
   const userId = props.user.id
   const wasFirstGeneration = !token.value || !token.value.token
+  const seq = ++requestSeq
   actionBusy.value = true
   try {
-    token.value = await stepUp.run(() => adminAPI.accessTokens.rotateUserAccessToken(userId))
+    const result = await stepUp.run(() => adminAPI.accessTokens.rotateUserAccessToken(userId))
+    if (seq !== requestSeq) return // 弹窗已经关闭（或换了用户），丢弃这次结果，不复活明文令牌
+    token.value = result
     appStore.showSuccess(
       wasFirstGeneration
         ? t('admin.users.accessToken.generateSuccess')
@@ -194,6 +218,7 @@ async function handleRotate(): Promise<void> {
     )
     emit('success')
   } catch (error) {
+    if (seq !== requestSeq) return
     if (isStepUpCancelled(error)) {
       // 用户主动取消：静默返回，弹窗保持打开，令牌状态不变
     } else if (isStepUpBlocked(error)) {
@@ -205,7 +230,7 @@ async function handleRotate(): Promise<void> {
       )
     }
   } finally {
-    actionBusy.value = false
+    if (seq === requestSeq) actionBusy.value = false
   }
 }
 
@@ -217,13 +242,16 @@ async function handleRevoke(): Promise<void> {
   if (!props.user) return
   const userId = props.user.id
   showRevokeConfirm.value = false
+  const seq = ++requestSeq
   actionBusy.value = true
   try {
     await stepUp.run(() => adminAPI.accessTokens.revokeUserAccessToken(userId))
+    if (seq !== requestSeq) return // 弹窗已经关闭（或换了用户），不覆盖当前状态、不误报成功
     token.value = { token: null, created_at: null, last_used_at: null }
     appStore.showSuccess(t('admin.users.accessToken.revokeSuccess'))
     emit('success')
   } catch (error) {
+    if (seq !== requestSeq) return
     if (isStepUpCancelled(error)) {
       // 用户主动取消：静默返回
     } else if (isStepUpBlocked(error)) {
@@ -232,7 +260,7 @@ async function handleRevoke(): Promise<void> {
       appStore.showError((error as { message?: string })?.message || t('admin.users.accessToken.revokeFailed'))
     }
   } finally {
-    actionBusy.value = false
+    if (seq === requestSeq) actionBusy.value = false
   }
 }
 
