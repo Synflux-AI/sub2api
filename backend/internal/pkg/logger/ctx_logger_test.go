@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"go.uber.org/zap"
 )
 
@@ -147,8 +148,13 @@ func TestCtxPrintf_CarriesRequestScopedFields(t *testing.T) {
 		}
 	}
 
-	if legacy, _ := payload["legacy_printf"].(bool); !legacy {
-		t.Errorf("legacy_printf should stay true as the printf-style marker (line=%s)", line)
+	if ctxPrintf, _ := payload[CtxPrintfField].(bool); !ctxPrintf {
+		t.Errorf("ctx_printf should mark printf-style lines that already carry ctx (line=%s)", line)
+	}
+	// legacy_printf 是「未迁移」的进度度量口径，已迁移的行不能再占用它，
+	// 否则 count(*) WHERE legacy_printf = true 永远降不下去。
+	if _, ok := payload[LegacyPrintfField]; ok {
+		t.Errorf("migrated line must not carry legacy_printf, it is the not-yet-migrated metric (line=%s)", line)
 	}
 	// "error" 关键字应推导为 error 级别，与 LegacyPrintf 保持一致。
 	if level, _ := payload["level"].(string); !strings.EqualFold(level, "error") {
@@ -186,12 +192,12 @@ func TestCtxPrintf_EmptyMessageIsDropped(t *testing.T) {
 	// 只有 sentinel 那条应落盘，空消息与 LegacyPrintf 一样被丢弃。
 	count := 0
 	for _, line := range lines {
-		if strings.Contains(line, "legacy_printf") {
+		if strings.Contains(line, CtxPrintfField) {
 			count++
 		}
 	}
 	if count != 1 {
-		t.Fatalf("expected exactly 1 legacy_printf line, got %d:\n%s", count, strings.Join(lines, "\n"))
+		t.Fatalf("expected exactly 1 ctx_printf line, got %d:\n%s", count, strings.Join(lines, "\n"))
 	}
 	findLine(t, lines, "ctxprintf-sentinel")
 }
@@ -235,6 +241,99 @@ func TestC_MatchesFromContext(t *testing.T) {
 	}
 	if C(nil) != FromContext(nil) { //nolint:staticcheck // 显式覆盖 nil ctx 兜底路径
 		t.Fatal("C(nil) must match FromContext(nil)")
+	}
+}
+
+// backgroundCorrelationContext 模拟 handler.usageRecordContext 那类 helper：
+// 只把 ctxkey 关联 ID 从请求 ctx 搬到脱离请求生命周期的 ctx，没有搬 logger。
+func backgroundCorrelationContext() context.Context {
+	ctx := context.WithValue(context.Background(), ctxkey.RequestID, "req-bg")
+	ctx = context.WithValue(ctx, ctxkey.TraceID, "trace-bg")
+	return context.WithValue(ctx, ctxkey.ClientRequestID, "  client-bg  ")
+}
+
+// TestFromContext_RebuildsFromCtxKeysWhenLoggerMissing 覆盖后台 ctx 兜底：
+// ctx 里有关联 ID 但没有 IntoContext 塞的 logger 时，字段必须现场组出来，
+// 否则脱离请求生命周期的 usage / ops 日志会静默丢 trace_id。
+func TestFromContext_RebuildsFromCtxKeysWhenLoggerMissing(t *testing.T) {
+	lines := captureStdoutJSON(t, func() {
+		C(backgroundCorrelationContext()).Warn("background-ctxkey-probe",
+			zap.String("component", "service.usage_record_worker_pool"))
+		CtxPrintf(backgroundCorrelationContext(), "service.gateway", "background-ctxprintf-probe")
+	})
+
+	for _, needle := range []string{"background-ctxkey-probe", "background-ctxprintf-probe"} {
+		line := findLine(t, lines, needle)
+		payload := parseLine(t, line)
+		for key, want := range map[string]string{
+			"request_id": "req-bg",
+			"trace_id":   "trace-bg",
+			// 两端空白要按 RequestLogger() 的口径 trim 掉。
+			"client_request_id": "client-bg",
+		} {
+			if got, _ := payload[key].(string); got != want {
+				t.Errorf("%s: field %s = %q, want %q (line=%s)", needle, key, got, want, line)
+			}
+		}
+		assertNoDuplicateKeys(t, line, "request_id", "trace_id", "client_request_id")
+	}
+}
+
+// TestFromContext_PrefersInjectedLoggerOverCtxKeys 兜底不能盖掉正常路径：
+// ctx 同时有 logger 和 ctxkey 时必须用 logger，否则 path / method 这些
+// 只有中间件知道的字段会丢，而且会跟 ctxkey 组出的字段撞成重复 key。
+func TestFromContext_PrefersInjectedLoggerOverCtxKeys(t *testing.T) {
+	lines := captureStdoutJSON(t, func() {
+		ctx := context.WithValue(requestScopedContext(), ctxkey.TraceID, "trace-from-ctxkey")
+		C(ctx).Warn("prefer-injected-logger-probe")
+	})
+
+	line := findLine(t, lines, "prefer-injected-logger-probe")
+	payload := parseLine(t, line)
+	if got, _ := payload["trace_id"].(string); got != "trace-xyz" {
+		t.Errorf("trace_id = %q, want trace-xyz from the injected logger (line=%s)", got, line)
+	}
+	if got, _ := payload["path"].(string); got != "/v1/messages" {
+		t.Errorf("path = %q, injected logger fields must survive (line=%s)", got, line)
+	}
+	assertNoDuplicateKeys(t, line, "trace_id", "request_id", "client_request_id")
+}
+
+// TestFromContext_NoCorrelationKeysStaysOnGlobal 没有任何关联 ID 时不应凭空造字段。
+func TestFromContext_NoCorrelationKeysStaysOnGlobal(t *testing.T) {
+	if got := FromContext(context.Background()); got != L() {
+		t.Error("bare context must return the global logger unchanged")
+	}
+	// 空白字符串等同于缺失，不能组出一个空 trace_id。
+	ctx := context.WithValue(context.Background(), ctxkey.TraceID, "   ")
+	if got := FromContext(ctx); got != L() {
+		t.Error("blank correlation id must not synthesize a field")
+	}
+}
+
+// TestPrintfMarkersAreMutuallyExclusive 锁住 #103 的进度度量口径：
+// legacy_printf 严格等于「未迁移」，ctx_printf 等于「已迁移但仍是 printf 风格」。
+// 一旦两者出现在同一行，count(*) WHERE legacy_printf = true 就不再单调下降。
+func TestPrintfMarkersAreMutuallyExclusive(t *testing.T) {
+	lines := captureStdoutJSON(t, func() {
+		LegacyPrintf("service.gateway", "printf-marker-legacy")
+		CtxPrintf(requestScopedContext(), "service.gateway", "printf-marker-ctx")
+	})
+
+	legacy := parseLine(t, findLine(t, lines, "printf-marker-legacy"))
+	if v, _ := legacy[LegacyPrintfField].(bool); !v {
+		t.Errorf("LegacyPrintf must keep the legacy_printf marker, got: %v", legacy)
+	}
+	if _, ok := legacy[CtxPrintfField]; ok {
+		t.Errorf("LegacyPrintf must not carry ctx_printf, got: %v", legacy)
+	}
+
+	ctxLine := parseLine(t, findLine(t, lines, "printf-marker-ctx"))
+	if v, _ := ctxLine[CtxPrintfField].(bool); !v {
+		t.Errorf("CtxPrintf must carry the ctx_printf marker, got: %v", ctxLine)
+	}
+	if _, ok := ctxLine[LegacyPrintfField]; ok {
+		t.Errorf("CtxPrintf must not carry legacy_printf, got: %v", ctxLine)
 	}
 }
 

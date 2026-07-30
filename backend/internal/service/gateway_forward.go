@@ -992,7 +992,7 @@ func (s *GatewayService) needsUpstreamChannelRestrictionCheck(ctx context.Contex
 	}
 	ch, err := s.channelService.GetChannelForGroup(ctx, *groupID)
 	if err != nil {
-		logger.C(ctx).Warn("failed to check channel upstream restriction",
+		gatewayLog(ctx).Warn("failed to check channel upstream restriction",
 			zap.Int64("group_id", *groupID),
 			zap.Error(err),
 		)

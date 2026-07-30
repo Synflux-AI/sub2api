@@ -70,7 +70,7 @@ func (s *GatewayService) SelectAccountForModelWithExclusions(ctx context.Context
 	// Claude Code 限制可能已将 groupID 解析为 fallback group，
 	// 渠道限制预检查必须使用解析后的分组。
 	if s.checkChannelPricingRestriction(ctx, groupID, requestedModel) {
-		logger.C(ctx).Warn("channel pricing restriction blocked request",
+		gatewayLog(ctx).Warn("channel pricing restriction blocked request",
 			zap.Int64("group_id", derefGroupID(groupID)),
 			zap.String("model", requestedModel),
 		)
@@ -105,7 +105,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 	for id := range excludedIDs {
 		excludedIDsList = append(excludedIDsList, id)
 	}
-	logger.C(ctx).Debug("account_scheduling_starting",
+	gatewayLog(ctx).Debug("account_scheduling_starting",
 		zap.Int64("group_id", derefGroupID(groupID)),
 		zap.String("model", requestedModel),
 		zap.String("session", shortSessionHash(sessionHash)),
@@ -124,7 +124,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 	// Claude Code 限制可能已将 groupID 解析为 fallback group，
 	// 渠道限制预检查必须使用解析后的分组。
 	if s.checkChannelPricingRestriction(ctx, groupID, requestedModel) {
-		logger.C(ctx).Warn("channel pricing restriction blocked request",
+		gatewayLog(ctx).Warn("channel pricing restriction blocked request",
 			zap.Int64("group_id", derefGroupID(groupID)),
 			zap.String("model", requestedModel),
 		)
@@ -144,7 +144,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 	}
 
 	// [DEBUG-STICKY] 调度器入口日志
-	logger.C(ctx).Info("sticky.scheduler_entry",
+	gatewayLog(ctx).Info("sticky.scheduler_entry",
 		zap.Int64("group_id", derefGroupID(groupID)),
 		zap.String("session_hash", shortSessionHash(sessionHash)),
 		zap.Int64("sticky_account_id", stickyAccountID),
@@ -315,7 +315,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 		if len(routingCandidates) > 0 {
 			// 1.5. 在路由账号范围内检查粘性会话
 			if sessionHash != "" && stickyAccountID > 0 {
-				logger.C(ctx).Debug("sticky.layer1_5_checking",
+				gatewayLog(ctx).Debug("sticky.layer1_5_checking",
 					zap.Int64("sticky_account_id", stickyAccountID),
 					zap.Bool("in_routing_list", containsInt64(routingAccountIDs, stickyAccountID)),
 					zap.Bool("is_excluded", isExcluded(stickyAccountID)),
@@ -345,7 +345,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 									stickyCacheMissReason = "session_limit"
 									// 继续到负载感知选择
 								} else {
-									logger.C(ctx).Debug("sticky.layer1_5_hit",
+									gatewayLog(ctx).Debug("sticky.layer1_5_hit",
 										zap.Int64("account_id", stickyAccountID),
 										zap.String("session", shortSessionHash(sessionHash)),
 										zap.String("result", "slot_acquired"),
@@ -492,7 +492,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 				// 检查账户是否需要清理粘性会话绑定
 				clearSticky := shouldClearStickySession(account, requestedModel)
 				if clearSticky {
-					logger.C(ctx).Debug("sticky.layer1_5_no_routing_clear",
+					gatewayLog(ctx).Debug("sticky.layer1_5_no_routing_clear",
 						zap.Int64("account_id", accountID),
 						zap.String("reason", "should_clear_sticky_session"),
 						zap.String("session", shortSessionHash(sessionHash)),
@@ -511,7 +511,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 				rpmOK := s.isAccountSchedulableForRPM(ctx, account, true)
 				schedulable := s.isAccountSchedulableForSelection(account)
 
-				logger.C(ctx).Debug("sticky.layer1_5_no_routing_checks",
+				gatewayLog(ctx).Debug("sticky.layer1_5_no_routing_checks",
 					zap.Int64("account_id", accountID),
 					zap.String("session", shortSessionHash(sessionHash)),
 					zap.Bool("clear_sticky", clearSticky),
@@ -530,13 +530,13 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 						// 会话数量限制检查
 						if !s.checkAndRegisterSession(ctx, account, sessionHash) {
 							result.ReleaseFunc() // 释放槽位，继续到 Layer 2
-							logger.C(ctx).Debug("sticky.layer1_5_no_routing_miss",
+							gatewayLog(ctx).Debug("sticky.layer1_5_no_routing_miss",
 								zap.Int64("account_id", accountID),
 								zap.String("reason", "session_limit"),
 								zap.String("session", shortSessionHash(sessionHash)),
 							)
 						} else {
-							logger.C(ctx).Debug("sticky.layer1_5_no_routing_hit",
+							gatewayLog(ctx).Debug("sticky.layer1_5_no_routing_hit",
 								zap.Int64("account_id", accountID),
 								zap.String("session", shortSessionHash(sessionHash)),
 								zap.String("result", "slot_acquired"),
@@ -547,7 +547,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 							return s.newSelectionResult(ctx, account, true, result.ReleaseFunc, nil)
 						}
 					} else {
-						logger.C(ctx).Debug("sticky.layer1_5_no_routing_slot_busy",
+						gatewayLog(ctx).Debug("sticky.layer1_5_no_routing_slot_busy",
 							zap.Int64("account_id", accountID),
 							zap.String("session", shortSessionHash(sessionHash)),
 						)
@@ -559,7 +559,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 						if !s.checkAndRegisterSession(ctx, account, sessionHash) {
 							// 会话限制已满，继续到 Layer 2
 						} else {
-							logger.C(ctx).Debug("sticky.layer1_5_no_routing_hit",
+							gatewayLog(ctx).Debug("sticky.layer1_5_no_routing_hit",
 								zap.Int64("account_id", accountID),
 								zap.String("session", shortSessionHash(sessionHash)),
 								zap.String("result", "wait_plan"),
@@ -573,14 +573,14 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 						}
 					}
 				} else if !clearSticky {
-					logger.C(ctx).Debug("sticky.layer1_5_no_routing_miss",
+					gatewayLog(ctx).Debug("sticky.layer1_5_no_routing_miss",
 						zap.Int64("account_id", accountID),
 						zap.String("reason", "gate_check_failed"),
 						zap.String("session", shortSessionHash(sessionHash)),
 					)
 				}
 			} else {
-				logger.C(ctx).Debug("sticky.layer1_5_no_routing_miss",
+				gatewayLog(ctx).Debug("sticky.layer1_5_no_routing_miss",
 					zap.Int64("account_id", accountID),
 					zap.String("reason", "account_not_in_map"),
 					zap.String("session", shortSessionHash(sessionHash)),
@@ -588,7 +588,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 			}
 		}
 	} else if len(routingAccountIDs) == 0 && sessionHash != "" {
-		logger.C(ctx).Debug("sticky.layer1_5_no_routing_skip",
+		gatewayLog(ctx).Debug("sticky.layer1_5_no_routing_skip",
 			zap.Int64("sticky_account_id", stickyAccountID),
 			zap.Bool("is_excluded", func() bool { return stickyAccountID > 0 && isExcluded(stickyAccountID) }()),
 			zap.String("session", shortSessionHash(sessionHash)),
@@ -602,7 +602,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 	}
 
 	// ============ Layer 2: 负载感知选择 ============
-	logger.C(ctx).Debug("sticky.layer2_fallback",
+	gatewayLog(ctx).Debug("sticky.layer2_fallback",
 		zap.String("session", shortSessionHash(sessionHash)),
 		zap.Int64("sticky_account_id", stickyAccountID),
 		zap.String("reason", "sticky_not_used_falling_back_to_load_balance"),
@@ -964,7 +964,7 @@ func (s *GatewayService) listSchedulableAccounts(ctx context.Context, groupID *i
 	if s.schedulerSnapshot != nil {
 		accounts, useMixed, err := s.schedulerSnapshot.ListSchedulableAccounts(ctx, groupID, platform, hasForcePlatform)
 		if err == nil {
-			logger.C(ctx).Debug("account_scheduling_list_snapshot",
+			gatewayLog(ctx).Debug("account_scheduling_list_snapshot",
 				zap.Int64("group_id", derefGroupID(groupID)),
 				zap.String("platform", platform),
 				zap.Bool("use_mixed", useMixed),
@@ -972,7 +972,7 @@ func (s *GatewayService) listSchedulableAccounts(ctx context.Context, groupID *i
 			)
 			if slog.Default().Enabled(ctx, slog.LevelDebug) {
 				for _, acc := range accounts {
-					logger.C(ctx).Debug("account_scheduling_account_detail",
+					gatewayLog(ctx).Debug("account_scheduling_account_detail",
 						zap.Int64("account_id", acc.ID),
 						zap.String("name", acc.Name),
 						zap.String("platform", acc.Platform),
@@ -998,7 +998,7 @@ func (s *GatewayService) listSchedulableAccounts(ctx context.Context, groupID *i
 			accounts, err = s.accountRepo.ListSchedulableUngroupedByPlatforms(ctx, platforms)
 		}
 		if err != nil {
-			logger.C(ctx).Debug("account_scheduling_list_failed",
+			gatewayLog(ctx).Debug("account_scheduling_list_failed",
 				zap.Int64("group_id", derefGroupID(groupID)),
 				zap.String("platform", platform),
 				zap.Error(err),
@@ -1012,7 +1012,7 @@ func (s *GatewayService) listSchedulableAccounts(ctx context.Context, groupID *i
 			}
 			filtered = append(filtered, acc)
 		}
-		logger.C(ctx).Debug("account_scheduling_list_mixed",
+		gatewayLog(ctx).Debug("account_scheduling_list_mixed",
 			zap.Int64("group_id", derefGroupID(groupID)),
 			zap.String("platform", platform),
 			zap.Int("raw_count", len(accounts)),
@@ -1020,7 +1020,7 @@ func (s *GatewayService) listSchedulableAccounts(ctx context.Context, groupID *i
 		)
 		if slog.Default().Enabled(ctx, slog.LevelDebug) {
 			for _, acc := range filtered {
-				logger.C(ctx).Debug("account_scheduling_account_detail",
+				gatewayLog(ctx).Debug("account_scheduling_account_detail",
 					zap.Int64("account_id", acc.ID),
 					zap.String("name", acc.Name),
 					zap.String("platform", acc.Platform),
@@ -1044,21 +1044,21 @@ func (s *GatewayService) listSchedulableAccounts(ctx context.Context, groupID *i
 		accounts, err = s.accountRepo.ListSchedulableUngroupedByPlatform(ctx, platform)
 	}
 	if err != nil {
-		logger.C(ctx).Debug("account_scheduling_list_failed",
+		gatewayLog(ctx).Debug("account_scheduling_list_failed",
 			zap.Int64("group_id", derefGroupID(groupID)),
 			zap.String("platform", platform),
 			zap.Error(err),
 		)
 		return nil, useMixed, err
 	}
-	logger.C(ctx).Debug("account_scheduling_list_single",
+	gatewayLog(ctx).Debug("account_scheduling_list_single",
 		zap.Int64("group_id", derefGroupID(groupID)),
 		zap.String("platform", platform),
 		zap.Int("count", len(accounts)),
 	)
 	if slog.Default().Enabled(ctx, slog.LevelDebug) {
 		for _, acc := range accounts {
-			logger.C(ctx).Debug("account_scheduling_account_detail",
+			gatewayLog(ctx).Debug("account_scheduling_account_detail",
 				zap.Int64("account_id", acc.ID),
 				zap.String("name", acc.Name),
 				zap.String("platform", acc.Platform),
@@ -1221,7 +1221,7 @@ func (s *GatewayService) withWindowCostPrefetch(ctx context.Context, accounts []
 			queryStart := time.Now()
 			statsByAccount, err := batchReader.GetAccountWindowStatsBatch(ctx, ids, startTime)
 			if err == nil {
-				logger.C(ctx).Debug("window_cost_batch_query_ok",
+				gatewayLog(ctx).Debug("window_cost_batch_query_ok",
 					zap.Int("accounts", len(ids)),
 					zap.String("window_start", startTime.Format(time.RFC3339)),
 					zap.Int64("duration_ms", time.Since(queryStart).Milliseconds()),

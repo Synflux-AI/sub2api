@@ -29,6 +29,9 @@ var ctxLoggingMigratedFiles = []string{
 	"openai_gateway_chat_completions_raw.go",
 	"gateway_forward_as_chat_completions.go",
 	"bedrock_stream.go",
+	// Live/realtime：原先靠 base logger 预绑的 component="http" 兜着，
+	// #103 取消预绑后改由 openaiLiveLog 显式带。
+	"openai_live.go",
 }
 
 // knownCtxLoggingExemptions 是明确豁免的调用点：函数签名里没有 ctx，
@@ -37,10 +40,15 @@ var ctxLoggingMigratedFiles = []string{
 // key 是 "文件名:函数名"。后续给这些函数补 ctx 参数后，从这里删掉即可。
 var knownCtxLoggingExemptions = map[string]string{
 	"gateway_upstream_response.go:isThinkingBlockSignatureError": "该函数无 ctx 参数，4 处 [SignatureCheck] 日志待后续补 ctx 形参后迁移",
+	"openai_live.go:openaiLiveLog":                               "component 绑定 helper 本身，它就是本文件其余调用点的正确出口",
 }
 
 // TestGatewayForwardPath_UsesCtxAwareLogging 禁止已迁移文件重新出现
 // 无 ctx 的日志出口：logger.LegacyPrintf、logger.L()、裸 slog.Info/Warn/Error/Debug。
+//
+// 也禁止裸 logger.C(ctx)：它虽然带 ctx，但不带 component，日志会落进空 component 桶，
+// #103 的验收口径（按 component 统计 trace_id 覆盖率）就看不到 service.* 从 0% 涨上来，
+// ops_system_logs 里还会被记成 component="app"。转发链路统一走 gatewayLog / openaiGatewayLog。
 //
 // 用 AST 而不是文本匹配：注释和字符串字面量里的同名内容不会误报，
 // 而 slog.Default().Enabled(ctx, ...) 这类 level 门控（不是日志发射）也能正确放过。
@@ -48,13 +56,15 @@ func TestGatewayForwardPath_UsesCtxAwareLogging(t *testing.T) {
 	forbidden := map[string]map[string]string{
 		"logger": {
 			"LegacyPrintf": "改用 logger.CtxPrintf(ctx, component, format, args...)",
-			"L":            "改用 logger.C(ctx)",
+			"L":            "改用 gatewayLog(ctx) / openaiGatewayLog(ctx)",
+			"C":            "改用 gatewayLog(ctx) / openaiGatewayLog(ctx)，裸 logger.C 不带 component",
+			"FromContext":  "改用 gatewayLog(ctx) / openaiGatewayLog(ctx)，裸 FromContext 不带 component",
 		},
 		"slog": {
-			"Info":  "改用 logger.C(ctx).Info(...)（注意 slog 的 key-value 变参要转成 zap.Field）",
-			"Warn":  "改用 logger.C(ctx).Warn(...)（注意 slog 的 key-value 变参要转成 zap.Field）",
-			"Error": "改用 logger.C(ctx).Error(...)（注意 slog 的 key-value 变参要转成 zap.Field）",
-			"Debug": "改用 logger.C(ctx).Debug(...)（注意 slog 的 key-value 变参要转成 zap.Field）",
+			"Info":  "改用 gatewayLog(ctx).Info(...)（注意 slog 的 key-value 变参要转成 zap.Field）",
+			"Warn":  "改用 gatewayLog(ctx).Warn(...)（注意 slog 的 key-value 变参要转成 zap.Field）",
+			"Error": "改用 gatewayLog(ctx).Error(...)（注意 slog 的 key-value 变参要转成 zap.Field）",
+			"Debug": "改用 gatewayLog(ctx).Debug(...)（注意 slog 的 key-value 变参要转成 zap.Field）",
 		},
 	}
 
@@ -176,8 +186,8 @@ func enclosingFuncName(file *ast.File, pos token.Pos) string {
 // TestCtxLoggingMigratedFilesListIsSane 防止列表退化成空或出现重复项，
 // 那样上面两个基线测试会变成静默通过。
 func TestCtxLoggingMigratedFilesListIsSane(t *testing.T) {
-	if len(ctxLoggingMigratedFiles) < 9 {
-		t.Fatalf("已迁移文件列表只剩 %d 项，#103 首阶段有 9 个文件；只增不减",
+	if len(ctxLoggingMigratedFiles) < 10 {
+		t.Fatalf("已迁移文件列表只剩 %d 项，#103 首阶段有 10 个文件；只增不减",
 			len(ctxLoggingMigratedFiles))
 	}
 	seen := map[string]bool{}

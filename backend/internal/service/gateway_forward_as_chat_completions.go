@@ -14,7 +14,6 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/util/responseheaders"
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
@@ -77,7 +76,7 @@ func (s *GatewayService) ForwardAsChatCompletions(
 	}
 	anthropicReq.Model = mappedModel
 
-	logger.C(ctx).Debug("gateway forward_as_chat_completions: model mapping applied",
+	gatewayLog(ctx).Debug("gateway forward_as_chat_completions: model mapping applied",
 		zap.Int64("account_id", account.ID),
 		zap.String("original_model", originalModel),
 		zap.String("mapped_model", mappedModel),
@@ -301,7 +300,7 @@ func (s *GatewayService) handleCCBufferedFromAnthropic(
 
 	if err := scanner.Err(); err != nil {
 		if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-			logger.C(ctx).Warn("forward_as_cc buffered: read error",
+			gatewayLog(ctx).Warn("forward_as_cc buffered: read error",
 				zap.Error(err),
 				zap.String("upstream_request_id", requestID),
 			)
@@ -486,7 +485,7 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 
 	if err := scanner.Err(); err != nil {
 		if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-			logger.C(ctx).Warn("forward_as_cc stream: read error",
+			gatewayLog(ctx).Warn("forward_as_cc stream: read error",
 				zap.Error(err),
 				zap.String("upstream_request_id", requestID),
 			)
