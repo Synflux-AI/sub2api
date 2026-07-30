@@ -2761,6 +2761,35 @@
         />
       </div>
 
+      <!-- 出站注入 X-Trace-Id（所有账号类型可用，默认关闭） -->
+      <div class="border-t border-gray-200 pt-4 dark:border-dark-600">
+        <div class="flex items-center justify-between">
+          <div>
+            <label class="input-label mb-0">{{ t('admin.accounts.traceId.passthrough') }}</label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.traceId.passthroughDesc') }}
+            </p>
+          </div>
+          <button
+            id="create-account-trace-id-passthrough-toggle"
+            type="button"
+            @click="traceIdPassthroughEnabled = !traceIdPassthroughEnabled"
+            :class="[
+              'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
+              traceIdPassthroughEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
+            ]"
+            :aria-pressed="traceIdPassthroughEnabled"
+          >
+            <span
+              :class="[
+                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+                traceIdPassthroughEnabled ? 'translate-x-5' : 'translate-x-0'
+              ]"
+            />
+          </button>
+        </div>
+      </div>
+
       <!-- OpenAI 自动透传开关（OAuth/API Key） -->
       <div
         v-if="form.platform === 'openai'"
@@ -3800,6 +3829,8 @@ const codexCLIOnlyEnabled = ref(false)
 const codexCLIOnlyAppServerEnabled = ref(false)
 type AnthropicAPIKeyAuthScheme = 'x_api_key' | 'authorization_bearer'
 const anthropicPassthroughEnabled = ref(false)
+// 出站注入 X-Trace-Id：对所有平台/类型生效，默认关闭
+const traceIdPassthroughEnabled = ref(false)
 const anthropicAPIKeyAuthScheme = ref<AnthropicAPIKeyAuthScheme>('x_api_key')
 const webSearchEmulationMode = ref('default')
 const webSearchGlobalEnabled = ref(false)
@@ -4560,6 +4591,20 @@ const withCustomHeadersPayload = (payload: CreateAccountRequest): CreateAccountR
   custom_headers: customHeadersEnabled.value ? { ...customHeadersMap.value } : {}
 })
 
+// 出站注入 X-Trace-Id：开关对所有平台/类型生效，而各平台的 extra 组装分散在
+// buildAnthropicExtra / buildOpenAIExtra / OAuth 回调等十余处，因此统一在提交前
+// 的通用出口补写（与 withCustomHeadersPayload 同层）。关闭时不写 key（而非写 false）。
+const withTraceIdExtra = (payload: CreateAccountRequest): CreateAccountRequest => {
+  if (!traceIdPassthroughEnabled.value) return payload
+  return {
+    ...payload,
+    extra: {
+      ...((payload.extra as Record<string, unknown>) || {}),
+      trace_id_passthrough: true
+    }
+  }
+}
+
 const ensureAntigravityMixedChannelConfirmed = async (onConfirm: () => Promise<void>): Promise<boolean> => {
   if (!needsMixedChannelCheck(form.platform)) {
     return true
@@ -4593,7 +4638,7 @@ const ensureAntigravityMixedChannelConfirmed = async (onConfirm: () => Promise<v
 const submitCreateAccount = async (payload: CreateAccountRequest) => {
   submitting.value = true
   try {
-    const account = await adminAPI.accounts.create(withAntigravityConfirmFlag(withCustomHeadersPayload(payload)))
+    const account = await adminAPI.accounts.create(withAntigravityConfirmFlag(withTraceIdExtra(withCustomHeadersPayload(payload))))
     if (
       payload.platform === 'openai' &&
       payload.type === 'apikey' &&
@@ -4687,6 +4732,7 @@ const resetForm = () => {
   codexCLIOnlyEnabled.value = false
   codexCLIOnlyAppServerEnabled.value = false
   anthropicPassthroughEnabled.value = false
+  traceIdPassthroughEnabled.value = false
   anthropicAPIKeyAuthScheme.value = 'x_api_key'
   webSearchEmulationMode.value = 'default'
   // Reset quota control state
@@ -5326,7 +5372,7 @@ const handleGrokValidateRT = async (refreshTokenInput: string) => {
           return
         }
 
-        await adminAPI.accounts.create({
+        await adminAPI.accounts.create(withTraceIdExtra({
           name: accountName,
           notes: form.notes,
           platform: 'grok',
@@ -5341,7 +5387,7 @@ const handleGrokValidateRT = async (refreshTokenInput: string) => {
           group_ids: form.group_ids,
           expires_at: form.expires_at,
           auto_pause_on_expired: autoPauseOnExpired.value
-        })
+        }))
         successCount++
       } catch (error: any) {
         failedCount++
@@ -5492,7 +5538,7 @@ const handleOpenAIExchange = async (authCode: string) => {
     }
 
     if (shouldCreateOpenAI) {
-      await adminAPI.accounts.create(withCustomHeadersPayload({
+      await adminAPI.accounts.create(withTraceIdExtra(withCustomHeadersPayload({
         name: form.name,
         notes: form.notes,
         platform: 'openai',
@@ -5507,7 +5553,7 @@ const handleOpenAIExchange = async (authCode: string) => {
         group_ids: form.group_ids,
         expires_at: form.expires_at,
         auto_pause_on_expired: autoPauseOnExpired.value
-      }))
+      })))
       appStore.showSuccess(t('admin.accounts.accountCreated'))
     }
 
@@ -5773,7 +5819,7 @@ const handleOpenAIBatchRT = async (refreshTokenInput: string, clientId?: string)
         const accountName = refreshTokens.length > 1 ? `${baseName} #${i + 1}` : baseName
 
         if (shouldCreateOpenAI) {
-          await adminAPI.accounts.create(withCustomHeadersPayload({
+          await adminAPI.accounts.create(withTraceIdExtra(withCustomHeadersPayload({
             name: accountName,
             notes: form.notes,
             platform: 'openai',
@@ -5788,7 +5834,7 @@ const handleOpenAIBatchRT = async (refreshTokenInput: string, clientId?: string)
             group_ids: form.group_ids,
             expires_at: form.expires_at,
             auto_pause_on_expired: autoPauseOnExpired.value
-          }))
+          })))
         }
 
         successCount++
@@ -5872,7 +5918,7 @@ const handleAntigravityValidateRT = async (refreshTokenInput: string) => {
         const accountName = refreshTokens.length > 1 ? `${form.name} #${i + 1}` : form.name
 
         // Note: Antigravity doesn't have buildExtraInfo, so we pass empty extra or rely on credentials
-        const createPayload = withAntigravityConfirmFlag(withCustomHeadersPayload({
+        const createPayload = withAntigravityConfirmFlag(withTraceIdExtra(withCustomHeadersPayload({
           name: accountName,
           notes: form.notes,
           platform: 'antigravity',
@@ -5887,7 +5933,7 @@ const handleAntigravityValidateRT = async (refreshTokenInput: string) => {
           group_ids: form.group_ids,
           expires_at: form.expires_at,
           auto_pause_on_expired: autoPauseOnExpired.value
-        }))
+        })))
         await adminAPI.accounts.create(createPayload)
         successCount++
       } catch (error: any) {
@@ -6253,7 +6299,7 @@ const handleCookieAuth = async (sessionKey: string) => {
           credentials.temp_unschedulable_rules = tempUnschedPayload
         }
 
-        await adminAPI.accounts.create(withCustomHeadersPayload({
+        await adminAPI.accounts.create(withTraceIdExtra(withCustomHeadersPayload({
           name: accountName,
           notes: form.notes,
           platform: form.platform,
@@ -6268,7 +6314,7 @@ const handleCookieAuth = async (sessionKey: string) => {
           group_ids: form.group_ids,
           expires_at: form.expires_at,
           auto_pause_on_expired: autoPauseOnExpired.value
-        }))
+        })))
 
         successCount++
       } catch (error: any) {

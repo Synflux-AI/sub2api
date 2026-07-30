@@ -107,6 +107,9 @@ const emit = defineEmits<{
 
 const rows = ref<HeaderRow[]>([])
 
+// 与后端 protectedCustomHeaderNames（account_custom_headers.go）保持一致，两处不得分叉。
+// x-trace-id 是逐请求链路关联 ID：静态覆写会把账号所有请求钉在同一个 trace 上，
+// 且在 Bedrock 路径上它已被 SigV4 签名，签名后改写会导致 AWS 返回 403。
 const protectedHeaderNames = new Set([
   'host',
   'content-length',
@@ -118,7 +121,8 @@ const protectedHeaderNames = new Set([
   'trailer',
   'trailers',
   'transfer-encoding',
-  'upgrade'
+  'upgrade',
+  'x-trace-id'
 ])
 
 const isProtected = (key: string) => {

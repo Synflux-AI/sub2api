@@ -283,6 +283,8 @@ func TestNormalizeHeaderOverrideCredentials(t *testing.T) {
 			"conversation_id", "x-codex-turn-state", "chatgpt-account-id",
 			"Content-Type", "Cookie", "x-goog-api-key",
 			"X-Claude-Code-Session-Id", "x-client-request-id",
+			// 逐请求链路 ID：静态覆写会让所有请求共用一个 trace
+			"X-Trace-Id", "x-trace-id",
 		} {
 			err := NormalizeHeaderOverrideCredentials(map[string]any{
 				credKeyHeaderOverrides: map[string]any{name: "v"},

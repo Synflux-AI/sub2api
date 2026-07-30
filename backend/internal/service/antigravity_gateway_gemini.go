@@ -199,6 +199,8 @@ func (s *AntigravityGatewayService) ForwardGemini(ctx context.Context, c *gin.Co
 				if err == nil {
 					fallbackReq, err := antigravity.NewAPIRequest(ctx, upstreamAction, accessToken, fallbackWrapped)
 					if err == nil {
+						// 模型兜底重试重建了 req，需单独注入链路 ID
+						injectTraceHeader(ctx, fallbackReq, account)
 						account.ApplyCustomHeaders(fallbackReq)
 						fallbackResp, err := s.httpUpstream.Do(fallbackReq, proxyURL, account.ID, account.Concurrency)
 						if err == nil && fallbackResp.StatusCode < 400 {

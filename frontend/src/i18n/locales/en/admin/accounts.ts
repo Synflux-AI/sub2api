@@ -615,6 +615,11 @@ export default {
         addRow: 'Add header',
         protectedWarning: 'Some entries match protected headers (Host, Content-Length, hop-by-hop) and will be silently skipped at request time.'
       },
+      traceId: {
+        passthrough: 'Inject X-Trace-Id upstream',
+        passthroughDesc:
+          "When enabled, upstream requests for this account carry the current request's X-Trace-Id, so logs can be correlated across a multi-hop relay chain. Disabled by default; enable it only when the upstream is your own relay instance. Enabling it for a real vendor (api.anthropic.com, api.x.ai, etc.) sends one extra custom header to them and breaks Claude Code / Grok CLI request-header fingerprint parity."
+      },
       modelRestriction: 'Model Restriction (Optional)',
       modelWhitelist: 'Model Whitelist',
       modelMapping: 'Model Mapping',

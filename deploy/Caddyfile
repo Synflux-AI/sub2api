@@ -67,7 +67,14 @@ api.sub2api.com {
 		gzip 6
 		minimum_length 256
 		match {
-			header Content-Type text/*
+			# 不使用 text/*，否则 text/event-stream 会被压缩并缓冲到流结束
+			header Content-Type text/css*
+			header Content-Type text/csv*
+			header Content-Type text/html*
+			header Content-Type text/javascript*
+			header Content-Type text/markdown*
+			header Content-Type text/plain*
+			header Content-Type text/xml*
 			header Content-Type application/json*
 			header Content-Type application/javascript*
 			header Content-Type application/xml*
@@ -95,6 +102,8 @@ api.sub2api.com {
 		format json
 		level INFO
 	}
+	# log_append 需要 Caddy 2.8+；对于旧版本，可改用 JSON log 的 request>headers 字段
+	log_append trace_id {http.request.header.X-Trace-Id}
 
 	# =========================================================================
 	# 错误处理

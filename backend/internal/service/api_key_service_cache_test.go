@@ -4,6 +4,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"sync"
@@ -46,7 +47,7 @@ func (s *authRepoStub) GetByKeyForAuth(ctx context.Context, key string) (*APIKey
 	return s.getByKeyForAuth(ctx, key)
 }
 
-func (s *authRepoStub) Update(ctx context.Context, key *APIKey) error {
+func (s *authRepoStub) Update(ctx context.Context, key *APIKey, _ APIKeyUpdateFields) error {
 	panic("unexpected Update call")
 }
 
@@ -276,6 +277,41 @@ func TestAPIKeyService_SnapshotRoundTrip_PreservesMessagesDispatchModelConfig(t 
 	require.Equal(t, apiKey.Name, roundTrip.Name)
 	require.NotNil(t, roundTrip.Group)
 	require.Equal(t, apiKey.Group.MessagesDispatchModelConfig, roundTrip.Group.MessagesDispatchModelConfig)
+}
+
+func TestAPIKeyService_SnapshotRoundTrip_PreservesBalanceNotificationRecipientContext(t *testing.T) {
+	svc := NewAPIKeyService(nil, nil, nil, nil, nil, nil, &config.Config{})
+	threshold := 20.0
+	apiKey := &APIKey{
+		ID:     1,
+		UserID: 31,
+		Key:    "k-balance-notify",
+		Status: StatusActive,
+		User: &User{
+			ID:                         31,
+			Email:                      "login@example.com",
+			SignupSource:               "email",
+			Status:                     StatusActive,
+			Role:                       RoleUser,
+			Balance:                    20.03,
+			Concurrency:                3,
+			BalanceNotifyEnabled:       true,
+			BalanceNotifyThresholdType: thresholdTypeFixed,
+			BalanceNotifyThreshold:     &threshold,
+		},
+	}
+
+	entry := &APIKeyAuthCacheEntry{Snapshot: svc.snapshotFromAPIKey(context.Background(), apiKey)}
+	payload, err := json.Marshal(entry)
+	require.NoError(t, err)
+	var cached APIKeyAuthCacheEntry
+	require.NoError(t, json.Unmarshal(payload, &cached))
+
+	roundTrip := svc.snapshotToAPIKey(apiKey.Key, cached.Snapshot)
+	require.NotNil(t, roundTrip)
+	require.NotNil(t, roundTrip.User)
+	require.Equal(t, "email", roundTrip.User.SignupSource)
+	require.Equal(t, []string{"login@example.com"}, (&BalanceNotifyService{}).collectBalanceNotifyRecipients(roundTrip.User))
 }
 
 func TestAPIKeyService_SnapshotRoundTrip_PreservesReasoningEffortPolicy(t *testing.T) {

@@ -77,6 +77,7 @@ const HEADER_OVERRIDE_BLOCKED_NAMES = new Set([
   'chatgpt-account-id',
   'x-claude-code-session-id',
   'x-client-request-id',
+  'x-trace-id',
   'x-grok-conv-id'
 ])
 

@@ -675,6 +675,11 @@ export default {
         addRow: '新增请求头',
         protectedWarning: '部分键名属于受保护头（Host / Content-Length / 逐跳头），实际请求时会被自动忽略。'
       },
+      traceId: {
+        passthrough: '出站注入 X-Trace-Id',
+        passthroughDesc:
+          '开启后，向该账号上游发起请求时会带上本次请求的 X-Trace-Id，用于多级中转链路的日志关联。默认关闭；仅在上游是自己的中转实例时开启。对真实供应商（api.anthropic.com / api.x.ai 等）开启会多带一个自定义请求头，并破坏 Claude Code / Grok CLI 的请求头指纹一致性。'
+      },
       modelRestriction: '模型限制（可选）',
       modelWhitelist: '模型白名单',
       modelMapping: '模型映射',

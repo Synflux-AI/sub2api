@@ -1017,4 +1017,42 @@ describe('EditAccountModal', () => {
       'antigravity_project_id'
     )
   })
+
+  it('submits trace_id_passthrough when the toggle is turned on', async () => {
+    const account = buildAccount()
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account)
+    const toggle = wrapper.get('#edit-account-trace-id-passthrough-toggle')
+    expect(toggle.attributes('aria-pressed')).toBe('false')
+
+    await toggle.trigger('click')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.trace_id_passthrough).toBe(true)
+  })
+
+  it('hydrates trace_id_passthrough from extra and deletes the key when turned off', async () => {
+    const account = buildAccount()
+    account.extra = { trace_id_passthrough: true }
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account)
+    const toggle = wrapper.get('#edit-account-trace-id-passthrough-toggle')
+    expect(toggle.attributes('aria-pressed')).toBe('true')
+
+    await toggle.trigger('click')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    const submittedExtra = updateAccountMock.mock.calls[0]?.[1]?.extra
+    expect(submittedExtra).not.toHaveProperty('trace_id_passthrough')
+  })
 })

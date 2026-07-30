@@ -36,6 +36,19 @@ server:
   # Keep-alive idle timeout in seconds.
   # Keep-Alive 空闲连接超时（秒）。
   idle_timeout: 120
+  # Graceful shutdown drain timeout in seconds: upper bound on waiting for in-flight
+  # requests after SIGTERM. New connections stop immediately either way, so raising it
+  # does not extend downtime. Streaming responses can last many minutes; raise this to
+  # avoid cutting them off during rolling upgrades, and keep the container
+  # stop_grace_period longer than this value or the process is SIGKILLed first.
+  # Non-positive values fall back to 5.
+  # 优雅关闭排空超时（秒）：收到 SIGTERM 后等待在飞请求完成的上限。无论如何都会立即
+  # 停止接受新连接，因此调大不会延长对外不可用时间。流式响应可能持续十几分钟，滚动
+  # 升级时调大可避免掐断；同时需让容器 stop_grace_period 比该值更长，否则进程会先被
+  # SIGKILL。非正值回退为 5。
+  # 可用环境变量 SERVER_SHUTDOWN_TIMEOUT 覆盖本项（环境变量优先级高于本文件）。
+  # Override with env SERVER_SHUTDOWN_TIMEOUT (env takes precedence over this file).
+  shutdown_timeout: 5
   # Trusted proxies used when security.trust_forwarded_ip_for_api_key_acl is false.
   # List only the exact proxy addresses that connect directly to Sub2API.
   # Set [] explicitly to disable forwarded-IP trust in high-security mode.
@@ -71,6 +84,22 @@ server:
     # Max upload buffer per stream in bytes (default: 512KB)
     # 每个流的最大上传缓冲区（字节，默认 512KB）
     max_upload_buffer_per_stream: 524288
+
+# =============================================================================
+# WebAuthn / Passkey Configuration
+# WebAuthn / Passkey 配置
+# =============================================================================
+# Passkeys require HTTPS in production. The RP ID is the domain only (no scheme
+# or port), while RP origins are exact browser origins.
+# Passkey 在生产环境要求 HTTPS。RP ID 只填写域名（不含协议和端口），RP origins
+# 填写浏览器访问使用的完整 Origin。
+webauthn:
+  enabled: false
+  rp_display_name: "Sub2API"
+  # Example / 示例: "sub2api.example.com"
+  rp_id: ""
+  # Example / 示例: ["https://sub2api.example.com"]
+  rp_origins: []
 
 # =============================================================================
 # Run Mode Configuration
@@ -127,6 +156,8 @@ security:
       - "api.openai.com"
       - "api.anthropic.com"
       - "api.kimi.com"
+      - "api.moonshot.ai"
+      - "api.moonshot.cn"
       - "open.bigmodel.cn"
       - "api.minimaxi.com"
       - "generativelanguage.googleapis.com"
@@ -293,6 +324,9 @@ gateway:
   # Use this to avoid compact failures when newer models are not yet supported by the compact endpoint.
   # 当 compact 端点暂未支持更新模型时，可通过这里降级规避失败。
   openai_compact_model: "gpt-5.4"
+  # ChatGPT Frameless Live 单会话硬上限（秒）。
+  live:
+    max_session_duration_seconds: 3600
   # OpenAI Responses WebSocket 配置（默认开启，可按需回滚到 HTTP）
   openai_ws:
     # 新版 WS mode 路由（默认关闭）。关闭时忽略账号级 WS mode（包括 http_bridge），保持 legacy ctx_pool 行为。
@@ -599,6 +633,35 @@ log:
     # Thereafter keep 1 out of N entries per second
     # 之后每 N 条保留 1 条
     thereafter: 100
+
+# =============================================================================
+# Observability Configuration
+# 可观测性配置
+# =============================================================================
+observability:
+  # Business events mirror rows written to usage_logs / ops_error_logs as one
+  # structured stdout line each, so the existing stdout -> Vector -> OpenObserve
+  # pipeline can index dimensions the log stream never carried (user_agent,
+  # model, account_id, status_code, error_type, ...).
+  #
+  # Postgres stays the only source of truth. These events are a best-effort
+  # observability projection: they are emitted when the row is handed to its
+  # write path, never inside a database transaction, so OpenObserve may hold an
+  # event whose row was later dropped by a conflict or a full queue. Do not use
+  # these streams for reconciliation or billing aggregation.
+  #
+  # 业务事件把写入 usage_logs / ops_error_logs 的记录额外打印一条结构化 stdout 日志，
+  # 交由现有 stdout -> Vector -> OpenObserve 链路检索 user_agent / model / account_id
+  # 等数据库有、但日志流里查不到的维度。
+  #
+  # Postgres 仍是唯一主存储；本事件是 best-effort 可观测投影，不进数据库事务，
+  # 因此 OO 中可能存在最终未落库（冲突或队列满）的事件，不可用于对账或计费聚合。
+  business_events:
+    # Off by default: create the Vector route and OpenObserve streams first,
+    # then enable node by node while watching Docker log growth and OO ingest.
+    # 默认关闭：先建好 Vector 路由与 OO stream，再逐节点开启并观察
+    # Docker 日志增长与 OO ingest。
+    enabled: false
 
 # =============================================================================
 # Sora Direct Client Configuration

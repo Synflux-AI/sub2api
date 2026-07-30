@@ -154,7 +154,7 @@ func (s *GatewayService) handleBedrockStreamingResponse(
 				}
 				if writeErr != nil {
 					clientDisconnected = true
-					logger.LegacyPrintf("service.gateway", "[Bedrock] Client disconnected during streaming, continue draining for usage: account=%d", account.ID)
+					logger.CtxPrintf(ctx, "service.gateway", "[Bedrock] Client disconnected during streaming, continue draining for usage: account=%d", account.ID)
 				} else {
 					flusher.Flush()
 				}
@@ -168,7 +168,7 @@ func (s *GatewayService) handleBedrockStreamingResponse(
 			if clientDisconnected {
 				return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: true}, nil
 			}
-			logger.LegacyPrintf("service.gateway", "[Bedrock] Stream data interval timeout: account=%d model=%s interval=%s", account.ID, model, streamInterval)
+			logger.CtxPrintf(ctx, "service.gateway", "[Bedrock] Stream data interval timeout: account=%d model=%s interval=%s", account.ID, model, streamInterval)
 			if s.rateLimitService != nil {
 				s.rateLimitService.HandleStreamTimeout(ctx, account, model)
 			}
