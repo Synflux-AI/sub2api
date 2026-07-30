@@ -30,7 +30,6 @@ func Logger() gin.HandlerFunc {
 		endTime := time.Now()
 		latency := endTime.Sub(startTime)
 
-		method := c.Request.Method
 		statusCode := c.Writer.Status()
 		clientIP := ip.GetClientIP(c)
 		protocol := c.Request.Proto
@@ -53,14 +52,14 @@ func Logger() gin.HandlerFunc {
 			}
 		}
 
+		// method / path 不重复绑定：RequestLogger() 已把它们绑在 request-scoped
+		// base logger 上（值同样取自 c.Request，两处一致），这里再加会产生重复 JSON key。
 		fields := []zap.Field{
 			zap.String("component", "http.access"),
 			zap.Int("status_code", statusCode),
 			zap.Int64("latency_ms", latency.Milliseconds()),
 			zap.String("client_ip", clientIP),
 			zap.String("protocol", protocol),
-			zap.String("method", method),
-			zap.String("path", path),
 		}
 		if rejected {
 			fields = append(fields,

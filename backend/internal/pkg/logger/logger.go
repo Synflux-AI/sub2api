@@ -543,6 +543,43 @@ func LegacyPrintf(component, format string, args ...any) {
 	}
 }
 
+// CtxPrintf 与 LegacyPrintf 行为一致，但 logger 取自 ctx，因此日志行会自动带上
+// RequestLogger() 绑定的 trace_id / request_id / client_request_id / path / method。
+// 迁移 printf 风格日志时，只需在原 LegacyPrintf 调用前加一个 ctx 参数。
+//
+// legacy_printf 字段保留，含义仍是"printf 风格"，不代表未迁移。
+func CtxPrintf(ctx context.Context, component, format string, args ...any) {
+	msg := normalizeStdLogMessage(fmt.Sprintf(format, args...))
+	if msg == "" {
+		return
+	}
+
+	initialized := global.Load() != nil
+	if !initialized {
+		// 在日志系统未初始化前，回退到标准库 log，避免测试/工具链丢日志。
+		log.Print(msg)
+		return
+	}
+
+	l := FromContext(ctx)
+	if component != "" {
+		l = l.With(zap.String("component", component))
+	}
+	// 与 LegacyPrintf 同为一层包装，skip 1 让 caller 指向业务调用点。
+	l = l.WithOptions(zap.AddCallerSkip(1))
+
+	switch inferStdLogLevel(msg) {
+	case LevelDebug:
+		l.Debug(msg, zap.Bool("legacy_printf", true))
+	case LevelWarn:
+		l.Warn(msg, zap.Bool("legacy_printf", true))
+	case LevelError, LevelFatal:
+		l.Error(msg, zap.Bool("legacy_printf", true))
+	default:
+		l.Info(msg, zap.Bool("legacy_printf", true))
+	}
+}
+
 type contextKey string
 
 const loggerContextKey contextKey = "ctx_logger"
@@ -565,4 +602,10 @@ func FromContext(ctx context.Context) *zap.Logger {
 		return l
 	}
 	return L()
+}
+
+// C 是 FromContext 的短别名。全仓有上千个调用点要迁移，名字长度直接影响采用率。
+// 它只做取值，不加包装层，因此 C(ctx).Warn(...) 的 caller 仍指向业务调用点。
+func C(ctx context.Context) *zap.Logger {
+	return FromContext(ctx)
 }
