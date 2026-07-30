@@ -1142,6 +1142,10 @@ export interface Account {
   active_sessions?: number | null // 当前活跃会话数
   current_rpm?: number | null // 当前分钟 RPM 计数
 
+  // 账号健康度调度（仅 health_scoring_enabled 开启时返回，只读）
+  health_score?: number | null // 健康分 0-100
+  health_tier?: number | null // 0 主池 / 1 候选池 / 2 隔离观察
+
   // 影子账号关系（spark 维度影子）
   parent_account_id?: number | null
   quota_dimension?: string

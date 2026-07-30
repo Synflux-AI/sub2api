@@ -30,6 +30,7 @@ type RateLimitService struct {
 	settingService        *SettingService
 	tokenCacheInvalidator TokenCacheInvalidator
 	runtimeBlocker        AccountRuntimeBlocker
+	healthService         *AccountHealthService
 	usageCacheMu          sync.RWMutex
 	usageCache            map[int64]*geminiUsageCacheEntry
 }
@@ -116,6 +117,32 @@ func (s *RateLimitService) SetAccountRuntimeBlocker(blocker AccountRuntimeBlocke
 	s.runtimeBlocker = blocker
 }
 
+// SetAccountHealthService 设置账号健康度服务（可选依赖）
+func (s *RateLimitService) SetAccountHealthService(healthService *AccountHealthService) {
+	s.healthService = healthService
+}
+
+// HealthService 返回账号健康度服务（可能为 nil）
+func (s *RateLimitService) HealthService() *AccountHealthService {
+	if s == nil {
+		return nil
+	}
+	return s.healthService
+}
+
+// recordAccountHealthError 采集上游错误健康事件。
+// 健康分是跨请求软信号（只写 Redis 不写 DB 状态），因此池模式账号默认也采集，
+// 恰好补上池模式跳过本地状态标记后缺失的调度反馈；可用 health_record_pool_mode 关闭。
+func (s *RateLimitService) recordAccountHealthError(account *Account, statusCode int) {
+	if s == nil || s.healthService == nil || account == nil {
+		return
+	}
+	if account.IsPoolMode() && !s.healthService.RecordPoolMode() {
+		return
+	}
+	s.healthService.RecordUpstreamError(account.ID, statusCode)
+}
+
 func (s *RateLimitService) IsOpenAIAdvancedSchedulerStickyWeightedEnabled(ctx context.Context) bool {
 	if s == nil || s.settingService == nil {
 		return false
@@ -176,6 +203,10 @@ func (s *RateLimitService) CheckErrorPolicy(ctx context.Context, account *Accoun
 // HandleUpstreamError 处理上游错误响应，标记账号状态
 // 返回是否应该停止该账号的调度
 func (s *RateLimitService) HandleUpstreamError(ctx context.Context, account *Account, statusCode int, headers http.Header, responseBody []byte, requestedModel ...string) (shouldDisable bool) {
+	// 健康分采集在所有跳过分支（池模式/自定义错误码）之前：
+	// 它是软性调度信号，不属于"本地账号状态标记"，需要覆盖全部上游错误。
+	s.recordAccountHealthError(account, statusCode)
+
 	ctx = withTempUnschedulableModel(ctx, requestedModel)
 	customErrorCodesEnabled := account.IsCustomErrorCodesEnabled()
 
@@ -2301,6 +2332,11 @@ func truncateTempUnschedMessage(body []byte, maxBytes int) string {
 func (s *RateLimitService) HandleStreamTimeout(ctx context.Context, account *Account, model string) bool {
 	if account == nil {
 		return false
+	}
+
+	// 健康分采集不依赖流超时处置设置：超时本身就是调度应感知的软信号
+	if s.healthService != nil && (!account.IsPoolMode() || s.healthService.RecordPoolMode()) {
+		s.healthService.RecordTimeout(account.ID)
 	}
 
 	// 获取系统设置

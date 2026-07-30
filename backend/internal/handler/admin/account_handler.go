@@ -199,6 +199,10 @@ type AccountWithConcurrency struct {
 	CurrentWindowCost *float64 `json:"current_window_cost,omitempty"` // 当前窗口费用
 	ActiveSessions    *int     `json:"active_sessions,omitempty"`     // 当前活跃会话数
 	CurrentRPM        *int     `json:"current_rpm,omitempty"`         // 当前分钟 RPM 计数
+	// 账号健康分（0-100）与候选池分层（0 主池 / 1 候选池 / 2 隔离观察），
+	// 仅在 health_scoring_enabled 开启时返回；只读，由上游错误/成功事件驱动
+	HealthScore *float64 `json:"health_score,omitempty"`
+	HealthTier  *int     `json:"health_tier,omitempty"`
 }
 
 type AccountSchedulerScore struct {
@@ -583,6 +587,14 @@ func (h *AccountHandler) List(c *gin.Context) {
 		}
 	}
 
+	// 账号健康分（开启健康度调度时返回；Redis pipeline 批量读，低开销）
+	var healthScores map[int64]float64
+	healthSvc := h.rateLimitService.HealthService()
+	healthEnabled := healthSvc.Enabled()
+	if healthEnabled {
+		healthScores = healthSvc.GetScoresBatch(c.Request.Context(), accountIDs)
+	}
+
 	// 识别需要查询窗口费用、会话数和 RPM 的账号（Anthropic OAuth/SetupToken 且启用了相应功能）
 	windowCostAccountIDs := make([]int64, 0)
 	sessionLimitAccountIDs := make([]int64, 0)
@@ -678,6 +690,17 @@ func (h *AccountHandler) List(c *gin.Context) {
 			if rpm, ok := rpmCounts[acc.ID]; ok {
 				item.CurrentRPM = &rpm
 			}
+		}
+
+		// 添加健康分（仅当健康度调度开启时；无记录 = 满分）
+		if healthEnabled {
+			score := 100.0
+			if s, ok := healthScores[acc.ID]; ok {
+				score = s
+			}
+			tier := healthSvc.TierForScore(score)
+			item.HealthScore = &score
+			item.HealthTier = &tier
 		}
 
 		result[i] = item

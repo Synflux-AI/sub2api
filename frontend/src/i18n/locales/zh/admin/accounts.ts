@@ -108,6 +108,7 @@ export default {
         upstreamBillingRate: '上游声明倍率',
         weight: '权重',
         schedulerScore: '调度权值',
+        health: '健康分',
         status: '状态',
         schedulable: '调度',
         todayStats: '今日统计',
@@ -124,6 +125,12 @@ export default {
         stickyShort: '粘性',
         ungrouped: '未分组',
         hint: '显示格式为“分组名 / 基础分 / 粘性加分”。基础分按当前筛选条件限定的候选账号计算，包含优先级、负载、排队、错误率、首包延迟、重置窗口、额度余量、计费倍率等因子；粘性加分只在开启粘性加权时用于 previous_response_id 或 session_hash。分数越大越优先。'
+      },
+      health: {
+        hint: '账号健康分（0-100）：由上游错误（429/403/404/5xx 等）扣分、成功请求与时间衰减恢复。分数映射为候选池分层：主池（≥70）正常调度，候选池（30-70）仅在主池账号不可用/繁忙时使用，隔离观察（<30）仅在其余账号全部不可用时使用。需在服务端开启 health_scoring_enabled。',
+        tierHealthy: '主池',
+        tierDegraded: '候选池',
+        tierProbation: '隔离观察'
       },
       usageWindowsHint: '“5h / 7d”是上游账号（如 OpenAI ChatGPT、Claude）官方的滚动用量窗口限制，由上游对账号设定，并非 sub2api 配置，也与你映射的模型无关。窗口滚动到期后用量会自动重置，无法在 sub2api 端解除该限制。',
       ollamaCloud: {
