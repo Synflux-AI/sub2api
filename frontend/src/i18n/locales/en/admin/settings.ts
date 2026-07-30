@@ -165,7 +165,7 @@ export default {
         publicIpRpm: 'Public endpoints per IP',
         publicIpRpmHint: 'Requests per minute allowed per real client IP for unauthenticated endpoints (e.g. public site settings). 0 = unlimited.',
         openApiRpm: 'Customer balance lookup limit',
-        openApiRpmHint: 'Requests per minute allowed per access token for the customer-facing Open API (/open/balance, authenticated by access token). 0 = unlimited.',
+        openApiRpmHint: 'Requests per minute allowed per user for the customer-facing Open API (/open/balance, authenticated by access token). 0 = unlimited.',
         perMinute: 'req/min',
         exemptAdmin: 'Exempt administrators',
         exemptAdminHint: 'When enabled, admin accounts bypass panel rate limits so bulk operations are never throttled.',

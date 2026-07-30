@@ -58,9 +58,9 @@
             </button>
           </div>
           <p class="text-xs text-gray-500 dark:text-gray-400">
-            {{ t('profile.accessToken.createdAt', { date: formatDate(token.created_at) }) }}
+            {{ t('profile.accessToken.createdAt', { date: formatDateTime(token.created_at) }) }}
             <template v-if="token.last_used_at">
-              · {{ t('profile.accessToken.lastUsed', { date: formatDate(token.last_used_at) }) }}
+              · {{ t('profile.accessToken.lastUsed', { date: formatDateTime(token.last_used_at) }) }}
             </template>
           </p>
         </div>
@@ -175,6 +175,7 @@ import { accessTokenAPI, type UserAccessToken } from '@/api'
 import { Icon } from '@/components/icons'
 import { useAppStore } from '@/stores/app'
 import { useClipboard } from '@/composables/useClipboard'
+import { formatDateTime } from '@/utils/format'
 
 const { t } = useI18n()
 const appStore = useAppStore()
@@ -294,15 +295,6 @@ async function confirmRevoke(): Promise<void> {
 async function copyToken(): Promise<void> {
   if (!token.value?.token) return
   await copyToClipboard(token.value.token)
-}
-
-function formatDate(value: string | null): string {
-  if (!value) return ''
-  return new Intl.DateTimeFormat(undefined, {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric'
-  }).format(new Date(value))
 }
 
 onMounted(() => {

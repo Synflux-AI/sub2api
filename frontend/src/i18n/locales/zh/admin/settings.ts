@@ -165,7 +165,7 @@ export default {
         publicIpRpm: '公开接口每 IP 上限',
         publicIpRpmHint: '无需登录的公开接口（如站点公开设置）每个真实客户端 IP 每分钟的请求上限；0 表示不限制。',
         openApiRpm: '客户余额查询接口上限',
-        openApiRpmHint: '面向客户的 Open API（/open/balance，按访问令牌鉴权）每个令牌每分钟的请求上限；0 表示不限制。',
+        openApiRpmHint: '面向客户的 Open API（/open/balance，按访问令牌鉴权）每个用户每分钟的请求上限；0 表示不限制。',
         perMinute: '次/分钟',
         exemptAdmin: '管理员豁免',
         exemptAdminHint: '开启后管理员账号不受面板限流约束，避免批量运维操作被误拦。',
