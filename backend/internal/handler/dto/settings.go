@@ -414,6 +414,7 @@ type PanelRateLimitSettings struct {
 	HeavyRPM    int  `json:"heavy_rpm"`
 	ExemptAdmin bool `json:"exempt_admin"`
 	PublicIPRPM int  `json:"public_ip_rpm"`
+	OpenAPIRPM  int  `json:"open_api_rpm"`
 }
 
 // StreamTimeoutSettings 流超时处理配置 DTO
