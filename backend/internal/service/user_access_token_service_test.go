@@ -34,8 +34,13 @@ type accessTokenRepoStub struct {
 	deleteErr      error
 
 	// touch 相关
-	touchCalls   atomic.Int64
-	touched      chan accessTokenTouchRecord
+	touchCalls atomic.Int64
+	touched    chan accessTokenTouchRecord
+	// touchEntered 在 worker 进入仓储的那一刻收到一条消息，让测试可以「等到 worker
+	// 确实领走了任务」而不用轮询或 sleep。
+	touchEntered chan struct{}
+	// touchBlockCh 非 nil 时把 worker 卡在仓储里。必须在第一次入队之前赋值：
+	// channel 的 send/receive 建立 happens-before，worker 才能安全读到它。
 	touchBlockCh chan struct{}
 }
 
@@ -47,7 +52,10 @@ type accessTokenTouchRecord struct {
 }
 
 func newAccessTokenRepoStub() *accessTokenRepoStub {
-	return &accessTokenRepoStub{touched: make(chan accessTokenTouchRecord, 64)}
+	return &accessTokenRepoStub{
+		touched:      make(chan accessTokenTouchRecord, 64),
+		touchEntered: make(chan struct{}, 64),
+	}
 }
 
 func (r *accessTokenRepoStub) GetByUserID(_ context.Context, _ int64) (*UserAccessToken, error) {
@@ -90,6 +98,10 @@ func (r *accessTokenRepoStub) Delete(_ context.Context, _ int64) error {
 }
 
 func (r *accessTokenRepoStub) TouchLastUsed(ctx context.Context, userID int64, token string) error {
+	select {
+	case r.touchEntered <- struct{}{}:
+	default:
+	}
 	if r.touchBlockCh != nil {
 		<-r.touchBlockCh
 	}
@@ -185,11 +197,14 @@ func TestRotatePasswordGate(t *testing.T) {
 
 	t.Run("missing password", func(t *testing.T) {
 		repo := newAccessTokenRepoStub()
-		svc := newAccessTokenServiceForTest(t, repo, &accessTokenUserStub{user: user}, UserAccessTokenServiceOptions{})
+		// 用户查询故意配成失败：空密码必须在查库之前就被判掉，契约不受数据库健康度影响。
+		users := &accessTokenUserStub{err: errors.New("database is down")}
+		svc := newAccessTokenServiceForTest(t, repo, users, UserAccessTokenServiceOptions{})
 
 		record, err := svc.Rotate(context.Background(), user.ID, "")
 		require.Nil(t, record)
 		require.ErrorIs(t, err, ErrPasswordRequired)
+		require.Zero(t, users.calls.Load(), "an empty password must not cost a user read")
 		_, _, upsert, _ := repo.counts()
 		require.Zero(t, upsert)
 	})
@@ -229,9 +244,11 @@ func TestRevokePasswordGate(t *testing.T) {
 
 	t.Run("missing password", func(t *testing.T) {
 		repo := newAccessTokenRepoStub()
-		svc := newAccessTokenServiceForTest(t, repo, &accessTokenUserStub{user: user}, UserAccessTokenServiceOptions{})
+		users := &accessTokenUserStub{err: errors.New("database is down")}
+		svc := newAccessTokenServiceForTest(t, repo, users, UserAccessTokenServiceOptions{})
 
 		require.ErrorIs(t, svc.Revoke(context.Background(), user.ID, ""), ErrPasswordRequired)
+		require.Zero(t, users.calls.Load(), "an empty password must not cost a user read")
 		_, _, _, del := repo.counts()
 		require.Zero(t, del)
 	})
@@ -349,19 +366,41 @@ func TestAuthenticate(t *testing.T) {
 
 func TestTouchLastUsedDebouncesPerToken(t *testing.T) {
 	repo := newAccessTokenRepoStub()
+	// 先把 worker 卡在仓储里（哨兵任务），队列长度于是等于「实际入队了多少」，
+	// 而不是「worker 还没来得及排空多少」。入队是同步的（select + default），
+	// 所以这个读数不依赖任何调度时序：防抖若失效，长度立刻是 5 而不是 1。
+	repo.touchBlockCh = make(chan struct{})
 	svc := newAccessTokenServiceForTest(t, repo, &accessTokenUserStub{}, UserAccessTokenServiceOptions{
 		TouchInterval: time.Hour,
 		TouchWorkers:  1,
 	})
+	unblocked := false
+	unblock := func() {
+		if !unblocked {
+			unblocked = true
+			close(repo.touchBlockCh)
+		}
+	}
+	// 无论断言在哪一步失败，都要先放行 worker，否则 Stop() 的 wg.Wait() 会挂死。
+	t.Cleanup(unblock)
+
+	sentinel := uniqueTestAccessToken(200)
+	svc.TouchLastUsed(context.Background(), 9, sentinel)
+	requireTouchStarted(t, repo)
+	require.Empty(t, svc.touchQueue, "sentinel job must already be in the worker's hands")
 
 	tokenA := "sat-" + strings.Repeat("a", 64)
 	tokenB := "sat-" + strings.Repeat("b", 64)
 	for i := 0; i < 5; i++ {
 		svc.TouchLastUsed(context.Background(), 7, tokenA)
 	}
+	require.Len(t, svc.touchQueue, 1, "5 calls on the same token must enqueue exactly one job")
 	svc.TouchLastUsed(context.Background(), 8, tokenB)
+	require.Len(t, svc.touchQueue, 2, "a second token must debounce independently")
 
-	// 只有两次落库（每个令牌一次），且入队是同步完成的，所以收到两条之后队列必空。
+	unblock()
+
+	require.EqualValues(t, 9, receiveTouch(t, repo).userID, "sentinel lands first")
 	seen := map[string]int64{}
 	for i := 0; i < 2; i++ {
 		record := receiveTouch(t, repo)
@@ -369,7 +408,76 @@ func TestTouchLastUsedDebouncesPerToken(t *testing.T) {
 	}
 	require.Equal(t, map[string]int64{tokenA: 7, tokenB: 8}, seen)
 	requireNoFurtherTouch(t, repo)
-	require.EqualValues(t, 2, repo.touchCalls.Load())
+	require.EqualValues(t, 3, repo.touchCalls.Load(), "sentinel + one write per token")
+}
+
+// TestTouchGateClaimIsExclusiveUnderConcurrency 钉住防抖门的核心不变量：同一令牌
+// 的并发认领里**恰好一个**成功。这是 claim() 那圈 CAS 存在的唯一理由，必须在
+// -race 下被真正并发地跑到，否则「每令牌每窗口最多落库一次」只是纸面保证。
+func TestTouchGateClaimIsExclusiveUnderConcurrency(t *testing.T) {
+	const goroutines = 50
+	token := "sat-" + strings.Repeat("f", 64)
+
+	// 多轮：单轮偶然通过的概率不低，重复 200 轮才能真正压到 CAS 的竞争窗口。
+	for round := 0; round < 200; round++ {
+		gate := newAccessTokenTouchGate(time.Hour, defaultAccessTokenTouchGateMaxEntries, time.Now)
+
+		var winners atomic.Int64
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		wg.Add(goroutines)
+		for i := 0; i < goroutines; i++ {
+			go func() {
+				defer wg.Done()
+				<-start // 尽量让所有 goroutine 同时冲进 claim
+				if gate.claim(token) {
+					winners.Add(1)
+				}
+			}()
+		}
+		close(start)
+		wg.Wait()
+
+		require.EqualValues(t, 1, winners.Load(),
+			"round %d: exactly one concurrent claim on the same token may win", round)
+	}
+}
+
+// TestTouchLastUsedEnqueuesOnceUnderConcurrency 把上面的不变量接到服务层：并发请求
+// 同一令牌时，有界队列里也只能出现一个任务。
+func TestTouchLastUsedEnqueuesOnceUnderConcurrency(t *testing.T) {
+	const goroutines = 50
+	repo := newAccessTokenRepoStub()
+	// 唯一的 worker 先被哨兵任务卡死在仓储里，之后没人能排空队列，
+	// len(touchQueue) 就是「入队了多少」的精确读数。
+	repo.touchBlockCh = make(chan struct{})
+	svc := newAccessTokenServiceForTest(t, repo, &accessTokenUserStub{}, UserAccessTokenServiceOptions{
+		TouchInterval:  time.Hour,
+		TouchQueueSize: goroutines,
+		TouchWorkers:   1,
+	})
+	t.Cleanup(func() { close(repo.touchBlockCh) })
+
+	svc.TouchLastUsed(context.Background(), 9, uniqueTestAccessToken(201))
+	requireTouchStarted(t, repo)
+	require.Empty(t, svc.touchQueue)
+
+	token := "sat-" + strings.Repeat("9", 64)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(goroutines)
+	for i := 0; i < goroutines; i++ {
+		go func() {
+			defer wg.Done()
+			<-start
+			svc.TouchLastUsed(context.Background(), 7, token)
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	require.Len(t, svc.touchQueue, 1,
+		"concurrent touches on one token must enqueue exactly one job")
 }
 
 func TestTouchLastUsedWritesAgainAfterWindow(t *testing.T) {
@@ -422,7 +530,16 @@ func TestTouchLastUsedDropsWhenQueueIsFullWithoutBlocking(t *testing.T) {
 		TouchQueueSize: 1,
 		TouchWorkers:   1,
 	})
-	t.Cleanup(func() { close(repo.touchBlockCh) })
+	unblocked := false
+	unblock := func() {
+		if !unblocked {
+			unblocked = true
+			close(repo.touchBlockCh)
+		}
+	}
+	// 兜底放行：断言失败时也必须解开 worker，否则 Stop() 的 wg.Wait() 会挂死。
+	// 正常路径在本函数结尾显式 unblock()，不依赖 t.Cleanup 的 LIFO 次序。
+	t.Cleanup(unblock)
 
 	// 队列容量 1 + 唯一 worker 阻塞在仓储里：之后的 touch 必须被丢弃而不是阻塞。
 	done := make(chan struct{})
@@ -435,9 +552,11 @@ func TestTouchLastUsedDropsWhenQueueIsFullWithoutBlocking(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
+		unblock()
 		t.Fatal("TouchLastUsed blocked while the queue was full")
 	}
 	require.EqualValues(t, 0, repo.touchCalls.Load(), "the blocked worker cannot have completed any write")
+	unblock()
 }
 
 func TestTouchLastUsedIgnoresInvalidInput(t *testing.T) {
@@ -521,6 +640,17 @@ func receiveTouch(t *testing.T, repo *accessTokenRepoStub) accessTokenTouchRecor
 	case <-time.After(5 * time.Second):
 		t.Fatal("timed out waiting for a debounced last_used_at write")
 		return accessTokenTouchRecord{}
+	}
+}
+
+// requireTouchStarted 等到 worker 真的把任务领走并进入仓储为止，用于「让 worker 卡在
+// 仓储里、把队列长度变成入队数的精确读数」这一类测试。信号来自假仓储自身，不是轮询。
+func requireTouchStarted(t *testing.T, repo *accessTokenRepoStub) {
+	t.Helper()
+	select {
+	case <-repo.touchEntered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for a worker to pick up the touch job")
 	}
 }
 

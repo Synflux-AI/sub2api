@@ -139,10 +139,15 @@ func newAccessTokenTouchGate(interval time.Duration, maxEntries int, now func() 
 // last_used_at 会稍旧——对一个「最近使用时间」字段完全可以接受。
 func (g *accessTokenTouchGate) claim(token string) bool {
 	entries := g.entries.Load()
-	value, loaded := entries.LoadOrStore(token, &atomic.Int64{})
-	if !loaded && g.size.Add(1) > int64(g.maxEntries) {
-		g.entries.Store(&sync.Map{})
-		g.size.Store(0)
+	// 先 Load：稳态下键早已存在，走 LoadOrStore 会为每个请求白白分配一个
+	// atomic.Int64（它是实参，无论是否命中都要先求值）。
+	value, loaded := entries.Load(token)
+	if !loaded {
+		value, loaded = entries.LoadOrStore(token, &atomic.Int64{})
+		if !loaded && g.size.Add(1) > int64(g.maxEntries) {
+			g.entries.Store(&sync.Map{})
+			g.size.Store(0)
+		}
 	}
 
 	last, ok := value.(*atomic.Int64)
@@ -393,6 +398,13 @@ func (s *UserAccessTokenService) TouchLastUsed(ctx context.Context, userID int64
 }
 
 func (s *UserAccessTokenService) verifyOwnerPassword(ctx context.Context, userID int64, password string) error {
+	// 空密码先于查库判定：既省掉一次无谓的用户读，也保证「缺密码 → 400
+	// PASSWORD_REQUIRED」这条契约在数据库故障时依然成立（否则调用方会拿到一个
+	// 被包装的 DB 错误）。verifyAccessTokenPassword 里保留同样的判断，它才是
+	// 密码门的单一形状来源。
+	if password == "" {
+		return ErrPasswordRequired
+	}
 	user, err := s.getUser(ctx, userID)
 	if err != nil {
 		return err
