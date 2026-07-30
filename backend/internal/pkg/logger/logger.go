@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"gopkg.in/natefinch/lumberjack.v2"
@@ -30,6 +31,15 @@ const (
 	// OpsSystemLogSkipField keeps an event in the standard logger while
 	// preventing the database-backed Ops system-log sink from indexing it.
 	OpsSystemLogSkipField = "ops_system_log_skip"
+
+	// LegacyPrintfField 标记「printf 风格 且 未接 ctx」的日志行，由 LegacyPrintf 打上。
+	// #103 拿 count(*) WHERE legacy_printf = true 当迁移进度度量，所以它必须严格等于
+	// 「还没迁移」——已迁移的 printf 行走 CtxPrintfField，两者互斥。
+	LegacyPrintfField = "legacy_printf"
+
+	// CtxPrintfField 标记「printf 风格 但已接 ctx」的日志行，由 CtxPrintf 打上。
+	// 这些行已经带 trace_id，剩下的欠账只是把 printf 拆成结构化字段。
+	CtxPrintfField = "ctx_printf"
 )
 
 type Sink interface {
@@ -512,6 +522,9 @@ func inferStdLogLevel(msg string) Level {
 }
 
 // LegacyPrintf 用于平滑迁移历史的 printf 风格日志到结构化 logger。
+//
+// 它用全局 L()，日志行拿不到 trace_id / request_id。签名里已有 ctx 的调用点
+// 应改用 CtxPrintf(ctx, ...)——只差首个参数。LegacyPrintfField 是剩余工作量的度量口径。
 func LegacyPrintf(component, format string, args ...any) {
 	msg := normalizeStdLogMessage(fmt.Sprintf(format, args...))
 	if msg == "" {
@@ -533,13 +546,53 @@ func LegacyPrintf(component, format string, args ...any) {
 
 	switch inferStdLogLevel(msg) {
 	case LevelDebug:
-		l.Debug(msg, zap.Bool("legacy_printf", true))
+		l.Debug(msg, zap.Bool(LegacyPrintfField, true))
 	case LevelWarn:
-		l.Warn(msg, zap.Bool("legacy_printf", true))
+		l.Warn(msg, zap.Bool(LegacyPrintfField, true))
 	case LevelError, LevelFatal:
-		l.Error(msg, zap.Bool("legacy_printf", true))
+		l.Error(msg, zap.Bool(LegacyPrintfField, true))
 	default:
-		l.Info(msg, zap.Bool("legacy_printf", true))
+		l.Info(msg, zap.Bool(LegacyPrintfField, true))
+	}
+}
+
+// CtxPrintf 与 LegacyPrintf 行为一致，但 logger 取自 ctx，因此日志行会自动带上
+// RequestLogger() 绑定的 trace_id / request_id / client_request_id / path / method。
+// 迁移 printf 风格日志时，只需在原 LegacyPrintf 调用前加一个 ctx 参数。
+//
+// 标记字段用 ctx_printf 而非 legacy_printf：#103 把 legacy_printf 当"还没迁移"的
+// 进度度量用（count(*) WHERE legacy_printf = true 应单调下降至只剩豁免项），
+// 两者共用一个字段会让这个数永远降不下去。ctx_printf 则标出"已迁移但仍是 printf
+// 风格"，供后续把 printf 改成结构化字段的批次继续度量。两个字段互斥。
+func CtxPrintf(ctx context.Context, component, format string, args ...any) {
+	msg := normalizeStdLogMessage(fmt.Sprintf(format, args...))
+	if msg == "" {
+		return
+	}
+
+	initialized := global.Load() != nil
+	if !initialized {
+		// 在日志系统未初始化前，回退到标准库 log，避免测试/工具链丢日志。
+		log.Print(msg)
+		return
+	}
+
+	l := FromContext(ctx)
+	if component != "" {
+		l = l.With(zap.String("component", component))
+	}
+	// 与 LegacyPrintf 同为一层包装，skip 1 让 caller 指向业务调用点。
+	l = l.WithOptions(zap.AddCallerSkip(1))
+
+	switch inferStdLogLevel(msg) {
+	case LevelDebug:
+		l.Debug(msg, zap.Bool(CtxPrintfField, true))
+	case LevelWarn:
+		l.Warn(msg, zap.Bool(CtxPrintfField, true))
+	case LevelError, LevelFatal:
+		l.Error(msg, zap.Bool(CtxPrintfField, true))
+	default:
+		l.Info(msg, zap.Bool(CtxPrintfField, true))
 	}
 }
 
@@ -557,6 +610,16 @@ func IntoContext(ctx context.Context, l *zap.Logger) context.Context {
 	return context.WithValue(ctx, loggerContextKey, l)
 }
 
+// FromContext 取出 request-scoped logger。
+//
+// 三级兜底：
+//  1. IntoContext 塞进来的 logger（RequestLogger() 中间件的正常路径）——最完整，
+//     带 path / method 等只有中间件知道的字段；
+//  2. 没有 logger 但 ctx 里还有 ctxkey 关联 ID 时，现场用这些 ID 组一个。
+//     这一级专门兜后台/脱离请求生命周期的 ctx：像 handler.usageRecordContext 那样
+//     只把 ctxkey 从请求 ctx 搬到 context.Background() 派生 ctx 的 helper，
+//     搬 value 时很容易忘了 logger，没有这级兜底就会静默丢 trace_id；
+//  3. 都没有则退回全局 L()。
 func FromContext(ctx context.Context) *zap.Logger {
 	if ctx == nil {
 		return L()
@@ -564,5 +627,34 @@ func FromContext(ctx context.Context) *zap.Logger {
 	if l, ok := ctx.Value(loggerContextKey).(*zap.Logger); ok && l != nil {
 		return l
 	}
+	if fields := correlationFieldsFromContext(ctx); len(fields) > 0 {
+		return L().With(fields...)
+	}
 	return L()
+}
+
+// correlationFieldsFromContext 把 ctx 里的关联 ID 还原成日志字段。
+// 字段名与 middleware.RequestLogger() 绑的保持一致，否则同一条链路在
+// OpenObserve 里会分裂成两套字段名。
+func correlationFieldsFromContext(ctx context.Context) []zap.Field {
+	fields := make([]zap.Field, 0, 3)
+	for _, item := range []struct {
+		key   ctxkey.Key
+		field string
+	}{
+		{ctxkey.RequestID, "request_id"},
+		{ctxkey.TraceID, "trace_id"},
+		{ctxkey.ClientRequestID, "client_request_id"},
+	} {
+		if v, _ := ctx.Value(item.key).(string); strings.TrimSpace(v) != "" {
+			fields = append(fields, zap.String(item.field, strings.TrimSpace(v)))
+		}
+	}
+	return fields
+}
+
+// C 是 FromContext 的短别名。全仓有上千个调用点要迁移，名字长度直接影响采用率。
+// 它只做取值，不加包装层，因此 C(ctx).Warn(...) 的 caller 仍指向业务调用点。
+func C(ctx context.Context) *zap.Logger {
+	return FromContext(ctx)
 }

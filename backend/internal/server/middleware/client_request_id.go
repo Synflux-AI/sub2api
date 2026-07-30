@@ -31,6 +31,10 @@ func ClientRequestID() gin.HandlerFunc {
 			}
 			c.Header(clientRequestIDHeader, v)
 			ctx := context.WithValue(c.Request.Context(), ctxkey.ClientRequestID, v)
+			// RequestLogger() 不再预绑空的 client_request_id，这里必须自己绑，
+			// 否则该分支的日志会完全丢掉这个字段。
+			requestLogger := logger.FromContext(ctx).With(zap.String("client_request_id", v))
+			ctx = logger.IntoContext(ctx, requestLogger)
 			c.Request = c.Request.WithContext(ctx)
 			c.Next()
 			return

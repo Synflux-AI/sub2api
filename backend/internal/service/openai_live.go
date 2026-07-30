@@ -333,8 +333,20 @@ func (s *OpenAIGatewayService) createUpstreamLiveCall(
 	}, nil
 }
 
+// componentOpenAILive 是 Live/realtime 链路日志的 component。
+//
+// 这些日志原先靠 RequestLogger() 在 base logger 上预绑的 component="http" 兜着；
+// #103 取消预绑后必须自己带，否则会落进空 component 桶，
+// ops_system_logs 也会把它们记成 component="app"。
+const componentOpenAILive = "service.openai_live"
+
+// openaiLiveLog 返回带 component 的 request-scoped logger。
+func openaiLiveLog(ctx context.Context) *zap.Logger {
+	return logger.C(ctx).With(zap.String("component", componentOpenAILive))
+}
+
 func logLiveCreateStageFailure(ctx context.Context, accountID int64, stage string, err error) {
-	logger.FromContext(ctx).Warn(
+	openaiLiveLog(ctx).Warn(
 		"OpenAI Live 创建阶段失败",
 		zap.Int64("account_id", accountID),
 		zap.String("stage", stage),
@@ -365,7 +377,7 @@ func logLiveUpstreamFailure(
 		errorMessage = strings.TrimSpace(gjson.GetBytes(body, "detail").String())
 	}
 
-	logger.FromContext(ctx).Warn(
+	openaiLiveLog(ctx).Warn(
 		"OpenAI Live 上游拒绝请求",
 		zap.Int64("account_id", accountID),
 		zap.Int("upstream_status_code", statusCode),

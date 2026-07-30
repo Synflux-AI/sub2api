@@ -40,7 +40,20 @@ const (
 	// Service 层在 SingleAccountRetry 模式下已做充分原地重试（最多 3 次、总等待 30s），
 	// Handler 层只需短暂间隔后重新进入 Service 层即可。
 	singleAccountBackoffDelay = 2 * time.Second
+
+	// componentGatewayFailover 是本文件日志的 component。
+	//
+	// 这些日志原先靠 RequestLogger() 在 base logger 上预绑的 component="http" 兜着；
+	// #103 取消预绑后必须自己带，否则会落进空 component 桶，
+	// 且 ops_system_logs 会把它们记成 component="app"（见 ops_repo.go 的空值兜底），
+	// Ops 后台按 component 就筛不出来了。
+	componentGatewayFailover = "handler.gateway.failover"
 )
+
+// failoverLog 返回带 component 的 request-scoped logger。
+func failoverLog(ctx context.Context) *zap.Logger {
+	return logger.FromContext(ctx).With(zap.String("component", componentGatewayFailover))
+}
 
 // FailoverState 跨循环迭代共享的 failover 状态
 type FailoverState struct {
@@ -93,7 +106,7 @@ func (s *FailoverState) HandleFailoverError(
 	// 重试次数上限 retryLimit 由调用方传入（账号级 pool_mode_retry_count 配置）。
 	if failoverErr.RetryableOnSameAccount && s.SameAccountRetryCount[accountID] < retryLimit {
 		s.SameAccountRetryCount[accountID]++
-		logger.FromContext(ctx).Warn("gateway.failover_same_account_retry",
+		failoverLog(ctx).Warn("gateway.failover_same_account_retry",
 			zap.Int64("account_id", accountID),
 			zap.Int("upstream_status", failoverErr.StatusCode),
 			zap.Int("same_account_retry_count", s.SameAccountRetryCount[accountID]),
@@ -120,7 +133,7 @@ func (s *FailoverState) HandleFailoverError(
 
 	// 递增切换计数
 	s.SwitchCount++
-	logger.FromContext(ctx).Warn("gateway.failover_switch_account",
+	failoverLog(ctx).Warn("gateway.failover_switch_account",
 		zap.Int64("account_id", accountID),
 		zap.Int("upstream_status", failoverErr.StatusCode),
 		zap.Int("switch_count", s.SwitchCount),
@@ -156,7 +169,7 @@ func (s *FailoverState) HandleSelectionExhausted(ctx context.Context) FailoverAc
 		s.LastFailoverErr.StatusCode == http.StatusServiceUnavailable &&
 		s.SwitchCount <= s.MaxSwitches {
 
-		logger.FromContext(ctx).Warn("gateway.failover_single_account_backoff",
+		failoverLog(ctx).Warn("gateway.failover_single_account_backoff",
 			zap.Duration("backoff_delay", singleAccountBackoffDelay),
 			zap.Int("switch_count", s.SwitchCount),
 			zap.Int("max_switches", s.MaxSwitches),
@@ -164,7 +177,7 @@ func (s *FailoverState) HandleSelectionExhausted(ctx context.Context) FailoverAc
 		if !sleepWithContext(ctx, singleAccountBackoffDelay) {
 			return FailoverCanceled
 		}
-		logger.FromContext(ctx).Warn("gateway.failover_single_account_retry",
+		failoverLog(ctx).Warn("gateway.failover_single_account_retry",
 			zap.Int("switch_count", s.SwitchCount),
 			zap.Int("max_switches", s.MaxSwitches),
 		)
