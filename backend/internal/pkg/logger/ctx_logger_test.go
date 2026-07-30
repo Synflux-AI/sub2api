@@ -233,8 +233,7 @@ func TestC_MatchesFromContext(t *testing.T) {
 	if C(ctx) != FromContext(ctx) {
 		t.Fatal("C must be a plain alias of FromContext")
 	}
-	//nolint:staticcheck // 显式覆盖 nil ctx
-	if C(nil) != FromContext(nil) {
+	if C(nil) != FromContext(nil) { //nolint:staticcheck // 显式覆盖 nil ctx 兜底路径
 		t.Fatal("C(nil) must match FromContext(nil)")
 	}
 }
