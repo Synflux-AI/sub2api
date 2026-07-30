@@ -787,6 +787,7 @@ export default {
       createdAt: '创建于 {date}',
       lastUsed: '上次使用 {date}',
       loadFailed: '加载访问令牌失败。',
+      loadErrorRetry: '重试',
       generateSuccess: '访问令牌已生成。',
       generateFailed: '生成访问令牌失败。',
       rotateSuccess: '访问令牌已重新生成，旧令牌已立即失效。',

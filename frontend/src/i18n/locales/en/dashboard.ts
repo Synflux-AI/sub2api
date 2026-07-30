@@ -782,6 +782,7 @@ export default {
       createdAt: 'Created {date}',
       lastUsed: 'Last used {date}',
       loadFailed: 'Failed to load access token.',
+      loadErrorRetry: 'Retry',
       generateSuccess: 'Access token generated.',
       generateFailed: 'Failed to generate access token.',
       rotateSuccess: 'Access token regenerated. The previous token is now invalid.',

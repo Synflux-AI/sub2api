@@ -14,6 +14,27 @@
         <div class="h-8 w-8 animate-spin rounded-full border-b-2 border-primary-500"></div>
       </div>
 
+      <!--
+        载入失败时绝不能落入「未生成」空态：空态紧挨着「生成令牌」按钮，
+        而生成/轮换用的是同一个 rotate 接口——一旦用户在真实令牌仍然有效时
+        误按生成，会立刻让第三方集成正在使用的令牌失效。载入失败必须停在
+        一个独立的、不可操作 rotate/revoke 的重试态上。
+      -->
+      <div
+        v-else-if="loadFailed"
+        data-testid="access-token-load-error"
+        class="rounded-lg border border-dashed border-red-200 px-4 py-8 text-center text-sm text-red-600 dark:border-red-900/40 dark:text-red-400"
+      >
+        <p>{{ t('profile.accessToken.loadFailed') }}</p>
+        <button
+          type="button"
+          class="btn btn-secondary btn-sm mt-3"
+          @click="retryLoad"
+        >
+          {{ t('profile.accessToken.loadErrorRetry') }}
+        </button>
+      </div>
+
       <template v-else>
         <div
           v-if="!token || !token.token"
@@ -160,6 +181,7 @@ const appStore = useAppStore()
 const { copyToClipboard } = useClipboard()
 
 const loading = ref(false)
+const loadFailed = ref(false)
 const busy = ref(false)
 const token = ref<UserAccessToken | null>(null)
 
@@ -193,13 +215,21 @@ function reportPasswordGatedFailure(error: unknown, fallback: string): void {
 
 async function loadToken(): Promise<void> {
   loading.value = true
+  loadFailed.value = false
   try {
     token.value = await accessTokenAPI.getAccessToken()
   } catch {
+    // 不设 token.value：保留失败前的未知状态，交给 loadFailed 渲染独立的
+    // 重试态，避免落入「未生成」空态并暴露可操作的生成/轮换按钮。
+    loadFailed.value = true
     appStore.showError(t('profile.accessToken.loadFailed'))
   } finally {
     loading.value = false
   }
+}
+
+function retryLoad(): void {
+  void loadToken()
 }
 
 function openRotateForm(): void {

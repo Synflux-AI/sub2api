@@ -212,6 +212,41 @@ describe('ProfileAccessTokenCard', () => {
     expect(showErrorMock).toHaveBeenCalledWith('profile.accessToken.passwordRequiredHint')
   })
 
+  it('shows a retry affordance instead of the empty/generate state when the initial load fails', async () => {
+    getAccessTokenMock.mockRejectedValue({ status: 500, message: 'boom' })
+    const wrapper = mountCard()
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="access-token-load-error"]').text()).toContain(
+      'profile.accessToken.loadFailed'
+    )
+    // 载入失败不知道令牌是否存在：绝不能显示空态，也绝不能提供可达的
+    // 生成/撤销按钮——否则用户会在真实令牌仍然有效时误触发 rotate。
+    expect(wrapper.find('[data-testid="access-token-empty"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="access-token-value"]').exists()).toBe(false)
+    expect(
+      wrapper.findAll('button').find((button) => button.text() === 'profile.accessToken.generate')
+    ).toBeUndefined()
+    expect(
+      wrapper.findAll('button').find((button) => button.text() === 'profile.accessToken.regenerate')
+    ).toBeUndefined()
+    expect(
+      wrapper.findAll('button').find((button) => button.text() === 'profile.accessToken.revoke')
+    ).toBeUndefined()
+
+    const retryButton = wrapper
+      .findAll('button')
+      .find((button) => button.text() === 'profile.accessToken.loadErrorRetry')
+    expect(retryButton).toBeTruthy()
+
+    getAccessTokenMock.mockResolvedValue(ACTIVE_TOKEN)
+    await retryButton!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="access-token-load-error"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="access-token-value"]').text()).toContain('sat-plaintext-abc123')
+  })
+
   it('clears the rotate password field after the inline form is closed', async () => {
     getAccessTokenMock.mockResolvedValue(ACTIVE_TOKEN)
     const wrapper = mountCard()
@@ -228,8 +263,13 @@ describe('ProfileAccessTokenCard', () => {
       .find((button) => button.text() === 'common.cancel')
     await cancelButton!.trigger('click')
 
-    // 表单关闭后重新打开：若密码状态未被清空，输入框会带着上次残留的值重新出现
-    await regenerateButton!.trigger('click')
+    // 表单关闭后重新打开：若密码状态未被清空，输入框会带着上次残留的值重新出现。
+    // 重新查询按钮而不是复用上面那个引用——表单打开后原按钮已被 v-else 移出 DOM，
+    // 复用旧引用只是因为 Vue 的事件监听器仍绑定在同一个（已分离的）元素对象上才凑巧生效。
+    const regenerateButtonAgain = wrapper
+      .findAll('button')
+      .find((button) => button.text() === 'profile.accessToken.regenerate')
+    await regenerateButtonAgain!.trigger('click')
     const reopenedInput = wrapper.get('#access-token-rotate-password')
       .element as HTMLInputElement
     expect(reopenedInput.value).toBe('')
