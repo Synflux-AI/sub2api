@@ -136,8 +136,8 @@ func TestEnqueueOpsErrorLog_QueueFullDrop(t *testing.T) {
 	ops := service.NewOpsService(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	entry := &service.OpsInsertErrorLogInput{ErrorPhase: "upstream", ErrorType: "upstream_error"}
 
-	enqueueOpsErrorLog(ops, entry)
-	enqueueOpsErrorLog(ops, entry)
+	enqueueOpsErrorLog(context.Background(), ops, entry)
+	enqueueOpsErrorLog(context.Background(), ops, entry)
 
 	require.Equal(t, int64(1), OpsErrorLogEnqueuedTotal())
 	require.Equal(t, int64(1), OpsErrorLogDroppedTotal())
@@ -151,13 +151,13 @@ func TestEnqueueOpsErrorLog_EarlyReturnBranches(t *testing.T) {
 	entry := &service.OpsInsertErrorLogInput{ErrorPhase: "upstream", ErrorType: "upstream_error"}
 
 	// nil 入参分支
-	enqueueOpsErrorLog(nil, entry)
-	enqueueOpsErrorLog(ops, nil)
+	enqueueOpsErrorLog(context.Background(), nil, entry)
+	enqueueOpsErrorLog(context.Background(), ops, nil)
 	require.Equal(t, int64(0), OpsErrorLogEnqueuedTotal())
 
 	// shutdown 分支
 	close(opsErrorLogShutdownCh)
-	enqueueOpsErrorLog(ops, entry)
+	enqueueOpsErrorLog(context.Background(), ops, entry)
 	require.Equal(t, int64(0), OpsErrorLogEnqueuedTotal())
 
 	// stopping 分支
@@ -165,7 +165,7 @@ func TestEnqueueOpsErrorLog_EarlyReturnBranches(t *testing.T) {
 	opsErrorLogMu.Lock()
 	opsErrorLogStopping = true
 	opsErrorLogMu.Unlock()
-	enqueueOpsErrorLog(ops, entry)
+	enqueueOpsErrorLog(context.Background(), ops, entry)
 	require.Equal(t, int64(0), OpsErrorLogEnqueuedTotal())
 
 	// queue nil 分支（防止启动 worker 干扰）
@@ -174,7 +174,7 @@ func TestEnqueueOpsErrorLog_EarlyReturnBranches(t *testing.T) {
 	opsErrorLogMu.Lock()
 	opsErrorLogQueue = nil
 	opsErrorLogMu.Unlock()
-	enqueueOpsErrorLog(ops, entry)
+	enqueueOpsErrorLog(context.Background(), ops, entry)
 	require.Equal(t, int64(0), OpsErrorLogEnqueuedTotal())
 }
 
@@ -214,7 +214,7 @@ func TestEnqueueOpsErrorLog_SanitizesAndBoundsBodyBeforeQueue(t *testing.T) {
 		ErrorBody:  `{"authorization":"Bearer ` + secret + `","message":"failed"}`,
 	}
 
-	enqueueOpsErrorLog(ops, entry)
+	enqueueOpsErrorLog(context.Background(), ops, entry)
 	job := <-opsErrorLogQueue
 	require.LessOrEqual(t, len(job.entry.ErrorBody), service.OpsErrorLogQueueBodyMaxBytes)
 	require.NotContains(t, job.entry.ErrorBody, secret)

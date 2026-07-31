@@ -49,6 +49,31 @@ func TestLoadRedisUsernameFromEnvironment(t *testing.T) {
 	require.Equal(t, "app-user", cfg.Redis.Username)
 }
 
+// The per-node rollout documented in deploy/vector/README.md flips business
+// events with OBSERVABILITY_BUSINESS_EVENTS_ENABLED rather than by editing
+// config.yaml on every host. That path only works because setDefaults registers
+// the key: viper.Unmarshal decodes AllKeys(), and AutomaticEnv can override a
+// key already in that union but never adds one — the same trap that once
+// silently dropped the image_storage.* credentials.
+func TestLoadBusinessEventsEnabled(t *testing.T) {
+	t.Run("disabled by default", func(t *testing.T) {
+		resetViperWithJWTSecret(t)
+
+		cfg, err := Load()
+		require.NoError(t, err)
+		require.False(t, cfg.Observability.BusinessEvents.Enabled)
+	})
+
+	t.Run("enabled by environment variable", func(t *testing.T) {
+		resetViperWithJWTSecret(t)
+		t.Setenv("OBSERVABILITY_BUSINESS_EVENTS_ENABLED", "true")
+
+		cfg, err := Load()
+		require.NoError(t, err)
+		require.True(t, cfg.Observability.BusinessEvents.Enabled)
+	})
+}
+
 func TestLoadHTTPIngressSafetyDefaults(t *testing.T) {
 	resetViperWithJWTSecret(t)
 	cfg, err := Load()
@@ -754,6 +779,21 @@ func TestLoadDefaultSecurityToggles(t *testing.T) {
 	}
 	if !cfg.Security.ResponseHeaders.Enabled {
 		t.Fatalf("ResponseHeaders.Enabled = false, want true")
+	}
+
+	wantHosts := []string{
+		"api.kimi.com",
+		"api.moonshot.ai",
+		"api.moonshot.cn",
+	}
+	hostSet := make(map[string]struct{}, len(cfg.Security.URLAllowlist.UpstreamHosts))
+	for _, h := range cfg.Security.URLAllowlist.UpstreamHosts {
+		hostSet[h] = struct{}{}
+	}
+	for _, want := range wantHosts {
+		if _, ok := hostSet[want]; !ok {
+			t.Fatalf("URLAllowlist.UpstreamHosts missing %q; got %v", want, cfg.Security.URLAllowlist.UpstreamHosts)
+		}
 	}
 }
 

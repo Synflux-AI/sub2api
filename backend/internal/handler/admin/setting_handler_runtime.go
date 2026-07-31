@@ -209,6 +209,7 @@ func (h *SettingHandler) GetPanelRateLimitSettings(c *gin.Context) {
 		HeavyRPM:    settings.HeavyRPM,
 		ExemptAdmin: settings.ExemptAdmin,
 		PublicIPRPM: settings.PublicIPRPM,
+		OpenAPIRPM:  settings.OpenAPIRPM,
 	})
 }
 
@@ -219,6 +220,11 @@ type UpdatePanelRateLimitSettingsRequest struct {
 	HeavyRPM    int  `json:"heavy_rpm"`
 	ExemptAdmin bool `json:"exempt_admin"`
 	PublicIPRPM int  `json:"public_ip_rpm"`
+	// OpenAPIRPM 用指针（不同于以上字段）：这是整个 payload 全量替换语义下新增
+	// 的字段，旧客户端仍会 PUT 只含前 5 个字段的 payload；若用非指针 int，
+	// 缺省的零值会被当作显式的 0（=不限流）写入，静默关掉这一档限流。
+	// nil 时保留当前已存储的值，非 nil 时才按新值走既有校验。
+	OpenAPIRPM *int `json:"open_api_rpm"`
 }
 
 // UpdatePanelRateLimitSettings 更新面板 API 限流配置
@@ -230,12 +236,26 @@ func (h *SettingHandler) UpdatePanelRateLimitSettings(c *gin.Context) {
 		return
 	}
 
+	// 先读当前值作为基线，再用请求覆盖：OpenAPIRPM 为 nil 时保留基线里的值，
+	// 避免旧客户端的 5 字段 payload 把新字段静默清零。
+	current, err := h.settingService.GetPanelRateLimitSettings(c.Request.Context())
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	openAPIRPM := current.OpenAPIRPM
+	if req.OpenAPIRPM != nil {
+		openAPIRPM = *req.OpenAPIRPM
+	}
+
 	settings := &service.PanelRateLimitSettings{
 		Enabled:     req.Enabled,
 		UserRPM:     req.UserRPM,
 		HeavyRPM:    req.HeavyRPM,
 		ExemptAdmin: req.ExemptAdmin,
 		PublicIPRPM: req.PublicIPRPM,
+		OpenAPIRPM:  openAPIRPM,
 	}
 
 	if err := h.settingService.SetPanelRateLimitSettings(c.Request.Context(), settings); err != nil {
@@ -255,6 +275,7 @@ func (h *SettingHandler) UpdatePanelRateLimitSettings(c *gin.Context) {
 		HeavyRPM:    updatedSettings.HeavyRPM,
 		ExemptAdmin: updatedSettings.ExemptAdmin,
 		PublicIPRPM: updatedSettings.PublicIPRPM,
+		OpenAPIRPM:  updatedSettings.OpenAPIRPM,
 	})
 }
 

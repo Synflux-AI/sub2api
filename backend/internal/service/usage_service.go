@@ -136,6 +136,11 @@ func (s *UsageService) Create(ctx context.Context, req CreateUsageLogRequest) (*
 		}
 	}
 
+	// Unlike the best-effort gateway path, the commit boundary is right here, so
+	// this projection can wait for it: a rolled-back write never reaches
+	// OpenObserve. The insert above is synchronous, so usageLog is ours to read.
+	emitUsageBusinessEvent(ctx, usageLog)
+
 	s.invalidateUsageCaches(ctx, req.UserID, balanceUpdated)
 
 	return usageLog, nil

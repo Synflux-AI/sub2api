@@ -56,6 +56,13 @@ func (p *PanelRateLimiter) Heavy() gin.HandlerFunc {
 	return p.userScoped("heavy", func(s service.PanelRateLimitSettings) int { return s.HeavyRPM })
 }
 
+// OpenAPI 客户侧 Open API（访问令牌鉴权）的按用户限流。
+// 与 Global/Heavy 共用 userScoped：按同样的用户 ID 维度计数，
+// 独立桶键 panel:open:user:<id>，与另外两档互不影响。
+func (p *PanelRateLimiter) OpenAPI() gin.HandlerFunc {
+	return p.userScoped("open", func(s service.PanelRateLimitSettings) int { return s.OpenAPIRPM })
+}
+
 func (p *PanelRateLimiter) userScoped(scope string, limitOf func(service.PanelRateLimitSettings) int) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if p == nil || p.limiter == nil || p.settingService == nil {

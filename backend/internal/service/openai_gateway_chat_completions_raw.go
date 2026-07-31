@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/util/responseheaders"
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
@@ -146,7 +145,7 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 		}
 	}
 
-	logger.L().Debug("openai chat_completions raw: forwarding without protocol conversion",
+	openaiGatewayLog(ctx).Debug("openai chat_completions raw: forwarding without protocol conversion",
 		zap.Int64("account_id", account.ID),
 		zap.String("original_model", originalModel),
 		zap.String("billing_model", billingModel),
@@ -254,6 +253,14 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 	requestBodyLen int,
 ) (*OpenAIForwardResult, error) {
 	requestID := resp.Header.Get("x-request-id")
+	// 本函数不接 ctx 参数，日志用的 request-scoped logger 从请求 ctx 取
+	// （middleware.RequestLogger 注入 trace_id / request_id / client_request_id）。
+	// 客户端断开后请求 ctx 会被 cancel，但 logger.C 只读 ctx value，不看 cancel 状态，
+	// 所以“继续 drain upstream 计费”路径上的日志同样带上关联字段。
+	ctx := context.Background()
+	if c != nil && c.Request != nil {
+		ctx = c.Request.Context()
+	}
 	writeStreamHeaders := s.newStreamHeaderWriter(c, resp.Header)
 	scanner := s.newUpstreamSSEScanner(resp.Body)
 
@@ -277,9 +284,9 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 			for _, pending := range pendingLines {
 				if _, werr := c.Writer.WriteString(pending + "\n"); werr != nil {
 					clientDisconnected = true
-					logger.L().Debug("openai chat_completions raw: client disconnected, continuing to drain upstream for billing",
+					openaiGatewayLog(ctx).Debug("openai chat_completions raw: client disconnected, continuing to drain upstream for billing",
 						zap.Error(werr),
-						zap.String("request_id", requestID),
+						zap.String("upstream_request_id", requestID),
 					)
 					return
 				}
@@ -289,9 +296,9 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 		}
 		if _, werr := c.Writer.WriteString(line + "\n"); werr != nil {
 			clientDisconnected = true
-			logger.L().Debug("openai chat_completions raw: client disconnected, continuing to drain upstream for billing",
+			openaiGatewayLog(ctx).Debug("openai chat_completions raw: client disconnected, continuing to drain upstream for billing",
 				zap.Error(werr),
-				zap.String("request_id", requestID),
+				zap.String("upstream_request_id", requestID),
 			)
 		}
 	}
@@ -327,9 +334,9 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 
 	if err := scanner.Err(); err != nil {
 		if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-			logger.L().Warn("openai chat_completions raw: stream read error",
+			openaiGatewayLog(ctx).Warn("openai chat_completions raw: stream read error",
 				zap.Error(err),
-				zap.String("request_id", requestID),
+				zap.String("upstream_request_id", requestID),
 			)
 		}
 	} else if !clientDisconnected && !clientOutputStarted {
@@ -341,9 +348,9 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 			for _, pending := range pendingLines {
 				if _, werr := c.Writer.WriteString(pending + "\n"); werr != nil {
 					clientDisconnected = true
-					logger.L().Debug("openai chat_completions raw: client disconnected during final flush",
+					openaiGatewayLog(ctx).Debug("openai chat_completions raw: client disconnected during final flush",
 						zap.Error(werr),
-						zap.String("request_id", requestID),
+						zap.String("upstream_request_id", requestID),
 					)
 					break
 				}

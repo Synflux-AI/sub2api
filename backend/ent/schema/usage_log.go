@@ -38,6 +38,12 @@ func (UsageLog) Fields() []ent.Field {
 		field.String("request_id").
 			MaxLen(64).
 			NotEmpty(),
+		// TraceID stores the inbound X-Trace-Id used for cross-service troubleshooting.
+		// NULL means the request predates trace persistence or had no request context.
+		field.String("trace_id").
+			MaxLen(64).
+			Optional().
+			Nillable(),
 		field.String("model").
 			MaxLen(100).
 			NotEmpty(),
@@ -219,6 +225,7 @@ func (UsageLog) Indexes() []ent.Index {
 		index.Fields("model"),
 		index.Fields("requested_model"),
 		index.Fields("request_id"),
+		index.Fields("trace_id"),
 		// 复合索引用于时间范围查询
 		index.Fields("user_id", "created_at"),
 		index.Fields("api_key_id", "created_at"),

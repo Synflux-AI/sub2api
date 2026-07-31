@@ -49,6 +49,20 @@ func TestUsageLogFromServiceAdmin_IncludesAdminOnlyUserIdentity(t *testing.T) {
 	require.NotContains(t, string(userJSON), "user_notes")
 }
 
+func TestUsageLogFromService_ExposesTraceIDToUserAndAdmin(t *testing.T) {
+	t.Parallel()
+
+	traceID := "trace-visible-123"
+	log := &service.UsageLog{
+		RequestID: "client:billing-id",
+		TraceID:   &traceID,
+	}
+
+	require.Equal(t, traceID, *UsageLogFromService(log).TraceID)
+	require.Equal(t, traceID, *UsageLogFromServiceAdmin(log).TraceID)
+	require.Equal(t, "client:billing-id", UsageLogFromService(log).RequestID)
+}
+
 func TestUsageLogFromService_PrefersRequestTypeForLegacyFields(t *testing.T) {
 	t.Parallel()
 

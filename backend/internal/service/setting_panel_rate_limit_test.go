@@ -116,7 +116,7 @@ func TestGetPanelRateLimitSettingsInvalidJSONFallsBack(t *testing.T) {
 
 func TestGetPanelRateLimitSettingsNormalizesValues(t *testing.T) {
 	repo := &panelRateLimitSettingRepo{values: map[string]string{
-		SettingKeyPanelRateLimitSettings: `{"enabled":true,"user_rpm":-5,"heavy_rpm":999999999,"exempt_admin":false,"public_ip_rpm":10}`,
+		SettingKeyPanelRateLimitSettings: `{"enabled":true,"user_rpm":-5,"heavy_rpm":999999999,"exempt_admin":false,"public_ip_rpm":10,"open_api_rpm":-3}`,
 	}}
 	svc := newPanelRateLimitTestService(repo)
 
@@ -127,6 +127,43 @@ func TestGetPanelRateLimitSettingsNormalizesValues(t *testing.T) {
 	require.Equal(t, panelRateLimitRPMMax, settings.HeavyRPM)
 	require.Equal(t, 10, settings.PublicIPRPM)
 	require.False(t, settings.ExemptAdmin)
+	require.Equal(t, 0, settings.OpenAPIRPM, "负数在读路径归零")
+}
+
+func TestGetPanelRateLimitSettingsNormalizesOpenAPIRPMOverMax(t *testing.T) {
+	repo := &panelRateLimitSettingRepo{values: map[string]string{
+		SettingKeyPanelRateLimitSettings: `{"enabled":true,"user_rpm":100,"heavy_rpm":20,"exempt_admin":true,"public_ip_rpm":50,"open_api_rpm":999999999}`,
+	}}
+	svc := newPanelRateLimitTestService(repo)
+
+	settings, err := svc.GetPanelRateLimitSettings(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, panelRateLimitRPMMax, settings.OpenAPIRPM, "超上限在读路径截断到 max")
+}
+
+// 历史 JSON 缺失 open_api_rpm 字段（本次新增前写入的行）：读到默认值 60，
+// 而不是零值（零值会被限流器当作「不限流」，等于新字段静默失效）。
+func TestGetPanelRateLimitSettingsMissingOpenAPIRPMFallsBackToDefault(t *testing.T) {
+	repo := &panelRateLimitSettingRepo{values: map[string]string{
+		SettingKeyPanelRateLimitSettings: `{"enabled":true,"user_rpm":100,"heavy_rpm":20,"exempt_admin":true,"public_ip_rpm":50}`,
+	}}
+	svc := newPanelRateLimitTestService(repo)
+
+	settings, err := svc.GetPanelRateLimitSettings(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, 60, settings.OpenAPIRPM, "缺字段应回落到默认值 60")
+}
+
+// 与上面相对：JSON 里显式写 0 必须保持 0（=不限流），不能被默认值预填盖掉。
+func TestGetPanelRateLimitSettingsExplicitZeroOpenAPIRPMStaysZero(t *testing.T) {
+	repo := &panelRateLimitSettingRepo{values: map[string]string{
+		SettingKeyPanelRateLimitSettings: `{"enabled":true,"user_rpm":100,"heavy_rpm":20,"exempt_admin":true,"public_ip_rpm":50,"open_api_rpm":0}`,
+	}}
+	svc := newPanelRateLimitTestService(repo)
+
+	settings, err := svc.GetPanelRateLimitSettings(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, 0, settings.OpenAPIRPM, "显式 0 必须保持 0，不能被默认值预填覆盖")
 }
 
 func TestSetPanelRateLimitSettingsValidation(t *testing.T) {
@@ -135,6 +172,10 @@ func TestSetPanelRateLimitSettingsValidation(t *testing.T) {
 	require.Error(t, svc.SetPanelRateLimitSettings(context.Background(), nil))
 	require.Error(t, svc.SetPanelRateLimitSettings(context.Background(), &PanelRateLimitSettings{UserRPM: -1}))
 	require.Error(t, svc.SetPanelRateLimitSettings(context.Background(), &PanelRateLimitSettings{HeavyRPM: panelRateLimitRPMMax + 1}))
+	require.Error(t, svc.SetPanelRateLimitSettings(context.Background(), &PanelRateLimitSettings{OpenAPIRPM: -1}),
+		"写路径负数必须报错，不能像读路径那样静默归零")
+	require.Error(t, svc.SetPanelRateLimitSettings(context.Background(), &PanelRateLimitSettings{OpenAPIRPM: panelRateLimitRPMMax + 1}),
+		"写路径超上限必须报错，不能像读路径那样静默截断")
 }
 
 func TestSetPanelRateLimitSettingsRoundTripAndCacheRefresh(t *testing.T) {
@@ -151,6 +192,7 @@ func TestSetPanelRateLimitSettingsRoundTripAndCacheRefresh(t *testing.T) {
 		HeavyRPM:    30,
 		ExemptAdmin: false,
 		PublicIPRPM: 60,
+		OpenAPIRPM:  45,
 	}
 	require.NoError(t, svc.SetPanelRateLimitSettings(context.Background(), want))
 

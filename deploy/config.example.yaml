@@ -86,6 +86,22 @@ server:
     max_upload_buffer_per_stream: 524288
 
 # =============================================================================
+# WebAuthn / Passkey Configuration
+# WebAuthn / Passkey 配置
+# =============================================================================
+# Passkeys require HTTPS in production. The RP ID is the domain only (no scheme
+# or port), while RP origins are exact browser origins.
+# Passkey 在生产环境要求 HTTPS。RP ID 只填写域名（不含协议和端口），RP origins
+# 填写浏览器访问使用的完整 Origin。
+webauthn:
+  enabled: false
+  rp_display_name: "Sub2API"
+  # Example / 示例: "sub2api.example.com"
+  rp_id: ""
+  # Example / 示例: ["https://sub2api.example.com"]
+  rp_origins: []
+
+# =============================================================================
 # Run Mode Configuration
 # 运行模式配置
 # =============================================================================
@@ -140,6 +156,8 @@ security:
       - "api.openai.com"
       - "api.anthropic.com"
       - "api.kimi.com"
+      - "api.moonshot.ai"
+      - "api.moonshot.cn"
       - "open.bigmodel.cn"
       - "api.minimaxi.com"
       - "generativelanguage.googleapis.com"
@@ -615,6 +633,35 @@ log:
     # Thereafter keep 1 out of N entries per second
     # 之后每 N 条保留 1 条
     thereafter: 100
+
+# =============================================================================
+# Observability Configuration
+# 可观测性配置
+# =============================================================================
+observability:
+  # Business events mirror rows written to usage_logs / ops_error_logs as one
+  # structured stdout line each, so the existing stdout -> Vector -> OpenObserve
+  # pipeline can index dimensions the log stream never carried (user_agent,
+  # model, account_id, status_code, error_type, ...).
+  #
+  # Postgres stays the only source of truth. These events are a best-effort
+  # observability projection: they are emitted when the row is handed to its
+  # write path, never inside a database transaction, so OpenObserve may hold an
+  # event whose row was later dropped by a conflict or a full queue. Do not use
+  # these streams for reconciliation or billing aggregation.
+  #
+  # 业务事件把写入 usage_logs / ops_error_logs 的记录额外打印一条结构化 stdout 日志，
+  # 交由现有 stdout -> Vector -> OpenObserve 链路检索 user_agent / model / account_id
+  # 等数据库有、但日志流里查不到的维度。
+  #
+  # Postgres 仍是唯一主存储；本事件是 best-effort 可观测投影，不进数据库事务，
+  # 因此 OO 中可能存在最终未落库（冲突或队列满）的事件，不可用于对账或计费聚合。
+  business_events:
+    # Off by default: create the Vector route and OpenObserve streams first,
+    # then enable node by node while watching Docker log growth and OO ingest.
+    # 默认关闭：先建好 Vector 路由与 OO stream，再逐节点开启并观察
+    # Docker 日志增长与 OO ingest。
+    enabled: false
 
 # =============================================================================
 # Sora Direct Client Configuration

@@ -118,12 +118,17 @@ var auditSensitiveReads = map[string]string{
 	"GET /api/v1/admin/groups/:id/api-keys":       "admin.groups.api_keys.read",
 	"GET /api/v1/admin/backups/s3-config":         "admin.backups.s3_config.read",
 	"GET /api/v1/admin/data-management/s3/config": "admin.data_management.s3_config.read",
+	// 用户级 access token 的读取会返回客户凭据明文，两侧都要留痕。
+	// 只有响应体含明文，而审计只捕获请求体，故记录里不会出现令牌本身。
+	"GET /api/v1/user/access-token":            "user.access_token.read",
+	"GET /api/v1/admin/users/:id/access-token": "admin.users.access_token.read",
 }
 
 // auditActionOverrides 变更类请求的动作名精确映射（未命中时自动推导）。
 var auditActionOverrides = map[string]string{
 	"POST /api/v1/auth/login":                                 service.AuditActionLogin,
 	"POST /api/v1/auth/login/2fa":                             service.AuditActionLogin2FA,
+	"POST /api/v1/auth/passkey/login/finish":                  service.AuditActionLogin,
 	"POST /api/v1/auth/register":                              service.AuditActionRegister,
 	"POST /api/v1/auth/refresh":                               service.AuditActionTokenRefresh,
 	"POST /api/v1/user/totp/step-up":                          service.AuditActionStepUpVerify,
@@ -141,11 +146,20 @@ var auditActionOverrides = map[string]string{
 	"POST /api/v1/admin/prompt-audit/events/batch-delete":     "admin.prompt_audit.events.batch_delete",
 	"POST /api/v1/admin/prompt-audit/events/delete-preview":   "admin.prompt_audit.events.delete_preview",
 	"POST /api/v1/admin/prompt-audit/events/delete-by-filter": "admin.prompt_audit.events.filter_delete",
+	// 用户级 access token 的轮换 / 撤销。自动推导会得到
+	// "user.access_token.rotate.create" 与 "user.access_token.delete"——稳定但
+	// 读起来别扭（rotate.create）也丢了 revoke 的语义，故显式命名。
+	"POST /api/v1/user/access-token/rotate":            "user.access_token.rotate",
+	"DELETE /api/v1/user/access-token":                 "user.access_token.revoke",
+	"POST /api/v1/admin/users/:id/access-token/rotate": "admin.users.access_token.rotate",
+	"DELETE /api/v1/admin/users/:id/access-token":      "admin.users.access_token.revoke",
 }
 
 // auditBodyOmittedRoutes 请求体几乎整体由凭证构成的路由（如整块粘贴 auth JSON 的导入接口）。
 // 这类 body 的凭证内嵌在普通字符串值里，键级脱敏无法覆盖，整体不入库。
 var auditBodyOmittedRoutes = map[string]struct{}{
+	"POST /api/v1/auth/passkey/login/finish":                    {},
+	"POST /api/v1/user/passkeys/register/finish":                {},
 	"POST /api/v1/admin/accounts/import/codex-session":          {},
 	"PUT /api/v1/admin/accounts/:id/ollama-cloud-usage/session": {},
 	"PUT /api/v1/admin/prompt-audit/config":                     {},

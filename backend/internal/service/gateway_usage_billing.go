@@ -526,6 +526,16 @@ func writeUsageLogBestEffort(ctx context.Context, repo UsageLogRepository, usage
 	if repo == nil || usageLog == nil {
 		return
 	}
+	// Projected before the write, not after: on a ctx timeout createBatched can
+	// return while the batcher goroutine still holds usageLog and is about to
+	// set ID/CreatedAt, so reading the struct afterwards would race. ctx is
+	// still the caller's here, which is what carries the correlation IDs.
+	//
+	// The projection therefore describes an attempted write. A row dropped by
+	// ON CONFLICT or a full queue still produces an event — OpenObserve is a
+	// best-effort observability projection, not a replica of Postgres.
+	emitUsageBusinessEvent(ctx, usageLog)
+
 	usageCtx, cancel := detachedBillingContext(ctx)
 	defer cancel()
 
@@ -984,6 +994,7 @@ func (s *GatewayService) buildRecordUsageLog(
 		APIKeyID:              apiKey.ID,
 		AccountID:             account.ID,
 		RequestID:             requestID,
+		TraceID:               usageTraceID(ctx),
 		Model:                 result.Model,
 		RequestedModel:        requestedModel,
 		UpstreamModel:         optionalTrimmedStringPtr(result.UpstreamModel),

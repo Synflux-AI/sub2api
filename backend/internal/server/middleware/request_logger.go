@@ -47,19 +47,27 @@ func RequestLogger() gin.HandlerFunc {
 		c.Header(traceid.Header, traceID)
 		ctx = context.WithValue(ctx, ctxkey.TraceID, traceID)
 
-		requestLogger := logger.With(
-			zap.String("component", "http"),
+		// 这个 base logger 会通过 ctx 流到全仓的业务日志上（logger.C / logger.CtxPrintf），
+		// 因此只绑请求级关联字段，不预绑通用 component：业务侧要追加自己的 component，
+		// 而 zap 的 JSON encoder 会把重复 key 逐字写出，取值就得看下游解析器实现。
+		// 同理，空的 client_request_id 也不绑——按路由挂载的 ClientRequestID() 中间件
+		// 会在稍后补上真值（internal/server/routes/gateway.go:38）。
+		fields := []zap.Field{
 			zap.String("request_id", requestID),
-			zap.String("client_request_id", strings.TrimSpace(clientRequestID)),
 			zap.String("trace_id", traceID),
 			zap.String("path", c.Request.URL.Path),
 			zap.String("method", c.Request.Method),
-		)
+		}
+		if trimmed := strings.TrimSpace(clientRequestID); trimmed != "" {
+			fields = append(fields, zap.String("client_request_id", trimmed))
+		}
+		requestLogger := logger.With(fields...)
 
 		if rejectedTraceID {
 			// 注：若原始值整体为非法 UTF-8（如 "\xff\xfe"），normalizePersistentText 会将其
 			// 清空为 ""，此时诊断字段为空串——这是已知的信息损失，不影响 warn 是否触发。
 			requestLogger.Warn("inbound X-Trace-Id rejected",
+				zap.String("component", "http"),
 				zap.String("trace_id_rejected", normalizePersistentText(rawTraceID, maxPersistentRequestIDBytes)),
 			)
 		}

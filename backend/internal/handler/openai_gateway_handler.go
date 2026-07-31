@@ -136,6 +136,10 @@ func newOpenAIModelMappedBodyCache(body []byte, replace openAIModelBodyReplaceFu
 	}
 }
 
+// usageRecordContext copies the request-scoped correlation IDs onto the worker
+// pool's background context. UsageRecordWorkerPool.execute builds task contexts
+// from context.Background(), so anything not copied here is gone by the time the
+// usage row is written — including the business-event projection's trace_id.
 func usageRecordContext(parent context.Context, base context.Context) context.Context {
 	if base == nil {
 		base = context.Background()
@@ -146,8 +150,14 @@ func usageRecordContext(parent context.Context, base context.Context) context.Co
 	if clientRequestID, _ := parent.Value(ctxkey.ClientRequestID).(string); strings.TrimSpace(clientRequestID) != "" {
 		base = context.WithValue(base, ctxkey.ClientRequestID, strings.TrimSpace(clientRequestID))
 	}
+	if traceID, _ := parent.Value(ctxkey.TraceID).(string); strings.TrimSpace(traceID) != "" {
+		base = context.WithValue(base, ctxkey.TraceID, strings.TrimSpace(traceID))
+	}
 	if requestID, _ := parent.Value(ctxkey.RequestID).(string); strings.TrimSpace(requestID) != "" {
 		base = context.WithValue(base, ctxkey.RequestID, strings.TrimSpace(requestID))
+	}
+	if traceID, _ := parent.Value(ctxkey.TraceID).(string); strings.TrimSpace(traceID) != "" {
+		base = context.WithValue(base, ctxkey.TraceID, strings.TrimSpace(traceID))
 	}
 	return base
 }
@@ -2924,7 +2934,7 @@ func (h *OpenAIGatewayHandler) enqueueCyberSessionBlockedOpsEntry(c *gin.Context
 	if apiKey.User != nil {
 		meta.UserID = apiKey.User.ID
 	}
-	enqueueOpsErrorLog(h.opsService, buildCyberSessionBlockedOpsEntry(meta))
+	enqueueOpsErrorLog(requestCtx, h.opsService, buildCyberSessionBlockedOpsEntry(meta))
 }
 
 // recordCyberPolicyIfMarked 在 gateway forward 返回后检查 cyber 标记，异步写风控日志/邮件，
@@ -3013,6 +3023,11 @@ func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarked(c *gin.Context, apiKey 
 		ClientIP:        clientIPStr,
 		CreatedAt:       time.Now(),
 	}
+	// Snapshot the correlation-carrying context before the goroutine starts: gin
+	// pools *gin.Context and reassigns c.Request, so reading it later could
+	// observe another request. WithoutCancel keeps the values after the request
+	// context is done — the projection only reads them.
+	correlationCtx := context.WithoutCancel(opsErrorLogRequestContext(c))
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
@@ -3058,7 +3073,7 @@ func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarked(c *gin.Context, apiKey 
 			gwSvc.MarkCyberSessionBlocked(ctx, cyberBlockKey)
 		}
 		if opsSvc != nil {
-			enqueueOpsErrorLog(opsSvc, buildCyberPolicyOpsErrorEntry(opsMeta, mark))
+			enqueueOpsErrorLog(correlationCtx, opsSvc, buildCyberPolicyOpsErrorEntry(opsMeta, mark))
 		}
 	}()
 }
