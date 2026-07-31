@@ -694,6 +694,7 @@ describe("admin SettingsView payment visible method controls", () => {
       heavy_rpm: 60,
       exempt_admin: true,
       public_ip_rpm: 300,
+      open_api_rpm: 45,
     });
     updatePanelRateLimitSettings.mockImplementation(async (payload) => payload);
 
@@ -704,6 +705,13 @@ describe("admin SettingsView payment visible method controls", () => {
     expect(wrapper.text()).toContain("admin.settings.panelRateLimit.title");
     expect(wrapper.text()).toContain("admin.settings.panelRateLimit.proxySafeNote");
 
+    // 加载时应把 open_api_rpm 回填到表单，而不是停在硬编码默认值上。
+    const openApiRpmInput = wrapper.find(
+      '[data-testid="panel-rate-limit-open-api-rpm"]',
+    );
+    expect(openApiRpmInput.exists()).toBe(true);
+    expect((openApiRpmInput.element as HTMLInputElement).value).toBe("45");
+
     const userRpmInput = wrapper.find('[data-testid="panel-rate-limit-user-rpm"]');
     expect(userRpmInput.exists()).toBe(true);
     await userRpmInput.setValue("120");
@@ -713,14 +721,139 @@ describe("admin SettingsView payment visible method controls", () => {
     await saveButton.trigger("click");
     await flushPromises();
 
+    // 保存必须显式发送全部 6 个字段（PUT 是全量替换，不是 PATCH）：漏发任何一个
+    // 非指针字段都会被后端当作零值写回，其中 enabled/user_rpm/heavy_rpm/
+    // exempt_admin/public_ip_rpm 零值即等价于关闭面板限流或将其改为不限制。
     expect(updatePanelRateLimitSettings).toHaveBeenCalledWith({
       enabled: true,
       user_rpm: 120,
       heavy_rpm: 60,
       exempt_admin: true,
       public_ip_rpm: 300,
+      open_api_rpm: 45,
     });
     expect(showSuccess).toHaveBeenCalled();
+  });
+
+  it("sends all six panel rate limit fields explicitly, including a changed open_api_rpm", async () => {
+    getPanelRateLimitSettings.mockClear();
+    updatePanelRateLimitSettings.mockClear();
+    getPanelRateLimitSettings.mockResolvedValue({
+      enabled: true,
+      user_rpm: 240,
+      heavy_rpm: 60,
+      exempt_admin: true,
+      public_ip_rpm: 300,
+      open_api_rpm: 45,
+    });
+    updatePanelRateLimitSettings.mockImplementation(async (payload) => payload);
+
+    const wrapper = mountView();
+    await flushPromises();
+
+    const openApiRpmInput = wrapper.find(
+      '[data-testid="panel-rate-limit-open-api-rpm"]',
+    );
+    await openApiRpmInput.setValue("90");
+
+    const saveButton = wrapper.find('[data-testid="panel-rate-limit-save"]');
+    await saveButton.trigger("click");
+    await flushPromises();
+
+    // 全量对象断言（不是 objectContaining）：既证明新字段被发送，也证明没有
+    // 漏发其余五个非指针字段——任何一个被漏掉，这个精确匹配都会失败。
+    expect(updatePanelRateLimitSettings).toHaveBeenCalledTimes(1);
+    const [payload] = updatePanelRateLimitSettings.mock.calls[0];
+    expect(Object.keys(payload).sort()).toEqual([
+      "enabled",
+      "exempt_admin",
+      "heavy_rpm",
+      "open_api_rpm",
+      "public_ip_rpm",
+      "user_rpm",
+    ]);
+    expect(payload).toEqual({
+      enabled: true,
+      user_rpm: 240,
+      heavy_rpm: 60,
+      exempt_admin: true,
+      public_ip_rpm: 300,
+      open_api_rpm: 90,
+    });
+  });
+
+  it("keeps a historical panel rate limit config missing open_api_rpm on the hardcoded default instead of dropping it from the save payload", async () => {
+    getPanelRateLimitSettings.mockClear();
+    updatePanelRateLimitSettings.mockClear();
+    // 历史存量配置：保存这份配置时后端还没有 open_api_rpm 字段，响应里完全不带这个 key。
+    getPanelRateLimitSettings.mockResolvedValue({
+      enabled: true,
+      user_rpm: 240,
+      heavy_rpm: 60,
+      exempt_admin: true,
+      public_ip_rpm: 300,
+    });
+    updatePanelRateLimitSettings.mockImplementation(async (payload) => payload);
+
+    const wrapper = mountView();
+    await flushPromises();
+
+    const openApiRpmInput = wrapper.find(
+      '[data-testid="panel-rate-limit-open-api-rpm"]',
+    );
+    // Object.assign 只覆盖响应里真实存在的 key；缺失时表单应保留初始默认值 60，
+    // 而不是变成 undefined 或被强制清零。
+    expect((openApiRpmInput.element as HTMLInputElement).value).toBe("60");
+
+    const saveButton = wrapper.find('[data-testid="panel-rate-limit-save"]');
+    await saveButton.trigger("click");
+    await flushPromises();
+
+    expect(updatePanelRateLimitSettings).toHaveBeenCalledWith({
+      enabled: true,
+      user_rpm: 240,
+      heavy_rpm: 60,
+      exempt_admin: true,
+      public_ip_rpm: 300,
+      open_api_rpm: 60,
+    });
+  });
+
+  it("preserves an explicit open_api_rpm of 0 (unlimited) instead of defaulting it away", async () => {
+    getPanelRateLimitSettings.mockClear();
+    updatePanelRateLimitSettings.mockClear();
+    getPanelRateLimitSettings.mockResolvedValue({
+      enabled: true,
+      user_rpm: 240,
+      heavy_rpm: 60,
+      exempt_admin: true,
+      public_ip_rpm: 300,
+      open_api_rpm: 0,
+    });
+    updatePanelRateLimitSettings.mockImplementation(async (payload) => payload);
+
+    const wrapper = mountView();
+    await flushPromises();
+
+    const openApiRpmInput = wrapper.find(
+      '[data-testid="panel-rate-limit-open-api-rpm"]',
+    );
+    // 0 是一个合法的、有意义的值（在限流器里 <= 0 表示"不限制"），不能被
+    // Object.assign 或表单初始化逻辑当成"没传"而悄悄换回默认值 60。
+    expect((openApiRpmInput.element as HTMLInputElement).value).toBe("0");
+
+    const saveButton = wrapper.find('[data-testid="panel-rate-limit-save"]');
+    await saveButton.trigger("click");
+    await flushPromises();
+
+    expect(updatePanelRateLimitSettings).toHaveBeenCalledWith({
+      enabled: true,
+      user_rpm: 240,
+      heavy_rpm: 60,
+      exempt_admin: true,
+      public_ip_rpm: 300,
+      open_api_rpm: 0,
+    });
   });
 
   it("does not render legacy visible payment method controls", async () => {

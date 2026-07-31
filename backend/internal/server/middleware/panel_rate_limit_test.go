@@ -200,6 +200,86 @@ func TestPanelRateLimiterHeavyUsesHeavyRPM(t *testing.T) {
 	require.Contains(t, allower.counts, "panel:heavy:user:7")
 }
 
+func TestPanelRateLimiterOpenAPIPerUser(t *testing.T) {
+	allower := &fakePanelAllower{}
+	p := &PanelRateLimiter{
+		limiter:        allower,
+		settingService: newPanelRateLimitTestService(t, `{"enabled":true,"user_rpm":100,"heavy_rpm":100,"exempt_admin":false,"public_ip_rpm":0,"open_api_rpm":2}`),
+	}
+
+	router := newPanelTestRouter(p.OpenAPI(), &panelTestIdentity{userID: 11, role: service.RoleUser})
+
+	require.Equal(t, http.StatusOK, performPanelRequest(router, "127.0.0.1:1000").Code)
+	require.Equal(t, http.StatusOK, performPanelRequest(router, "127.0.0.1:1000").Code)
+	third := performPanelRequest(router, "127.0.0.1:1000")
+	require.Equal(t, http.StatusTooManyRequests, third.Code)
+	require.NotEmpty(t, third.Header().Get("Retry-After"))
+	require.Contains(t, third.Body.String(), "RATE_LIMITED")
+
+	allower.mu.Lock()
+	defer allower.mu.Unlock()
+	require.Contains(t, allower.counts, "panel:open:user:11")
+}
+
+func TestPanelRateLimiterOpenAPIUnlimitedWhenZero(t *testing.T) {
+	allower := &fakePanelAllower{}
+	p := &PanelRateLimiter{
+		limiter:        allower,
+		settingService: newPanelRateLimitTestService(t, `{"enabled":true,"user_rpm":1,"heavy_rpm":1,"exempt_admin":false,"public_ip_rpm":0,"open_api_rpm":0}`),
+	}
+
+	router := newPanelTestRouter(p.OpenAPI(), &panelTestIdentity{userID: 12, role: service.RoleUser})
+	for i := 0; i < 5; i++ {
+		require.Equal(t, http.StatusOK, performPanelRequest(router, "127.0.0.1:1000").Code)
+	}
+
+	allower.mu.Lock()
+	defer allower.mu.Unlock()
+	require.NotContains(t, allower.counts, "panel:open:user:12", "OpenAPIRPM=0 意味着不限流，压根不该调用 Allow")
+}
+
+func TestPanelRateLimiterOpenAPIDisabledMasterSwitch(t *testing.T) {
+	p := &PanelRateLimiter{
+		limiter:        &fakePanelAllower{},
+		settingService: newPanelRateLimitTestService(t, `{"enabled":false,"user_rpm":1,"heavy_rpm":1,"exempt_admin":false,"public_ip_rpm":0,"open_api_rpm":1}`),
+	}
+
+	router := newPanelTestRouter(p.OpenAPI(), &panelTestIdentity{userID: 13, role: service.RoleUser})
+	for i := 0; i < 3; i++ {
+		require.Equal(t, http.StatusOK, performPanelRequest(router, "127.0.0.1:1000").Code)
+	}
+}
+
+// 三个桶（global/heavy/open）各自独立计数，互不干扰：打满 open 桶不能影响 global/heavy。
+func TestPanelRateLimiterThreeBucketsAreIndependent(t *testing.T) {
+	allower := &fakePanelAllower{}
+	p := &PanelRateLimiter{
+		limiter:        allower,
+		settingService: newPanelRateLimitTestService(t, `{"enabled":true,"user_rpm":1,"heavy_rpm":1,"exempt_admin":false,"public_ip_rpm":0,"open_api_rpm":1}`),
+	}
+
+	globalRouter := newPanelTestRouter(p.Global(), &panelTestIdentity{userID: 21, role: service.RoleUser})
+	heavyRouter := newPanelTestRouter(p.Heavy(), &panelTestIdentity{userID: 21, role: service.RoleUser})
+	openRouter := newPanelTestRouter(p.OpenAPI(), &panelTestIdentity{userID: 21, role: service.RoleUser})
+
+	// 打满 open 桶
+	require.Equal(t, http.StatusOK, performPanelRequest(openRouter, "127.0.0.1:1000").Code)
+	require.Equal(t, http.StatusTooManyRequests, performPanelRequest(openRouter, "127.0.0.1:1000").Code)
+
+	// global/heavy 桶仍各自独立可用，不受 open 桶超限影响
+	require.Equal(t, http.StatusOK, performPanelRequest(globalRouter, "127.0.0.1:1000").Code)
+	require.Equal(t, http.StatusOK, performPanelRequest(heavyRouter, "127.0.0.1:1000").Code)
+
+	allower.mu.Lock()
+	defer allower.mu.Unlock()
+	require.Contains(t, allower.counts, "panel:open:user:21")
+	require.Contains(t, allower.counts, "panel:global:user:21")
+	require.Contains(t, allower.counts, "panel:heavy:user:21")
+	require.EqualValues(t, 2, allower.counts["panel:open:user:21"])
+	require.EqualValues(t, 1, allower.counts["panel:global:user:21"])
+	require.EqualValues(t, 1, allower.counts["panel:heavy:user:21"])
+}
+
 func TestPanelRateLimiterAdminExemption(t *testing.T) {
 	// 豁免开启：管理员不计数
 	p := &PanelRateLimiter{

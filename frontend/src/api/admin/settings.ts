@@ -1234,6 +1234,7 @@ export interface PanelRateLimitSettings {
   heavy_rpm: number;
   exempt_admin: boolean;
   public_ip_rpm: number;
+  open_api_rpm: number;
 }
 
 export async function getPanelRateLimitSettings(): Promise<PanelRateLimitSettings> {
