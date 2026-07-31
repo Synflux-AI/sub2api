@@ -28,6 +28,27 @@ func TestUsageLogFromService_IncludesOpenAIWSMode(t *testing.T) {
 	require.False(t, UsageLogFromServiceAdmin(httpLog).OpenAIWSMode)
 }
 
+func TestUsageLogFromServiceAdmin_IncludesAdminOnlyUserIdentity(t *testing.T) {
+	t.Parallel()
+
+	log := &service.UsageLog{
+		UserID: 7,
+		User: &service.User{
+			ID:    7,
+			Email: "customer@example.com",
+			Notes: "华东客户",
+		},
+	}
+
+	adminDTO := UsageLogFromServiceAdmin(log)
+	require.Equal(t, "customer@example.com", adminDTO.UserEmail)
+	require.Equal(t, "华东客户", adminDTO.UserNotes)
+
+	userJSON, err := json.Marshal(UsageLogFromService(log))
+	require.NoError(t, err)
+	require.NotContains(t, string(userJSON), "user_notes")
+}
+
 func TestUsageLogFromService_ExposesTraceIDToUserAndAdmin(t *testing.T) {
 	t.Parallel()
 

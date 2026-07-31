@@ -1601,7 +1601,7 @@ func (s *UsageLogRepoSuite) TestGetAccountUsageStats_EmptyRange() {
 // --- GetUserUsageTrend ---
 
 func (s *UsageLogRepoSuite) TestGetUserUsageTrend() {
-	user1 := mustCreateUser(s.T(), s.client, &service.User{Email: "usertrend1@test.com"})
+	user1 := mustCreateUser(s.T(), s.client, &service.User{Email: "usertrend1@test.com", Notes: "华东客户"})
 	user2 := mustCreateUser(s.T(), s.client, &service.User{Email: "usertrend2@test.com"})
 	apiKey1 := mustCreateApiKey(s.T(), s.client, &service.APIKey{UserID: user1.ID, Key: "sk-usertrend1", Name: "k1"})
 	apiKey2 := mustCreateApiKey(s.T(), s.client, &service.APIKey{UserID: user2.ID, Key: "sk-usertrend2", Name: "k2"})
@@ -1618,6 +1618,20 @@ func (s *UsageLogRepoSuite) TestGetUserUsageTrend() {
 	trend, err := s.repo.GetUserUsageTrend(s.ctx, startTime, endTime, "day", 10)
 	s.Require().NoError(err, "GetUserUsageTrend")
 	s.Require().GreaterOrEqual(len(trend), 2)
+	seenUser1 := false
+	seenUser2 := false
+	for _, point := range trend {
+		switch point.UserID {
+		case user1.ID:
+			seenUser1 = true
+			s.Equal("华东客户", point.Notes)
+		case user2.ID:
+			seenUser2 = true
+			s.Empty(point.Notes)
+		}
+	}
+	s.True(seenUser1)
+	s.True(seenUser2)
 }
 
 // --- GetAPIKeyUsageTrend ---

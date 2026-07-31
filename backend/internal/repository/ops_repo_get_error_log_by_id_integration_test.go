@@ -4,6 +4,7 @@ package repository
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -59,4 +60,39 @@ func TestGetErrorLogByID_APIKeyPrefixAndUpstreamStatus(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, credentialFailure.UpstreamStatusCode)
 	require.Zero(t, *credentialFailure.UpstreamStatusCode)
+
+	var userID int64
+	email := fmt.Sprintf("ops-user-notes-%d@example.test", time.Now().UnixNano())
+	err = integrationDB.QueryRowContext(ctx, `
+		INSERT INTO users (email, password_hash, notes)
+		VALUES ($1, 'test-password-hash', '华东客户')
+		RETURNING id`, email,
+	).Scan(&userID)
+	require.NoError(t, err)
+
+	userErrorID, err := repo.InsertErrorLog(ctx, &service.OpsInsertErrorLogInput{
+		UserID:     &userID,
+		ErrorPhase: "upstream",
+		ErrorType:  "upstream_error",
+		Severity:   "error",
+		StatusCode: 500,
+		CreatedAt:  time.Now(),
+	})
+	require.NoError(t, err)
+
+	list, err := repo.ListErrorLogs(ctx, &service.OpsErrorLogFilter{
+		UserID:   &userID,
+		View:     "all",
+		Page:     1,
+		PageSize: 20,
+	})
+	require.NoError(t, err)
+	require.Len(t, list.Errors, 1)
+	require.Equal(t, email, list.Errors[0].UserEmail)
+	require.Equal(t, "华东客户", list.Errors[0].UserNotes)
+
+	userDetail, err := repo.GetErrorLogByID(ctx, userErrorID)
+	require.NoError(t, err)
+	require.Equal(t, email, userDetail.UserEmail)
+	require.Equal(t, "华东客户", userDetail.UserNotes)
 }
