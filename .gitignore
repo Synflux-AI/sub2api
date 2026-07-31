@@ -143,3 +143,7 @@ docs/*
 frontend/coverage/
 aicodex
 output/
+
+# Python bytecode (tools/ci/*.py + its tests)
+__pycache__/
+*.pyc
