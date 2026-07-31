@@ -1,6 +1,11 @@
 package service
 
-import "strings"
+import (
+	"context"
+	"strings"
+
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
+)
 
 func optionalTrimmedStringPtr(raw string) *string {
 	trimmed := strings.TrimSpace(raw)
@@ -8,6 +13,14 @@ func optionalTrimmedStringPtr(raw string) *string {
 		return nil
 	}
 	return &trimmed
+}
+
+func usageTraceID(ctx context.Context) *string {
+	if ctx == nil {
+		return nil
+	}
+	traceID, _ := ctx.Value(ctxkey.TraceID).(string)
+	return optionalTrimmedStringPtr(traceID)
 }
 
 func forwardResultBillingModel(requestedModel, upstreamModel string) string {

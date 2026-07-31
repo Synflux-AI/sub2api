@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
 )
@@ -22,6 +23,13 @@ func newUsageRecordTestPool(t *testing.T) *service.UsageRecordWorkerPool {
 	})
 	t.Cleanup(pool.Stop)
 	return pool
+}
+
+func TestUsageRecordContext_PreservesTraceID(t *testing.T) {
+	parent := context.WithValue(context.Background(), ctxkey.TraceID, "trace-async-123")
+
+	ctx := usageRecordContext(parent, context.Background())
+	require.Equal(t, "trace-async-123", ctx.Value(ctxkey.TraceID))
 }
 
 func TestGatewayHandlerSubmitUsageRecordTask_WithPool(t *testing.T) {
