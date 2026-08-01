@@ -228,3 +228,32 @@ func TestWithHealthPrefetchDisabledNoop(t *testing.T) {
 	_, ok := healthScoreFromPrefetchContext(ctx, 1)
 	require.False(t, ok)
 }
+
+// --- healthShadowSummary / recordRetryExhaustedHealthTimeout ---
+
+func TestHealthShadowSummary(t *testing.T) {
+	svc := NewAccountHealthService(&stubHealthCache{}, newHealthTestConfig())
+	got := healthShadowSummary(svc, map[int64]float64{1: 80, 2: 50, 3: 10})
+	require.Equal(t, "1:80:t0,2:50:t1,3:10:t2", got)
+}
+
+func TestRecordRetryExhaustedHealthTimeout(t *testing.T) {
+	cfg := newHealthTestConfig()
+	cache := &stubHealthCache{}
+	s := newHealthGatewayService(cfg, cache)
+
+	// 未开启健康分：不采集
+	cfg.Gateway.Scheduling.HealthScoringEnabled = false
+	s.recordRetryExhaustedHealthTimeout(context.Background(), 1)
+	time.Sleep(50 * time.Millisecond)
+	require.Equal(t, 0, cache.deltaCount())
+
+	// 开启后采集超时扣分；池模式采集关闭但调度快照缺失时 fail-open 仍采集
+	cfg.Gateway.Scheduling.HealthScoringEnabled = true
+	cfg.Gateway.Scheduling.HealthRecordPoolMode = false
+	s.recordRetryExhaustedHealthTimeout(context.Background(), 1)
+	require.Eventually(t, func() bool {
+		return cache.deltaCount() == 1
+	}, time.Second, 10*time.Millisecond)
+	require.Equal(t, -10.0, cache.deltaAt(0))
+}

@@ -667,7 +667,7 @@ func (s *GatewayService) TempUnscheduleRetryableError(ctx context.Context, accou
 	}
 	// 同账号重试耗尽的瞬时错误（空响应/网络抖动）不一定经过 HandleUpstreamError，
 	// 在这里补记健康事件，让反复抖动的账号逐渐降入候选池。
-	s.rateLimitService.HealthService().RecordTimeout(accountID)
+	s.recordRetryExhaustedHealthTimeout(ctx, accountID)
 	// 全局"禁止临时停止调度"开关开启时（仅 Anthropic/OpenAI 账号）跳过临时封禁，
 	// 换号 failover 本身不受影响（由 handler 层的失败列表保证本次请求不再选中该账号）。
 	if tempUnschedDisabledSkip(ctx, platform, accountID, "retryable_failover") {

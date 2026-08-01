@@ -198,3 +198,26 @@ func TestAccountHealthRecordUpstreamErrorAsync(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	require.Equal(t, 1, cache.deltaCount())
 }
+
+func TestAccountHealthMarkUnhealthySweepAndFastPath(t *testing.T) {
+	svc := NewAccountHealthService(&stubHealthCache{}, newHealthTestConfig())
+
+	svc.markUnhealthy(1)
+	require.True(t, svc.isMarkedUnhealthy(1))
+	// 快路径：标记仍新鲜时重复调用语义不变
+	svc.markUnhealthy(1)
+	require.True(t, svc.isMarkedUnhealthy(1))
+
+	// 过期标记在下一次限频清理时被移除
+	svc.unhealthyMu.Lock()
+	svc.unhealthyMarks[2] = time.Now().Add(-time.Minute)
+	svc.unhealthySweepAt = time.Time{} // 强制下次调用触发清理
+	svc.unhealthyMu.Unlock()
+
+	svc.markUnhealthy(1)
+	svc.unhealthyMu.RLock()
+	_, stale := svc.unhealthyMarks[2]
+	svc.unhealthyMu.RUnlock()
+	require.False(t, stale)
+	require.True(t, svc.isMarkedUnhealthy(1))
+}

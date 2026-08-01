@@ -2,8 +2,11 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"math"
+	"sort"
+	"strings"
 )
 
 // 账号健康分调度注入：健康分/价格只改变候选账号的排序，永不减少候选集。
@@ -36,14 +39,39 @@ func (s *GatewayService) withHealthPrefetch(ctx context.Context, accounts []Acco
 		return ctx
 	}
 	if !hs.SortingActive() {
-		// 影子模式：只观察带伤账号的分数分布，不影响排序
-		for accountID, score := range scores {
-			slog.Info("account_health_shadow",
-				"account_id", accountID, "score", score, "tier", hs.TierForScore(score))
-		}
+		// 影子模式：只观察带伤账号的分数分布，不影响排序。
+		// 聚合为单条 Debug 日志防高 QPS 日志放大；明细可看管理端账号列表的健康分列。
+		slog.Debug("account_health_shadow",
+			"unhealthy_count", len(scores), "scores", healthShadowSummary(hs, scores))
 		return ctx
 	}
 	return context.WithValue(ctx, healthScorePrefetchContextKey, scores)
+}
+
+// recordRetryExhaustedHealthTimeout 补记同账号重试耗尽的健康超时事件。
+// 与其余采集点保持一致的池模式语义：health_record_pool_mode 关闭时池模式账号不采集。
+// 该路径只有 accountID，池模式判断走调度快照缓存（查不到时按采集处理，fail-open）。
+func (s *GatewayService) recordRetryExhaustedHealthTimeout(ctx context.Context, accountID int64) {
+	hs := s.accountHealthService()
+	if hs == nil || !hs.Enabled() {
+		return
+	}
+	if !hs.RecordPoolMode() && s.schedulerSnapshot != nil {
+		if acc, err := s.schedulerSnapshot.GetAccount(ctx, accountID); err == nil && acc != nil && acc.IsPoolMode() {
+			return
+		}
+	}
+	hs.RecordTimeout(accountID)
+}
+
+// healthShadowSummary 把带伤账号分数压缩成 "accountID:score:tier" 逗号串，用于影子模式单行日志。
+func healthShadowSummary(hs *AccountHealthService, scores map[int64]float64) string {
+	parts := make([]string, 0, len(scores))
+	for accountID, score := range scores {
+		parts = append(parts, fmt.Sprintf("%d:%.0f:t%d", accountID, score, hs.TierForScore(score)))
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, ",")
 }
 
 func healthScoreFromPrefetchContext(ctx context.Context, accountID int64) (float64, bool) {

@@ -58,6 +58,8 @@ type AccountHealthService struct {
 	// 成功加分只对带伤账号写 Redis。value 为过期时间。
 	unhealthyMu    sync.RWMutex
 	unhealthyMarks map[int64]time.Time
+	// unhealthySweepAt 下一次全量清理过期标记的时间（清理限频，避免每次写锁内 O(n) 扫描）
+	unhealthySweepAt time.Time
 }
 
 // NewAccountHealthService 创建账号健康度服务
@@ -251,12 +253,25 @@ func clampHealthScore(score float64) float64 {
 
 func (s *AccountHealthService) markUnhealthy(accountID int64) {
 	now := time.Now()
+	// 快路径：标记仍然新鲜（剩余 TTL 过半）时只读不写。
+	// GetScoresBatch 在调度热路径上对每个带伤账号都会调用本方法，读锁化解写锁竞争。
+	s.unhealthyMu.RLock()
+	expire, ok := s.unhealthyMarks[accountID]
+	sweepDue := now.After(s.unhealthySweepAt)
+	s.unhealthyMu.RUnlock()
+	if ok && !sweepDue && expire.Sub(now) > healthUnhealthyMarkTTL/2 {
+		return
+	}
+
 	s.unhealthyMu.Lock()
-	// 顺带清理过期标记，避免 map 无界增长
-	for id, expire := range s.unhealthyMarks {
-		if now.After(expire) {
-			delete(s.unhealthyMarks, id)
+	// 限频全量清理过期标记（每 TTL/5 至多一次），避免 map 无界增长
+	if now.After(s.unhealthySweepAt) {
+		for id, exp := range s.unhealthyMarks {
+			if now.After(exp) {
+				delete(s.unhealthyMarks, id)
+			}
 		}
+		s.unhealthySweepAt = now.Add(healthUnhealthyMarkTTL / 5)
 	}
 	s.unhealthyMarks[accountID] = now.Add(healthUnhealthyMarkTTL)
 	s.unhealthyMu.Unlock()

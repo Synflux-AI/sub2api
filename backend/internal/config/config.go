@@ -1386,6 +1386,8 @@ type GatewaySchedulingConfig struct {
 	// ===== 账号健康度调度（智能路由候选池） =====
 	// 健康分是软性排序信号：只改变账号选择顺序，不会把账号移出候选集。
 	// 与硬闸门（429 冷却 / temp_unschedulable / 排除列表）正交。
+	// 注意：排序生效后健康层优先于账号/智能路由策略配置的优先级——
+	// 降级账号会排到低优先级健康账号之后（全员同层时排序退化为现状）。
 	// HealthScoringEnabled 健康分总开关（采集 + 排序）
 	HealthScoringEnabled bool `mapstructure:"health_scoring_enabled"`
 	// HealthShadowMode 影子模式：只采集健康分并记日志，不影响排序（用于上线前观察分数分布）
@@ -1398,9 +1400,11 @@ type GatewaySchedulingConfig struct {
 	HealthRecoveryHalflifeSeconds int `mapstructure:"health_recovery_halflife_seconds"`
 	// HealthSuccessReward 成功请求加分
 	HealthSuccessReward float64 `mapstructure:"health_success_reward"`
-	// 各类上游错误扣分权重
-	HealthPenalty429      float64 `mapstructure:"health_penalty_429"`
-	HealthPenalty403      float64 `mapstructure:"health_penalty_403"`
+	// 各类上游错误扣分权重（设 0 表示该类错误不计入健康分）
+	HealthPenalty429 float64 `mapstructure:"health_penalty_429"`
+	HealthPenalty403 float64 `mapstructure:"health_penalty_403"`
+	// HealthPenalty404 上游 404 扣分。客户端请求不存在的模型/路径也会产生上游 404，
+	// 无法区分账号故障与客户端错误，默认 0（不扣分）；确认上游 404 均为账号问题时再开启。
 	HealthPenalty404      float64 `mapstructure:"health_penalty_404"`
 	HealthPenaltyAuth     float64 `mapstructure:"health_penalty_auth"`     // 401/402
 	HealthPenalty5xx      float64 `mapstructure:"health_penalty_5xx"`      // 500/502/503 等
@@ -2405,7 +2409,7 @@ func setDefaults() {
 	viper.SetDefault("gateway.scheduling.health_success_reward", 2)
 	viper.SetDefault("gateway.scheduling.health_penalty_429", 12)
 	viper.SetDefault("gateway.scheduling.health_penalty_403", 35)
-	viper.SetDefault("gateway.scheduling.health_penalty_404", 8)
+	viper.SetDefault("gateway.scheduling.health_penalty_404", 0)
 	viper.SetDefault("gateway.scheduling.health_penalty_auth", 25)
 	viper.SetDefault("gateway.scheduling.health_penalty_5xx", 20)
 	viper.SetDefault("gateway.scheduling.health_penalty_overload", 15)
