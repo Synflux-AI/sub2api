@@ -385,6 +385,24 @@
             </div>
             <span v-else class="text-sm text-gray-400 dark:text-dark-500">-</span>
           </template>
+          <template #header-health="{ column }">
+            <div class="flex items-center">
+              <span>{{ column.label }}</span>
+              <HelpTooltip :content="t('admin.accounts.health.hint')" width-class="w-80" />
+            </div>
+          </template>
+          <template #cell-health="{ row }">
+            <div v-if="row.health_score != null" class="flex items-center gap-1.5 whitespace-nowrap">
+              <span class="text-sm font-mono text-gray-700 dark:text-gray-300">{{ Math.round(row.health_score) }}</span>
+              <span
+                class="inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium"
+                :class="healthTierBadgeClass(row.health_tier)"
+              >
+                {{ healthTierLabel(row.health_tier) }}
+              </span>
+            </div>
+            <span v-else class="text-sm text-gray-400 dark:text-dark-500">-</span>
+          </template>
           <template #cell-last_used_at="{ value }">
             <span class="text-sm text-gray-500 dark:text-dark-400">{{ formatRelativeTime(value) }}</span>
           </template>
@@ -613,7 +631,7 @@ const accountToolsDropdownStyle = computed(() => ({
   width: `${accountToolsDropdownPosition.width}px`
 }))
 const hiddenColumns = reactive<Set<string>>(new Set())
-const DEFAULT_HIDDEN_COLUMNS = ['today_stats', 'proxy', 'notes', 'priority', 'scheduler_score', 'rate_multiplier']
+const DEFAULT_HIDDEN_COLUMNS = ['today_stats', 'proxy', 'notes', 'priority', 'scheduler_score', 'health', 'rate_multiplier']
 const HIDDEN_COLUMNS_KEY = 'account-hidden-columns'
 // One-time migration: hide scheduler score for existing admins too, because showing it opt-ins to heavy backend scoring.
 const HIDDEN_COLUMNS_VERSION_KEY = 'account-hidden-columns-version'
@@ -764,6 +782,28 @@ const formatSchedulerScoreGroup = (score: AccountSchedulerGroupScore): string =>
   if ('group_name' in score && score.group_name) return score.group_name
   if ('group_id' in score && score.group_id != null) return `#${score.group_id}`
   return t('admin.accounts.schedulerScore.ungrouped')
+}
+
+const healthTierLabel = (tier?: number | null): string => {
+  switch (tier) {
+    case 1:
+      return t('admin.accounts.health.tierDegraded')
+    case 2:
+      return t('admin.accounts.health.tierProbation')
+    default:
+      return t('admin.accounts.health.tierHealthy')
+  }
+}
+
+const healthTierBadgeClass = (tier?: number | null): string => {
+  switch (tier) {
+    case 1:
+      return 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300'
+    case 2:
+      return 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300'
+    default:
+      return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300'
+  }
 }
 
 const loadSavedColumns = () => {
@@ -1412,6 +1452,7 @@ const allColumns = computed(() => {
     { key: 'proxy', label: t('admin.accounts.columns.proxy'), sortable: false },
     { key: 'priority', label: t('admin.accounts.columns.priority'), sortable: true },
     { key: 'scheduler_score', label: t('admin.accounts.columns.schedulerScore'), sortable: false },
+    { key: 'health', label: t('admin.accounts.columns.health'), sortable: false },
     { key: 'rate_multiplier', label: t('admin.accounts.columns.billingRateMultiplier'), sortable: true },
     { key: 'upstream_billing_rate', label: t('admin.accounts.columns.upstreamBillingRate'), sortable: true },
     { key: 'last_used_at', label: t('admin.accounts.columns.lastUsed'), sortable: true },

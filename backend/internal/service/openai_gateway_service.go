@@ -618,6 +618,7 @@ func (s *OpenAIGatewayService) billingDeps() *billingDeps {
 		deferredService:       s.deferredService,
 		balanceNotifyService:  s.balanceNotifyService,
 		userPlatformQuotaRepo: s.userPlatformQuotaRepo,
+		healthService:         s.rateLimitService.HealthService(),
 	}
 }
 

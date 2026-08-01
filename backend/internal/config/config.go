@@ -1382,6 +1382,48 @@ type GatewaySchedulingConfig struct {
 	// 全量重建周期配置
 	// 全量重建周期（秒），0 表示禁用
 	FullRebuildIntervalSeconds int `mapstructure:"full_rebuild_interval_seconds"`
+
+	// ===== 账号健康度调度（智能路由候选池） =====
+	// 健康分是软性排序信号：只改变账号选择顺序，不会把账号移出候选集。
+	// 与硬闸门（429 冷却 / temp_unschedulable / 排除列表）正交。
+	// 注意：排序生效后健康层优先于账号/智能路由策略配置的优先级——
+	// 降级账号会排到低优先级健康账号之后（全员同层时排序退化为现状）。
+	// HealthScoringEnabled 健康分总开关（采集 + 排序）
+	HealthScoringEnabled bool `mapstructure:"health_scoring_enabled"`
+	// HealthShadowMode 影子模式：只采集健康分并记日志，不影响排序（用于上线前观察分数分布）
+	HealthShadowMode bool `mapstructure:"health_shadow_mode"`
+	// HealthDegradedThreshold 主池分界：score >= 该值为主池（tier 0），否则进入候选池
+	HealthDegradedThreshold int `mapstructure:"health_degraded_threshold"`
+	// HealthCircuitThreshold 隔离观察分界：score < 该值为 tier 2（接近熔断，仅其余账号全不可用时才用）
+	HealthCircuitThreshold int `mapstructure:"health_circuit_threshold"`
+	// HealthRecoveryHalflifeSeconds 扣分的指数衰减半衰期（秒）：零流量时分数向 100 回归
+	HealthRecoveryHalflifeSeconds int `mapstructure:"health_recovery_halflife_seconds"`
+	// HealthSuccessReward 成功请求加分
+	HealthSuccessReward float64 `mapstructure:"health_success_reward"`
+	// 各类上游错误扣分权重（设 0 表示该类错误不计入健康分）
+	HealthPenalty429 float64 `mapstructure:"health_penalty_429"`
+	HealthPenalty403 float64 `mapstructure:"health_penalty_403"`
+	// HealthPenalty404 上游 404 扣分。客户端请求不存在的模型/路径也会产生上游 404，
+	// 无法区分账号故障与客户端错误，默认 0（不扣分）；确认上游 404 均为账号问题时再开启。
+	HealthPenalty404      float64 `mapstructure:"health_penalty_404"`
+	HealthPenaltyAuth     float64 `mapstructure:"health_penalty_auth"`     // 401/402
+	HealthPenalty5xx      float64 `mapstructure:"health_penalty_5xx"`      // 500/502/503 等
+	HealthPenaltyOverload float64 `mapstructure:"health_penalty_overload"` // 529
+	HealthPenaltyTimeout  float64 `mapstructure:"health_penalty_timeout"`  // 流超时/网络错误
+	// HealthTTLSeconds 健康分 Redis key TTL（秒），到期视为完全恢复
+	HealthTTLSeconds int `mapstructure:"health_ttl_seconds"`
+	// HealthStickyBreakEnabled 粘性会话账号跌入 tier 2 时是否打破粘性换号
+	HealthStickyBreakEnabled bool `mapstructure:"health_sticky_break_enabled"`
+	// HealthRecordPoolMode 池模式账号是否也采集健康分（只写 Redis 软信号，不写 DB 状态）
+	HealthRecordPoolMode bool `mapstructure:"health_record_pool_mode"`
+
+	// ===== 价格感知调度 =====
+	// PriceAwareEnabled 开启后，同 (健康层, 优先级) 组内按 价格×负载 综合分选择账号
+	PriceAwareEnabled bool `mapstructure:"price_aware_enabled"`
+	// PriceWeight 价格在综合分中的权重（0-1），其余为负载权重
+	PriceWeight float64 `mapstructure:"price_weight"`
+	// PriceLoadGuardPercent 负载守卫：账号负载率达到该值后价格优势作废，退回纯负载均衡
+	PriceLoadGuardPercent int `mapstructure:"price_load_guard_percent"`
 }
 
 func (s *ServerConfig) Address() string {
@@ -2359,6 +2401,25 @@ func setDefaults() {
 	viper.SetDefault("gateway.scheduling.outbox_lag_rebuild_failures", 3)
 	viper.SetDefault("gateway.scheduling.outbox_backlog_rebuild_rows", 10000)
 	viper.SetDefault("gateway.scheduling.full_rebuild_interval_seconds", 300)
+	viper.SetDefault("gateway.scheduling.health_scoring_enabled", false)
+	viper.SetDefault("gateway.scheduling.health_shadow_mode", true)
+	viper.SetDefault("gateway.scheduling.health_degraded_threshold", 70)
+	viper.SetDefault("gateway.scheduling.health_circuit_threshold", 30)
+	viper.SetDefault("gateway.scheduling.health_recovery_halflife_seconds", 600)
+	viper.SetDefault("gateway.scheduling.health_success_reward", 2)
+	viper.SetDefault("gateway.scheduling.health_penalty_429", 12)
+	viper.SetDefault("gateway.scheduling.health_penalty_403", 35)
+	viper.SetDefault("gateway.scheduling.health_penalty_404", 0)
+	viper.SetDefault("gateway.scheduling.health_penalty_auth", 25)
+	viper.SetDefault("gateway.scheduling.health_penalty_5xx", 20)
+	viper.SetDefault("gateway.scheduling.health_penalty_overload", 15)
+	viper.SetDefault("gateway.scheduling.health_penalty_timeout", 10)
+	viper.SetDefault("gateway.scheduling.health_ttl_seconds", 1800)
+	viper.SetDefault("gateway.scheduling.health_sticky_break_enabled", true)
+	viper.SetDefault("gateway.scheduling.health_record_pool_mode", true)
+	viper.SetDefault("gateway.scheduling.price_aware_enabled", false)
+	viper.SetDefault("gateway.scheduling.price_weight", 0.3)
+	viper.SetDefault("gateway.scheduling.price_load_guard_percent", 80)
 	viper.SetDefault("gateway.usage_record.worker_count", 128)
 	viper.SetDefault("gateway.usage_record.queue_size", 16384)
 	viper.SetDefault("gateway.usage_record.task_timeout_seconds", 5)
@@ -3502,6 +3563,27 @@ func (c *Config) Validate() error {
 		c.Gateway.Scheduling.OutboxLagRebuildSeconds > 0 &&
 		c.Gateway.Scheduling.OutboxLagRebuildSeconds < c.Gateway.Scheduling.OutboxLagWarnSeconds {
 		return fmt.Errorf("gateway.scheduling.outbox_lag_rebuild_seconds must be >= outbox_lag_warn_seconds")
+	}
+	if c.Gateway.Scheduling.HealthScoringEnabled {
+		if c.Gateway.Scheduling.HealthCircuitThreshold <= 0 ||
+			c.Gateway.Scheduling.HealthDegradedThreshold > 100 ||
+			c.Gateway.Scheduling.HealthCircuitThreshold >= c.Gateway.Scheduling.HealthDegradedThreshold {
+			return fmt.Errorf("gateway.scheduling health thresholds must satisfy 0 < health_circuit_threshold < health_degraded_threshold <= 100")
+		}
+		if c.Gateway.Scheduling.HealthRecoveryHalflifeSeconds <= 0 {
+			return fmt.Errorf("gateway.scheduling.health_recovery_halflife_seconds must be positive")
+		}
+		if c.Gateway.Scheduling.HealthTTLSeconds <= 0 {
+			return fmt.Errorf("gateway.scheduling.health_ttl_seconds must be positive")
+		}
+	}
+	if c.Gateway.Scheduling.PriceAwareEnabled {
+		if c.Gateway.Scheduling.PriceWeight < 0 || c.Gateway.Scheduling.PriceWeight > 1 {
+			return fmt.Errorf("gateway.scheduling.price_weight must be between 0 and 1")
+		}
+		if c.Gateway.Scheduling.PriceLoadGuardPercent < 0 || c.Gateway.Scheduling.PriceLoadGuardPercent > 100 {
+			return fmt.Errorf("gateway.scheduling.price_load_guard_percent must be between 0 and 100")
+		}
 	}
 	if c.Ops.MetricsCollectorCache.TTL < 0 {
 		return fmt.Errorf("ops.metrics_collector_cache.ttl must be non-negative")

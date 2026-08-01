@@ -232,6 +232,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 	}
 	ctx = s.withWindowCostPrefetch(ctx, accounts)
 	ctx = s.withRPMPrefetch(ctx, accounts)
+	ctx = s.withHealthPrefetch(ctx, accounts)
 
 	// 提前构建 accountByID（供 Layer 1 和 Layer 1.5 使用）
 	accountByID := make(map[int64]*Account, len(accounts))
@@ -332,7 +333,8 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 							(requestedModel == "" || s.isModelSupportedByAccountWithContext(ctx, stickyAccount, requestedModel)) &&
 							s.isAccountSchedulableForModelSelection(ctx, stickyAccount, requestedModel) &&
 							s.isAccountSchedulableForQuota(stickyAccount) &&
-							s.isAccountSchedulableForWindowCost(ctx, stickyAccount, true)
+							s.isAccountSchedulableForWindowCost(ctx, stickyAccount, true) &&
+							s.stickyHealthOK(ctx, stickyAccount)
 
 						rpmPass := gatePass && s.isAccountSchedulableForRPM(ctx, stickyAccount, true)
 
@@ -427,14 +429,16 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 			}
 
 			if len(routingAvailable) > 0 {
-				// 排序：有效优先级 > 负载率 > 最后使用时间（同优先级账号按负载 / LRU 均衡）。
+				// 排序：健康层 > 有效优先级 > 价格×负载综合分（未开启价格感知时为负载率）> 最后使用时间。
 				// 命中智能路由策略时使用策略指定的账号优先级，否则回退到账号自身优先级。
-				sortRoutingCandidatesByPriority(routingAvailable, func(a *Account) int {
+				sortRoutingCandidates(routingAvailable, func(a *Account) int {
 					if routingPriorityByID != nil {
 						return routingPriorityByID[a.ID]
 					}
 					return a.Priority
-				})
+				}, func(a *Account) int {
+					return s.healthTierOf(ctx, a)
+				}, costBucketFunc(s.computeCostLoadBuckets(routingAvailable)))
 
 				// 4. 尝试获取槽位
 				for _, item := range routingAvailable {
@@ -510,6 +514,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 				windowCostOK := s.isAccountSchedulableForWindowCost(ctx, account, true)
 				rpmOK := s.isAccountSchedulableForRPM(ctx, account, true)
 				schedulable := s.isAccountSchedulableForSelection(account)
+				healthOK := s.stickyHealthOK(ctx, account)
 
 				gatewayLog(ctx).Debug("sticky.layer1_5_no_routing_checks",
 					zap.Int64("account_id", accountID),
@@ -522,9 +527,10 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 					zap.Bool("quota_ok", quotaOK),
 					zap.Bool("window_cost_ok", windowCostOK),
 					zap.Bool("rpm_ok", rpmOK),
+					zap.Bool("health_ok", healthOK),
 				)
 
-				if !clearSticky && platformOK && modelSupported && modelSchedulable && quotaOK && windowCostOK && rpmOK && schedulable {
+				if !clearSticky && platformOK && modelSupported && modelSchedulable && quotaOK && windowCostOK && rpmOK && schedulable && healthOK {
 					result, err := s.tryAcquireAccountSlot(ctx, accountID, account.Concurrency)
 					if err == nil && result.Acquired {
 						// 会话数量限制检查
@@ -678,17 +684,23 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 			}
 		}
 
-		// 分层过滤选择：优先级 →（可选）最早重置 → 负载率 → LRU
+		// 分层过滤选择：健康层 → 优先级 →（可选）最早重置 →（可选）价格×负载 → 负载率 → LRU
+		healthTierOf := func(a *Account) int { return s.healthTierOf(ctx, a) }
+		costBuckets := s.computeCostLoadBuckets(available)
 		for len(available) > 0 {
+			// 0. 取健康层最优的集合（健康账号优先于候选池账号；全员同层时不缩集）
+			pool := filterByBestHealthTier(available, healthTierOf)
 			// 1. 取优先级最小的集合
-			candidates := filterByMinPriority(available)
+			candidates := filterByMinPriority(pool)
 			// 2. （可选）use-it-or-lose-it：优先选用会话窗口最早重置的账号
 			if cfg.PreferSoonestReset {
 				candidates = filterBySoonestReset(candidates)
 			}
-			// 3. 取负载率最低的集合
+			// 3. （可选）价格感知：取价格×负载综合分最低的集合
+			candidates = filterByMinCostLoad(candidates, costBuckets)
+			// 4. 取负载率最低的集合
 			candidates = filterByMinLoadRate(candidates)
-			// 4. LRU 选择最久未用的账号
+			// 5. LRU 选择最久未用的账号
 			selected := selectByLRU(candidates, preferOAuth)
 			if selected == nil {
 				break
@@ -1655,13 +1667,32 @@ func shuffleWithinSortGroups(accounts []accountWithLoad) {
 // prioOf 返回某账号的“有效优先级”：智能路由策略指定的账号优先级，或旧版路由下账号自身的优先级。
 // 相同优先级的账号会进一步按负载率 / LRU 选择（即默认算法：优先级 + 负载 + LRU）。
 func sortRoutingCandidatesByPriority(items []accountWithLoad, prioOf func(*Account) int) {
+	sortRoutingCandidates(items, prioOf, nil, nil)
+}
+
+// sortRoutingCandidates 对路由候选账号按 (健康层 -> 有效优先级 -> 排序分桶 -> LRU) 稳定排序，
+// 并在四键完全相同的分组内随机打乱，均衡热点。
+// tierOf 为 nil 时视为全员主池（健康分未开启）；
+// bucketOf 为 nil 时退回负载率（价格感知未开启）。
+func sortRoutingCandidates(items []accountWithLoad, prioOf func(*Account) int, tierOf func(*Account) int, bucketOf func(accountWithLoad) int) {
+	if tierOf == nil {
+		tierOf = func(*Account) int { return HealthTierHealthy }
+	}
+	if bucketOf == nil {
+		bucketOf = func(item accountWithLoad) int { return item.loadInfo.LoadRate }
+	}
 	sort.SliceStable(items, func(i, j int) bool {
+		ti, tj := tierOf(items[i].account), tierOf(items[j].account)
+		if ti != tj {
+			return ti < tj
+		}
 		pi, pj := prioOf(items[i].account), prioOf(items[j].account)
 		if pi != pj {
 			return pi < pj
 		}
-		if items[i].loadInfo.LoadRate != items[j].loadInfo.LoadRate {
-			return items[i].loadInfo.LoadRate < items[j].loadInfo.LoadRate
+		bi, bj := bucketOf(items[i]), bucketOf(items[j])
+		if bi != bj {
+			return bi < bj
 		}
 		a, b := items[i].account, items[j].account
 		switch {
@@ -1678,8 +1709,9 @@ func sortRoutingCandidatesByPriority(items []accountWithLoad, prioOf func(*Accou
 	i := 0
 	for i < len(items) {
 		j := i + 1
-		for j < len(items) && prioOf(items[i].account) == prioOf(items[j].account) &&
-			items[i].loadInfo.LoadRate == items[j].loadInfo.LoadRate &&
+		for j < len(items) && tierOf(items[i].account) == tierOf(items[j].account) &&
+			prioOf(items[i].account) == prioOf(items[j].account) &&
+			bucketOf(items[i]) == bucketOf(items[j]) &&
 			sameLastUsedAt(items[i].account.LastUsedAt, items[j].account.LastUsedAt) {
 			j++
 		}
