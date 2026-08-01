@@ -34,7 +34,7 @@ func RegisterAdminRoutes(
 		registerDashboardRoutes(admin, h)
 
 		// 用户管理
-		registerUserManagementRoutes(admin, h)
+		registerUserManagementRoutes(admin, h, stepUpAuth)
 
 		// 分组管理
 		registerGroupRoutes(admin, h)
@@ -296,7 +296,7 @@ func registerDashboardRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	}
 }
 
-func registerUserManagementRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+func registerUserManagementRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAuth middleware.StepUpAuthMiddleware) {
 	users := admin.Group("/users")
 	{
 		users.GET("", h.Admin.User.List)
@@ -316,6 +316,12 @@ func registerUserManagementRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		users.GET("/:id/platform-quotas", h.Admin.User.GetUserPlatformQuotas)
 		users.PUT("/:id/platform-quotas", h.Admin.User.UpdateUserPlatformQuotas)
 		users.POST("/:id/platform-quotas/reset", h.Admin.User.ResetUserPlatformQuotaWindow)
+
+		// 用户级 access token：查看与轮换都会把客户凭据明文交到管理员手上，
+		// 撤销会立刻掐断客户的 Open API 访问——三条都要求 step-up 2FA。
+		users.GET("/:id/access-token", gin.HandlerFunc(stepUpAuth), h.Admin.UserAccessToken.Get)
+		users.POST("/:id/access-token/rotate", gin.HandlerFunc(stepUpAuth), h.Admin.UserAccessToken.Rotate)
+		users.DELETE("/:id/access-token", gin.HandlerFunc(stepUpAuth), h.Admin.UserAccessToken.Revoke)
 
 		// User attribute values
 		users.GET("/:id/attributes", h.Admin.UserAttribute.GetUserAttributes)

@@ -24,6 +24,8 @@ type PanelRateLimitSettings struct {
 	ExemptAdmin bool `json:"exempt_admin"`
 	// PublicIPRPM 无需认证的公开接口每 IP 每分钟上限（0 = 不限制）
 	PublicIPRPM int `json:"public_ip_rpm"`
+	// OpenAPIRPM 客户侧 Open API（访问令牌鉴权）每用户每分钟上限（0 = 不限制）
+	OpenAPIRPM int `json:"open_api_rpm"`
 }
 
 // 面板限流 RPM 的取值上限，防止配置异常大的值失去意义。
@@ -50,6 +52,7 @@ func DefaultPanelRateLimitSettings() *PanelRateLimitSettings {
 		HeavyRPM:    60,
 		ExemptAdmin: true,
 		PublicIPRPM: 300,
+		OpenAPIRPM:  60,
 	}
 }
 
@@ -67,6 +70,9 @@ func normalizePanelRateLimitSettings(s *PanelRateLimitSettings) {
 	if s.PublicIPRPM < 0 {
 		s.PublicIPRPM = 0
 	}
+	if s.OpenAPIRPM < 0 {
+		s.OpenAPIRPM = 0
+	}
 	if s.UserRPM > panelRateLimitRPMMax {
 		s.UserRPM = panelRateLimitRPMMax
 	}
@@ -75,6 +81,9 @@ func normalizePanelRateLimitSettings(s *PanelRateLimitSettings) {
 	}
 	if s.PublicIPRPM > panelRateLimitRPMMax {
 		s.PublicIPRPM = panelRateLimitRPMMax
+	}
+	if s.OpenAPIRPM > panelRateLimitRPMMax {
+		s.OpenAPIRPM = panelRateLimitRPMMax
 	}
 }
 
@@ -92,7 +101,13 @@ func (s *SettingService) GetPanelRateLimitSettings(ctx context.Context) (*PanelR
 		return DefaultPanelRateLimitSettings(), nil
 	}
 
-	settings := &PanelRateLimitSettings{}
+	// 用默认值预填后再 unmarshal（而非零值 struct）：历史行缺失的字段（比如新增
+	// 的 OpenAPIRPM）落到默认值而非 0，JSON 里显式写的 0 仍会覆盖成 0（=不限流）。
+	// 已核实安全：现有 5 个字段全部在同一提交（fead4c7ec）里一次性引入，且没有
+	// 迁移会 seed 这一行，所以库里的行只可能由 SetPanelRateLimitSettings 整体
+	// marshal 全部字段写出——不存在这 5 个字段缺失的历史行，真正缺字段的只有
+	// 本次新增的 OpenAPIRPM。
+	settings := DefaultPanelRateLimitSettings()
 	if err := json.Unmarshal([]byte(value), settings); err != nil {
 		slog.Warn("failed to unmarshal panel rate limit settings, falling back to defaults",
 			"error", err, "key", SettingKeyPanelRateLimitSettings)
@@ -108,10 +123,10 @@ func (s *SettingService) SetPanelRateLimitSettings(ctx context.Context, settings
 	if settings == nil {
 		return fmt.Errorf("settings cannot be nil")
 	}
-	if settings.UserRPM < 0 || settings.HeavyRPM < 0 || settings.PublicIPRPM < 0 {
+	if settings.UserRPM < 0 || settings.HeavyRPM < 0 || settings.PublicIPRPM < 0 || settings.OpenAPIRPM < 0 {
 		return fmt.Errorf("rate limit values cannot be negative")
 	}
-	if settings.UserRPM > panelRateLimitRPMMax || settings.HeavyRPM > panelRateLimitRPMMax || settings.PublicIPRPM > panelRateLimitRPMMax {
+	if settings.UserRPM > panelRateLimitRPMMax || settings.HeavyRPM > panelRateLimitRPMMax || settings.PublicIPRPM > panelRateLimitRPMMax || settings.OpenAPIRPM > panelRateLimitRPMMax {
 		return fmt.Errorf("rate limit values must be at most %d", panelRateLimitRPMMax)
 	}
 

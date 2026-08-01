@@ -468,12 +468,13 @@ type BatchUpdateRedeemCodesRequest struct {
 
 // UsageLog 是普通用户接口使用的 usage log DTO（不包含管理员字段）。
 type UsageLog struct {
-	ID        int64  `json:"id"`
-	UserID    int64  `json:"user_id"`
-	APIKeyID  int64  `json:"api_key_id"`
-	AccountID int64  `json:"account_id"`
-	RequestID string `json:"request_id"`
-	Model     string `json:"model"`
+	ID        int64   `json:"id"`
+	UserID    int64   `json:"user_id"`
+	APIKeyID  int64   `json:"api_key_id"`
+	AccountID int64   `json:"account_id"`
+	RequestID string  `json:"request_id"`
+	TraceID   *string `json:"trace_id,omitempty"`
+	Model     string  `json:"model"`
 	// ServiceTier records the OpenAI service tier used for billing, e.g. "priority" / "flex".
 	ServiceTier *string `json:"service_tier,omitempty"`
 	// ReasoningEffort is the request's reasoning effort level.
@@ -549,6 +550,10 @@ type UsageLog struct {
 // AdminUsageLog 是管理员接口使用的 usage log DTO（包含管理员字段）。
 type AdminUsageLog struct {
 	UsageLog
+	// UserEmail/UserNotes are admin-only identity fields used by the global usage log.
+	// Keep notes out of UsageLog because that DTO is also returned to regular users.
+	UserEmail string `json:"user_email"`
+	UserNotes string `json:"user_notes"`
 
 	// UpstreamModel is the actual model sent to the upstream provider after mapping.
 	// Omitted when no mapping was applied (requested model was used as-is).

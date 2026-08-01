@@ -451,6 +451,7 @@ func TestGatewayServiceRecordUsage_PrefersClientRequestIDOverUpstreamRequestID(t
 
 	ctx := context.WithValue(context.Background(), ctxkey.ClientRequestID, "client-stable-123")
 	ctx = context.WithValue(ctx, ctxkey.RequestID, "req-local-ignored")
+	ctx = context.WithValue(ctx, ctxkey.TraceID, "trace-gateway-789")
 	err := svc.RecordUsage(ctx, &RecordUsageInput{
 		Result: &ForwardResult{
 			RequestID: "upstream-volatile-456",
@@ -471,6 +472,8 @@ func TestGatewayServiceRecordUsage_PrefersClientRequestIDOverUpstreamRequestID(t
 	require.Equal(t, "client:client-stable-123", billingRepo.lastCmd.RequestID)
 	require.NotNil(t, usageRepo.lastLog)
 	require.Equal(t, "client:client-stable-123", usageRepo.lastLog.RequestID)
+	require.NotNil(t, usageRepo.lastLog.TraceID)
+	require.Equal(t, "trace-gateway-789", *usageRepo.lastLog.TraceID)
 }
 
 func TestGatewayServiceRecordUsage_GeneratesRequestIDWhenAllSourcesMissing(t *testing.T) {

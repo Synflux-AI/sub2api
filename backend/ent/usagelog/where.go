@@ -75,6 +75,11 @@ func RequestID(v string) predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldEQ(FieldRequestID, v))
 }
 
+// TraceID applies equality check predicate on the "trace_id" field. It's identical to TraceIDEQ.
+func TraceID(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldTraceID, v))
+}
+
 // Model applies equality check predicate on the "model" field. It's identical to ModelEQ.
 func Model(v string) predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldEQ(FieldModel, v))
@@ -398,6 +403,81 @@ func RequestIDEqualFold(v string) predicate.UsageLog {
 // RequestIDContainsFold applies the ContainsFold predicate on the "request_id" field.
 func RequestIDContainsFold(v string) predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldContainsFold(FieldRequestID, v))
+}
+
+// TraceIDEQ applies the EQ predicate on the "trace_id" field.
+func TraceIDEQ(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldTraceID, v))
+}
+
+// TraceIDNEQ applies the NEQ predicate on the "trace_id" field.
+func TraceIDNEQ(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNEQ(FieldTraceID, v))
+}
+
+// TraceIDIn applies the In predicate on the "trace_id" field.
+func TraceIDIn(vs ...string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIn(FieldTraceID, vs...))
+}
+
+// TraceIDNotIn applies the NotIn predicate on the "trace_id" field.
+func TraceIDNotIn(vs ...string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotIn(FieldTraceID, vs...))
+}
+
+// TraceIDGT applies the GT predicate on the "trace_id" field.
+func TraceIDGT(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGT(FieldTraceID, v))
+}
+
+// TraceIDGTE applies the GTE predicate on the "trace_id" field.
+func TraceIDGTE(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGTE(FieldTraceID, v))
+}
+
+// TraceIDLT applies the LT predicate on the "trace_id" field.
+func TraceIDLT(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLT(FieldTraceID, v))
+}
+
+// TraceIDLTE applies the LTE predicate on the "trace_id" field.
+func TraceIDLTE(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLTE(FieldTraceID, v))
+}
+
+// TraceIDContains applies the Contains predicate on the "trace_id" field.
+func TraceIDContains(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldContains(FieldTraceID, v))
+}
+
+// TraceIDHasPrefix applies the HasPrefix predicate on the "trace_id" field.
+func TraceIDHasPrefix(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldHasPrefix(FieldTraceID, v))
+}
+
+// TraceIDHasSuffix applies the HasSuffix predicate on the "trace_id" field.
+func TraceIDHasSuffix(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldHasSuffix(FieldTraceID, v))
+}
+
+// TraceIDIsNil applies the IsNil predicate on the "trace_id" field.
+func TraceIDIsNil() predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIsNull(FieldTraceID))
+}
+
+// TraceIDNotNil applies the NotNil predicate on the "trace_id" field.
+func TraceIDNotNil() predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotNull(FieldTraceID))
+}
+
+// TraceIDEqualFold applies the EqualFold predicate on the "trace_id" field.
+func TraceIDEqualFold(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEqualFold(FieldTraceID, v))
+}
+
+// TraceIDContainsFold applies the ContainsFold predicate on the "trace_id" field.
+func TraceIDContainsFold(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldContainsFold(FieldTraceID, v))
 }
 
 // ModelEQ applies the EQ predicate on the "model" field.

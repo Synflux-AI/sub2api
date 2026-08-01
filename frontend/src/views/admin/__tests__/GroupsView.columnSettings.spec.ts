@@ -51,6 +51,9 @@ vi.mock('@/api/admin', () => ({
       getModelsListCandidates,
       getUsageSummary,
       getCapacitySummary,
+      // GroupsView fetches this on mount (fire-and-forget) to gate the "Live" toggle;
+      // must resolve or the unhandled TypeError/rejection leaks across tests.
+      getLiveCapability: vi.fn().mockResolvedValue({ supported: false }),
       create: vi.fn(),
       update: vi.fn(),
       delete: vi.fn(),

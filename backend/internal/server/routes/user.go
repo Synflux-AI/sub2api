@@ -40,6 +40,12 @@ func RegisterUserRoutes(
 			user.GET("/api-keys/:id/usage/daily", panelRateLimiter.Heavy(), h.Usage.GetMyAPIKeyDailyUsage)
 			user.GET("/platform-quotas", h.User.GetMyPlatformQuotas)
 
+			// 用户级 access token（sat-…）：查看返回明文，轮换与撤销需账户密码。
+			// GET 已加入 auditSensitiveReads 白名单；POST/DELETE 无条件入审计。
+			user.GET("/access-token", h.UserAccessToken.Get)
+			user.POST("/access-token/rotate", h.UserAccessToken.Rotate)
+			user.DELETE("/access-token", h.UserAccessToken.Revoke)
+
 			// 通知邮箱管理
 			notifyEmail := user.Group("/notify-email")
 			{

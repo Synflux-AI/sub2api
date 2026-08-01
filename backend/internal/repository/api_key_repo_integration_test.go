@@ -298,6 +298,8 @@ func (s *APIKeyRepoSuite) TestExistsByKey() {
 
 func (s *APIKeyRepoSuite) TestSearchAPIKeys() {
 	user := s.mustCreateUser("search@test.com")
+	_, err := s.client.User.UpdateOneID(user.ID).SetNotes("华东客户").Save(s.ctx)
+	s.Require().NoError(err)
 	s.mustCreateApiKey(user.ID, "sk-search-1", "Production Key", nil)
 	s.mustCreateApiKey(user.ID, "sk-search-2", "Development Key", nil)
 
@@ -305,6 +307,9 @@ func (s *APIKeyRepoSuite) TestSearchAPIKeys() {
 	s.Require().NoError(err, "SearchAPIKeys")
 	s.Require().Len(found, 1)
 	s.Require().Contains(found[0].Name, "Production")
+	s.Require().NotNil(found[0].User)
+	s.Require().Equal(user.Email, found[0].User.Email)
+	s.Require().Equal("华东客户", found[0].User.Notes)
 }
 
 func (s *APIKeyRepoSuite) TestSearchAPIKeys_NoKeyword() {
