@@ -20,8 +20,10 @@ import (
 // v18 补齐余额通知收件人判定依赖的 signup_source,避免邮箱注册用户被还原为空来源。
 // v19: 又一次撞号——本仓库 v18(signup_source)与上游 v17(group Live gate)字段集不同,
 // 合并后快照同时含 signup_source 与 allow_live,与任一方旧版本均不兼容,升 19 强制失效。
+// v20: 再次撞号——上游 v18(group profit control fields)与本仓库 v19 字段集不同,
+// 合并后快照同时含 profit control 字段与本仓库扩展字段,与任一方旧版本均不兼容,升 20 强制失效。
 // 注:本仓库与上游各自独立演进该版本号,每次 sync 合并若双方都动过快照结构,需继续递增。
-const apiKeyAuthSnapshotVersion = 19
+const apiKeyAuthSnapshotVersion = 20
 
 type apiKeyAuthCacheConfig struct {
 	l1Size        int
@@ -433,6 +435,9 @@ func (s *APIKeyService) snapshotFromAPIKey(ctx context.Context, apiKey *APIKey) 
 			PeakStart:                       apiKey.Group.PeakStart,
 			PeakEnd:                         apiKey.Group.PeakEnd,
 			PeakRateMultiplier:              apiKey.Group.PeakRateMultiplier,
+			ProfitControlEnabled:            apiKey.Group.ProfitControlEnabled,
+			ProfitMinMargin:                 apiKey.Group.ProfitMinMargin,
+			ProfitSafetyBuffer:              apiKey.Group.ProfitSafetyBuffer,
 		}
 	}
 	return snapshot
@@ -526,6 +531,9 @@ func (s *APIKeyService) snapshotToAPIKey(key string, snapshot *APIKeyAuthSnapsho
 			PeakStart:                       snapshot.Group.PeakStart,
 			PeakEnd:                         snapshot.Group.PeakEnd,
 			PeakRateMultiplier:              snapshot.Group.PeakRateMultiplier,
+			ProfitControlEnabled:            snapshot.Group.ProfitControlEnabled,
+			ProfitMinMargin:                 snapshot.Group.ProfitMinMargin,
+			ProfitSafetyBuffer:              snapshot.Group.ProfitSafetyBuffer,
 		}
 	}
 	s.compileAPIKeyIPRules(apiKey)
