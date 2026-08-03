@@ -38,8 +38,8 @@ On success, the endpoint returns a flat JSON object — **not** the `{code, mess
 
 ```json
 {
-  "object": "sub2api.balance",
-  "schema_version": 1,
+  "object": "balance",
+  "schema_version": 2,
   "currency": "USD",
   "balance": 12.3457,
   "frozen_balance": 0.9877,
@@ -49,8 +49,8 @@ On success, the endpoint returns a flat JSON object — **not** the `{code, mess
 
 | Field | Description |
 |-------|-------------|
-| `object` | Always `"sub2api.balance"`. |
-| `schema_version` | Currently `1`. Bump only on a backward-incompatible field change — treat unknown fields as forward-compatible and check this value if you need to detect a breaking change before it affects you. |
+| `object` | Always `"balance"`. |
+| `schema_version` | Currently `2`. Bump only on a backward-incompatible field change — treat unknown fields as forward-compatible and check this value if you need to detect a breaking change before it affects you. |
 | `currency` | Always `"USD"`. |
 | `balance` | Wallet balance, rounded to 4 decimal places. See caveats below. |
 | `frozen_balance` | Frozen wallet balance, rounded to 4 decimal places. A reference value — see caveats below. |
@@ -99,8 +99,8 @@ curl https://api.example.com/api/v1/open/balance \
 
 ```json
 {
-  "object": "sub2api.balance",
-  "schema_version": 1,
+  "object": "balance",
+  "schema_version": 2,
   "currency": "USD",
   "balance": 12.3457,
   "frozen_balance": 0.9877,

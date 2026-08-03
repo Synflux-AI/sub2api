@@ -17,7 +17,7 @@ import (
 
 // balanceSchemaVersion 是 /api/v1/open/balance 响应结构的版本号；字段语义发生
 // 不兼容变化时递增，客户端据此判断是否需要升级解析逻辑。
-const balanceSchemaVersion = 1
+const balanceSchemaVersion = 2
 
 // balanceCurrency 目前恒为 USD：仓内余额（users.balance / frozen_balance）与计费
 // 都是美元计价，没有多币种概念。字段仍显式出现在契约里，避免客户端把裸数字当
@@ -140,7 +140,7 @@ func (h *OpenBalanceHandler) GetBalance(c *gin.Context) {
 
 	c.Header("Cache-Control", "no-store")
 	c.JSON(http.StatusOK, balanceResponse{
-		Object:        "sub2api.balance",
+		Object:        "balance",
 		SchemaVersion: balanceSchemaVersion,
 		Currency:      balanceCurrency,
 		Balance:       roundBalanceAmount(balance),

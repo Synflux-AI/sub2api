@@ -38,8 +38,8 @@ GET /api/v1/open/balance
 
 ```json
 {
-  "object": "sub2api.balance",
-  "schema_version": 1,
+  "object": "balance",
+  "schema_version": 2,
   "currency": "USD",
   "balance": 12.3457,
   "frozen_balance": 0.9877,
@@ -49,8 +49,8 @@ GET /api/v1/open/balance
 
 | 字段 | 说明 |
 |------|------|
-| `object` | 固定为 `"sub2api.balance"`。 |
-| `schema_version` | 当前为 `1`。仅在字段发生不兼容变更时递增——未知字段应视为向前兼容，如需在破坏性变更影响业务前提前感知，可检查该值。 |
+| `object` | 固定为 `"balance"`。 |
+| `schema_version` | 当前为 `2`。仅在字段发生不兼容变更时递增——未知字段应视为向前兼容，如需在破坏性变更影响业务前提前感知，可检查该值。 |
 | `currency` | 固定为 `"USD"`。 |
 | `balance` | 钱包余额，保留 4 位小数。参见下方注意事项。 |
 | `frozen_balance` | 冻结的钱包余额，保留 4 位小数，为参考值。参见下方注意事项。 |
@@ -99,8 +99,8 @@ curl https://api.example.com/api/v1/open/balance \
 
 ```json
 {
-  "object": "sub2api.balance",
-  "schema_version": 1,
+  "object": "balance",
+  "schema_version": 2,
   "currency": "USD",
   "balance": 12.3457,
   "frozen_balance": 0.9877,

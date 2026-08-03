@@ -90,7 +90,7 @@ func getOpenBalance(router *gin.Engine) *httptest.ResponseRecorder {
 	return recorder
 }
 
-// 余额响应是**无信封扁平结构**：字段齐全、schema_version 为 1、no-store，
+// 余额响应是**无信封扁平结构**：字段齐全、schema_version 为 2、no-store，
 // 且两个金额都四舍五入到 4 位小数（float64 直出会带 …0001 噪声）。
 func TestOpenBalanceResponseIsFlatRoundedAndNoStore(t *testing.T) {
 	cache := &fakeOpenBalanceCache{balance: 12.34567891}
@@ -108,8 +108,8 @@ func TestOpenBalanceResponseIsFlatRoundedAndNoStore(t *testing.T) {
 	require.NotContains(t, payload, "code")
 	require.NotContains(t, payload, "data")
 
-	require.Equal(t, "sub2api.balance", payload["object"])
-	require.EqualValues(t, 1, payload["schema_version"])
+	require.Equal(t, "balance", payload["object"])
+	require.EqualValues(t, 2, payload["schema_version"])
 	require.Equal(t, "USD", payload["currency"])
 	require.InDelta(t, 12.3457, payload["balance"], 0)
 	require.InDelta(t, 0.9877, payload["frozen_balance"], 0)
@@ -119,6 +119,7 @@ func TestOpenBalanceResponseIsFlatRoundedAndNoStore(t *testing.T) {
 	// 舍入必须体现在序列化文本里，而不只是浮点近似。
 	require.Contains(t, recorder.Body.String(), `"balance":12.3457`)
 	require.Contains(t, recorder.Body.String(), `"frozen_balance":0.9877`)
+	require.NotContains(t, recorder.Body.String(), "sub2api")
 }
 
 func TestOpenBalanceTouchesLastUsedOnlyAfterSuccessfulRead(t *testing.T) {
