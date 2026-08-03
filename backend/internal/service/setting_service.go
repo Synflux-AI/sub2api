@@ -66,6 +66,11 @@ type SettingService struct {
 	disableTempUnschedCache atomic.Value // *cachedDisableTempUnsched
 	disableTempUnschedSF    singleflight.Group
 
+	// schedulingHealthRuntimeCache 健康分调度动态开关进程内缓存（*cachedSchedulingHealthRuntime）。
+	// GetSchedulingHealthRuntime 在调度/错误处理热路径上被调用，stale-while-revalidate，永不阻塞 DB。
+	schedulingHealthRuntimeCache atomic.Value
+	schedulingHealthRuntimeSF    singleflight.Group
+
 	// panelRateLimitCache 面板 API 限流配置进程内缓存（*cachedPanelRateLimitSettings）。
 	// 面板每个认证请求都会读取，禁止在热路径上直接访问 DB。
 	panelRateLimitCache atomic.Value

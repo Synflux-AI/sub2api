@@ -359,7 +359,15 @@ export default {
         title: 'Gateway Scheduling Settings',
         description: 'Control API Key scheduling behavior',
         allowUngroupedKey: 'Allow Ungrouped Key Scheduling',
-        allowUngroupedKeyHint: 'When disabled, API Keys not assigned to any group cannot make requests (403 Forbidden). Keep disabled to ensure all Keys belong to a specific group.'
+        allowUngroupedKeyHint: 'When disabled, API Keys not assigned to any group cannot make requests (403 Forbidden). Keep disabled to ensure all Keys belong to a specific group.',
+        healthScoring: 'Account Health Scoring',
+        healthScoringHint: 'Computes a 0-100 health score per account from upstream errors (429/403/5xx/timeouts). Healthy accounts are preferred during scheduling (healthy ≥70 / degraded 30-70 / probation <30). Only changes ordering — never removes accounts from the candidate set. Takes effect on all instances within ~1 minute.',
+        healthShadowMode: 'Shadow Mode (collect only)',
+        healthShadowModeHint: 'When enabled, health scores are collected and logged but do not affect scheduling order. Observe score distribution in shadow mode first, then disable it to activate health-based ordering.',
+        healthStickyBreak: 'Break Sticky Session on Low Health',
+        healthStickyBreakHint: 'When a sticky-session account falls into probation (score <30), the session switches to a healthy account. This costs one context-cache miss but stops routing requests to a near-circuit-broken account.',
+        priceAware: 'Price-Aware Scheduling',
+        priceAwareHint: 'Among accounts in the same health tier and priority, prefers cheaper accounts by a combined score of billing rate multiplier × load. The price advantage is voided once account load reaches the guard threshold (default 80%) to protect cheap accounts from overload.'
       },
       upstreamBillingProbe: {
         title: 'Upstream Rate Auto Detection',

@@ -69,7 +69,7 @@ func (s *stubHealthCache) deltaAt(i int) float64 {
 }
 
 func TestAccountHealthPenaltyForStatus(t *testing.T) {
-	svc := NewAccountHealthService(&stubHealthCache{}, newHealthTestConfig())
+	svc := NewAccountHealthService(&stubHealthCache{}, newHealthTestConfig(), nil)
 
 	require.Equal(t, -12.0, svc.penaltyForStatus(http.StatusTooManyRequests))
 	require.Equal(t, -35.0, svc.penaltyForStatus(http.StatusForbidden))
@@ -85,7 +85,7 @@ func TestAccountHealthPenaltyForStatus(t *testing.T) {
 }
 
 func TestAccountHealthTierForScore(t *testing.T) {
-	svc := NewAccountHealthService(&stubHealthCache{}, newHealthTestConfig())
+	svc := NewAccountHealthService(&stubHealthCache{}, newHealthTestConfig(), nil)
 
 	require.Equal(t, HealthTierHealthy, svc.TierForScore(100))
 	require.Equal(t, HealthTierHealthy, svc.TierForScore(70))
@@ -119,7 +119,7 @@ func TestDecayHealthScore(t *testing.T) {
 
 func TestAccountHealthEnabledGating(t *testing.T) {
 	cfg := newHealthTestConfig()
-	svc := NewAccountHealthService(&stubHealthCache{}, cfg)
+	svc := NewAccountHealthService(&stubHealthCache{}, cfg, nil)
 	require.True(t, svc.Enabled())
 	require.True(t, svc.SortingActive())
 
@@ -142,7 +142,7 @@ func TestAccountHealthEnabledGating(t *testing.T) {
 }
 
 func TestAccountHealthGetScoresBatchFailOpen(t *testing.T) {
-	svc := NewAccountHealthService(&stubHealthCache{err: context.DeadlineExceeded}, newHealthTestConfig())
+	svc := NewAccountHealthService(&stubHealthCache{err: context.DeadlineExceeded}, newHealthTestConfig(), nil)
 	// Redis 失败 → 返回空（全员视为满分）
 	require.Nil(t, svc.GetScoresBatch(context.Background(), []int64{1, 2}))
 }
@@ -153,7 +153,7 @@ func TestAccountHealthGetScoresBatchDecaysAndMarks(t *testing.T) {
 		1: {Score: 60, UpdatedAt: now.Add(-600 * time.Second)},
 		2: {Score: 20, UpdatedAt: now},
 	}}
-	svc := NewAccountHealthService(cache, newHealthTestConfig())
+	svc := NewAccountHealthService(cache, newHealthTestConfig(), nil)
 
 	scores := svc.GetScoresBatch(context.Background(), []int64{1, 2, 3})
 	require.Len(t, scores, 2)
@@ -168,7 +168,7 @@ func TestAccountHealthGetScoresBatchDecaysAndMarks(t *testing.T) {
 
 func TestAccountHealthRecordSuccessOnlyForUnhealthy(t *testing.T) {
 	cache := &stubHealthCache{}
-	svc := NewAccountHealthService(cache, newHealthTestConfig())
+	svc := NewAccountHealthService(cache, newHealthTestConfig(), nil)
 
 	// 未标记带伤：成功不写
 	svc.RecordSuccess(1)
@@ -184,7 +184,7 @@ func TestAccountHealthRecordSuccessOnlyForUnhealthy(t *testing.T) {
 
 func TestAccountHealthRecordUpstreamErrorAsync(t *testing.T) {
 	cache := &stubHealthCache{}
-	svc := NewAccountHealthService(cache, newHealthTestConfig())
+	svc := NewAccountHealthService(cache, newHealthTestConfig(), nil)
 
 	svc.RecordUpstreamError(1, http.StatusBadGateway)
 	require.Eventually(t, func() bool {
@@ -200,7 +200,7 @@ func TestAccountHealthRecordUpstreamErrorAsync(t *testing.T) {
 }
 
 func TestAccountHealthMarkUnhealthySweepAndFastPath(t *testing.T) {
-	svc := NewAccountHealthService(&stubHealthCache{}, newHealthTestConfig())
+	svc := NewAccountHealthService(&stubHealthCache{}, newHealthTestConfig(), nil)
 
 	svc.markUnhealthy(1)
 	require.True(t, svc.isMarkedUnhealthy(1))

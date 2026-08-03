@@ -562,6 +562,12 @@ export interface SystemSettings {
   // 分组隔离
   allow_ungrouped_key_scheduling: boolean;
 
+  // 账号健康度调度（智能路由候选池）
+  scheduling_health_scoring_enabled: boolean;
+  scheduling_health_shadow_mode: boolean;
+  scheduling_health_sticky_break_enabled: boolean;
+  scheduling_price_aware_enabled: boolean;
+
   // Gateway forwarding behavior
   enable_fingerprint_unification: boolean;
   enable_metadata_passthrough: boolean;
@@ -854,6 +860,10 @@ export interface UpdateSettingsRequest {
   min_claude_code_version?: string;
   max_claude_code_version?: string;
   allow_ungrouped_key_scheduling?: boolean;
+  scheduling_health_scoring_enabled?: boolean;
+  scheduling_health_shadow_mode?: boolean;
+  scheduling_health_sticky_break_enabled?: boolean;
+  scheduling_price_aware_enabled?: boolean;
   enable_fingerprint_unification?: boolean;
   enable_metadata_passthrough?: boolean;
   enable_cch_signing?: boolean;

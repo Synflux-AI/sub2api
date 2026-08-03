@@ -168,7 +168,7 @@ func TestSortRoutingCandidatesBackwardCompatible(t *testing.T) {
 
 func newHealthGatewayService(cfg *config.Config, cache AccountHealthCache) *GatewayService {
 	rls := &RateLimitService{cfg: cfg}
-	rls.SetAccountHealthService(NewAccountHealthService(cache, cfg))
+	rls.SetAccountHealthService(NewAccountHealthService(cache, cfg, nil))
 	return &GatewayService{cfg: cfg, rateLimitService: rls}
 }
 
@@ -232,7 +232,7 @@ func TestWithHealthPrefetchDisabledNoop(t *testing.T) {
 // --- healthShadowSummary / recordRetryExhaustedHealthTimeout ---
 
 func TestHealthShadowSummary(t *testing.T) {
-	svc := NewAccountHealthService(&stubHealthCache{}, newHealthTestConfig())
+	svc := NewAccountHealthService(&stubHealthCache{}, newHealthTestConfig(), nil)
 	got := healthShadowSummary(svc, map[int64]float64{1: 80, 2: 50, 3: 10})
 	require.Equal(t, "1:80:t0,2:50:t1,3:10:t2", got)
 }

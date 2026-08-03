@@ -114,7 +114,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	geminiTokenCache := repository.NewGeminiTokenCache(redisClient)
 	compositeTokenCacheInvalidator := service.NewCompositeTokenCacheInvalidator(geminiTokenCache)
 	accountHealthCache := repository.NewAccountHealthCache(redisClient)
-	accountHealthService := service.NewAccountHealthService(accountHealthCache, configConfig)
+	accountHealthService := service.NewAccountHealthService(accountHealthCache, configConfig, settingService)
 	rateLimitService := service.ProvideRateLimitService(accountRepository, usageLogRepository, configConfig, geminiQuotaService, tempUnschedCache, timeoutCounterCache, openAI403CounterCache, settingService, compositeTokenCacheInvalidator, accountHealthService)
 	identityCache := repository.NewIdentityCache(redisClient)
 	identityService := service.NewIdentityService(identityCache)

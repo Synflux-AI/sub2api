@@ -352,7 +352,15 @@ export default {
         title: '网关调度设置',
         description: '控制 API Key 的调度行为',
         allowUngroupedKey: '允许未分组 Key 调度',
-        allowUngroupedKeyHint: '关闭后，未分配到任何分组的 API Key 将无法发起请求（返回 403）。建议保持关闭以确保所有 Key 都归属明确的分组。'
+        allowUngroupedKeyHint: '关闭后，未分配到任何分组的 API Key 将无法发起请求（返回 403）。建议保持关闭以确保所有 Key 都归属明确的分组。',
+        healthScoring: '账号健康分调度',
+        healthScoringHint: '按上游错误（429/403/5xx/超时等）为账号计算 0-100 健康分，调度时健康账号优先（主池 ≥70 / 候选池 30-70 / 隔离观察 <30）。只改变排序，不会把账号移出候选集；约 1 分钟内对所有实例生效。',
+        healthShadowMode: '影子模式（只采集不排序）',
+        healthShadowModeHint: '开启时只采集健康分并记录日志，不影响调度排序。建议先在影子模式下观察账号分数分布，再关闭影子模式正式启用排序。',
+        healthStickyBreak: '低健康分打破粘性会话',
+        healthStickyBreakHint: '粘性会话绑定的账号跌入隔离观察层（健康分 <30）时自动切换到健康账号。切换会损失一次上下文缓存，但避免请求持续打向接近熔断的账号。',
+        priceAware: '价格感知调度',
+        priceAwareHint: '同健康层、同优先级的账号中，按「账号计费倍率 × 负载」综合分优先选择更便宜的账号；账号负载达到守卫阈值（默认 80%）后价格优势作废，防止低价账号被打爆。'
       },
       upstreamBillingProbe: {
         title: '上游倍率自动探测',
