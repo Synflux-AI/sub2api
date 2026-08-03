@@ -82,7 +82,7 @@ func (s *AccountHealthService) schedulingConfig() *config.GatewaySchedulingConfi
 }
 
 // runtimeToggles 返回布尔开关的生效值：settingService 存在时走 DB 动态覆盖
-//（stale-while-revalidate，不阻塞热路径），否则回退 config 静态值。
+// （stale-while-revalidate，不阻塞热路径），否则回退 config 静态值。
 func (s *AccountHealthService) runtimeToggles() SchedulingHealthRuntime {
 	if s == nil {
 		return SchedulingHealthRuntime{}

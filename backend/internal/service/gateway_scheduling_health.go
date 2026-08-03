@@ -24,7 +24,7 @@ func (s *GatewayService) accountHealthService() *AccountHealthService {
 }
 
 // priceAwareEnabled 价格感知调度是否开启：settingService 存在时走 DB 动态覆盖
-//（stale-while-revalidate，不阻塞热路径），否则回退 config 静态值。
+// （stale-while-revalidate，不阻塞热路径），否则回退 config 静态值。
 func (s *GatewayService) priceAwareEnabled() bool {
 	if s == nil {
 		return false
