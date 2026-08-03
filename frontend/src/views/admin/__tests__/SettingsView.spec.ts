@@ -451,6 +451,10 @@ const baseSettingsResponse = {
   min_claude_code_version: "",
   max_claude_code_version: "",
   allow_ungrouped_key_scheduling: false,
+  scheduling_health_scoring_enabled: false,
+  scheduling_health_shadow_mode: true,
+  scheduling_health_sticky_break_enabled: true,
+  scheduling_price_aware_enabled: false,
   enable_fingerprint_unification: true,
   enable_metadata_passthrough: false,
   enable_cch_signing: false,
@@ -1279,6 +1283,43 @@ describe("admin SettingsView payment visible method controls", () => {
       interval_minutes: 90,
       debounce_minutes: 3,
     });
+  });
+
+  it("submits scheduling health toggles and reveals sub-toggles when scoring is on", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+
+    // 健康分未开启时，子开关（影子模式/粘性打破）不渲染
+    expect(
+      wrapper.find('[data-testid="scheduling-health-shadow-toggle"]').exists(),
+    ).toBe(false);
+    expect(
+      wrapper.find('[data-testid="scheduling-health-sticky-break-toggle"]').exists(),
+    ).toBe(false);
+
+    await wrapper
+      .get('[data-testid="scheduling-health-scoring-toggle"]')
+      .setValue(true);
+
+    const shadowToggle = wrapper.get(
+      '[data-testid="scheduling-health-shadow-toggle"]',
+    );
+    await shadowToggle.setValue(false);
+    await wrapper
+      .get('[data-testid="scheduling-price-aware-toggle"]')
+      .setValue(true);
+
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+
+    expect(updateSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scheduling_health_scoring_enabled: true,
+        scheduling_health_shadow_mode: false,
+        scheduling_health_sticky_break_enabled: true,
+        scheduling_price_aware_enabled: true,
+      }),
+    );
   });
 
   it("places and explains rate controls for both scheduling modes", async () => {

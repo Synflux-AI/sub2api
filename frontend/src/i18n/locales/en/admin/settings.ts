@@ -359,7 +359,15 @@ export default {
         title: 'Gateway Scheduling Settings',
         description: 'Control API Key scheduling behavior',
         allowUngroupedKey: 'Allow Ungrouped Key Scheduling',
-        allowUngroupedKeyHint: 'When disabled, API Keys not assigned to any group cannot make requests (403 Forbidden). Keep disabled to ensure all Keys belong to a specific group.'
+        allowUngroupedKeyHint: 'When disabled, API Keys not assigned to any group cannot make requests (403 Forbidden). Keep disabled to ensure all Keys belong to a specific group.',
+        healthScoring: 'Account Health Scoring',
+        healthScoringHint: 'Computes a 0-100 health score per account from upstream errors (429/403/5xx/timeouts). Healthy accounts are preferred during scheduling (healthy ≥70 / degraded 30-70 / probation <30). Only changes ordering — never removes accounts from the candidate set. Takes effect on all instances within ~1 minute.',
+        healthShadowMode: 'Shadow Mode (collect only)',
+        healthShadowModeHint: 'When enabled, health scores are collected and logged but do not affect scheduling order. Observe score distribution in shadow mode first, then disable it to activate health-based ordering.',
+        healthStickyBreak: 'Break Sticky Session on Low Health',
+        healthStickyBreakHint: 'When a sticky-session account falls into probation (score <30), the session switches to a healthy account. This costs one context-cache miss but stops routing requests to a near-circuit-broken account.',
+        priceAware: 'Price-Aware Scheduling',
+        priceAwareHint: 'Among accounts in the same health tier and priority, prefers cheaper accounts by a combined score of billing rate multiplier × load. The price advantage is voided once account load reaches the guard threshold (default 80%) to protect cheap accounts from overload.'
       },
       upstreamBillingProbe: {
         title: 'Upstream Rate Auto Detection',
@@ -425,8 +433,8 @@ export default {
         antigravityUserAgentVersionPlaceholder: '1.23.2',
         antigravityUserAgentVersionHint: 'Leave empty to use ANTIGRAVITY_USER_AGENT_VERSION or the built-in default 1.23.2; when set, the admin setting takes precedence.',
         openaiCodexUserAgent: 'OpenAI Codex UA',
-        openaiCodexUserAgentPlaceholder: 'codex-tui/0.125.0 (Ubuntu 22.4.0; x86_64) xterm-256color (codex-tui; 0.125.0)',
-        openaiCodexUserAgentHint: 'Used to bypass Cloudflare browser-UA challenges on the OpenAI upstream. Only applies when the client User-Agent is detected as a browser (Mozilla/...). Leave empty to use the built-in default.',
+        openaiCodexUserAgentPlaceholder: 'codex_cli_rs/0.144.1 (Ubuntu 22.4.0; x86_64) xterm-256color',
+        openaiCodexUserAgentHint: 'Used to bypass Cloudflare browser-UA challenges on the OpenAI upstream. Only applies when the client User-Agent is detected as a browser (Mozilla/...). Leave empty to use the built-in default. Prefer a codex_cli_rs identity: the upstream schedules capacity per originator, and identities in a load-shed bucket get server_is_overloaded, which puts the account into cooldown.',
         codexHardeningTitle: "Codex Settings",
         codexClientRestrictionTitle: "Codex client restriction",
         codexHardeningDesc:

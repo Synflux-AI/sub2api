@@ -82,8 +82,10 @@ const antigravityUserAgentVersionCacheTTL = 60 * time.Second
 const antigravityUserAgentVersionErrorTTL = 5 * time.Second
 const antigravityUserAgentVersionDBTimeout = 5 * time.Second
 
-// DefaultOpenAICodexUserAgent OpenAI Codex 默认 User-Agent（用于规避 Cloudflare 对浏览器 UA 的质询）
-const DefaultOpenAICodexUserAgent = "codex-tui/0.144.1 (Ubuntu 22.4.0; x86_64) xterm-256color (codex-tui; 0.144.1)"
+// DefaultOpenAICodexUserAgent OpenAI Codex 默认 User-Agent（用于规避 Cloudflare 对浏览器 UA 的质询）。
+// 取官方 CLI 身份而非 TUI 身份：上游按 originator 分桶调度容量，TUI 身份命中降载桶会被回
+// server_is_overloaded 并触发账号冷却，而该默认值是浏览器 UA 兜底路径上最主要的身份来源。
+const DefaultOpenAICodexUserAgent = codexCLIUserAgent
 
 // cachedOpenAICodexUserAgent 缓存 OpenAI Codex UA（进程内缓存，60s TTL）
 type cachedOpenAICodexUserAgent struct {
@@ -899,5 +901,139 @@ func (s *SettingService) SetOpenAIQuotaAutoPauseSettings(settings OpsOpenAIAccou
 	s.openAIQuotaAutoPauseSettingsCache.Store(&cachedOpenAIQuotaAutoPauseSettings{
 		settings:  settings,
 		expiresAt: time.Now().Add(openAIQuotaAutoPauseSettingsCacheTTL).UnixNano(),
+	})
+}
+
+// =========================
+// 账号健康度调度动态开关（DB 覆盖 config，热路径 stale-while-revalidate）
+// =========================
+
+// SchedulingHealthRuntime 健康分调度四个布尔开关的生效值。
+// DB 设置键存在时覆盖 config；不存在时回退 config.yaml/环境变量的静态值，
+// 因此纯 config 部署（未在管理端保存过设置）行为不变。
+type SchedulingHealthRuntime struct {
+	// ScoringEnabled 健康分总开关（采集 + 排序）
+	ScoringEnabled bool
+	// ShadowMode 影子模式：只采集记日志，不影响排序
+	ShadowMode bool
+	// StickyBreakEnabled 粘性会话账号跌入隔离观察层时是否打破粘性
+	StickyBreakEnabled bool
+	// PriceAwareEnabled 价格感知调度开关
+	PriceAwareEnabled bool
+}
+
+type cachedSchedulingHealthRuntime struct {
+	runtime   SchedulingHealthRuntime
+	expiresAt int64 // unix nano
+}
+
+const schedulingHealthRuntimeCacheTTL = 60 * time.Second
+const schedulingHealthRuntimeErrorTTL = 5 * time.Second
+const schedulingHealthRuntimeDBTimeout = 5 * time.Second
+
+const schedulingHealthRuntimeRefreshKey = "scheduling_health_runtime"
+
+// configSchedulingHealthRuntime 返回 config 静态值（DB 读不到 / 键缺失时的回退基线）。
+func (s *SettingService) configSchedulingHealthRuntime() SchedulingHealthRuntime {
+	if s == nil || s.cfg == nil {
+		return SchedulingHealthRuntime{}
+	}
+	sched := &s.cfg.Gateway.Scheduling
+	return SchedulingHealthRuntime{
+		ScoringEnabled:     sched.HealthScoringEnabled,
+		ShadowMode:         sched.HealthShadowMode,
+		StickyBreakEnabled: sched.HealthStickyBreakEnabled,
+		PriceAwareEnabled:  sched.PriceAwareEnabled,
+	}
+}
+
+// GetSchedulingHealthRuntime 返回健康分调度动态开关的生效值。
+// 调度选号与上游错误处理热路径每请求调用，因此永不阻塞 DB：
+// 缓存新鲜直接返回；过期或缺失时返回上一份值（或 config 基线）并异步刷新。
+func (s *SettingService) GetSchedulingHealthRuntime(ctx context.Context) SchedulingHealthRuntime {
+	if s == nil {
+		return SchedulingHealthRuntime{}
+	}
+	cached, _ := s.schedulingHealthRuntimeCache.Load().(*cachedSchedulingHealthRuntime)
+	if cached != nil && time.Now().UnixNano() < cached.expiresAt {
+		return cached.runtime
+	}
+	s.schedulingHealthRuntimeSF.DoChan(schedulingHealthRuntimeRefreshKey, func() (any, error) {
+		s.refreshSchedulingHealthRuntime(context.Background())
+		return nil, nil
+	})
+	if cached != nil {
+		return cached.runtime // serve stale while revalidating
+	}
+	return s.configSchedulingHealthRuntime()
+}
+
+// WarmSchedulingHealthRuntime 同步加载动态开关到缓存（启动预热 / 测试确定性读取用）。
+func (s *SettingService) WarmSchedulingHealthRuntime(ctx context.Context) SchedulingHealthRuntime {
+	if s == nil {
+		return SchedulingHealthRuntime{}
+	}
+	s.refreshSchedulingHealthRuntime(ctx)
+	if cached, _ := s.schedulingHealthRuntimeCache.Load().(*cachedSchedulingHealthRuntime); cached != nil {
+		return cached.runtime
+	}
+	return s.configSchedulingHealthRuntime()
+}
+
+// refreshSchedulingHealthRuntime 批量读取四个开关键并写入缓存。
+// DB 错误时沿用上一份值（无上一份则用 config 基线）并用短 TTL 尽快重试。
+func (s *SettingService) refreshSchedulingHealthRuntime(ctx context.Context) {
+	if s == nil || s.settingRepo == nil {
+		return
+	}
+	dbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), schedulingHealthRuntimeDBTimeout)
+	defer cancel()
+
+	keys := []string{
+		SettingKeySchedulingHealthScoringEnabled,
+		SettingKeySchedulingHealthShadowMode,
+		SettingKeySchedulingHealthStickyBreakEnabled,
+		SettingKeySchedulingPriceAwareEnabled,
+	}
+	values, err := s.settingRepo.GetMultiple(dbCtx, keys)
+	if err != nil {
+		slog.Warn("scheduling_health_runtime_settings_load_failed", "error", err)
+		runtime := s.configSchedulingHealthRuntime()
+		if prior, _ := s.schedulingHealthRuntimeCache.Load().(*cachedSchedulingHealthRuntime); prior != nil {
+			runtime = prior.runtime
+		}
+		s.schedulingHealthRuntimeCache.Store(&cachedSchedulingHealthRuntime{
+			runtime:   runtime,
+			expiresAt: time.Now().Add(schedulingHealthRuntimeErrorTTL).UnixNano(),
+		})
+		return
+	}
+
+	runtime := s.configSchedulingHealthRuntime()
+	overlayBool := func(target *bool, key string) {
+		if v, ok := values[key]; ok && strings.TrimSpace(v) != "" {
+			*target = strings.TrimSpace(v) == "true"
+		}
+	}
+	overlayBool(&runtime.ScoringEnabled, SettingKeySchedulingHealthScoringEnabled)
+	overlayBool(&runtime.ShadowMode, SettingKeySchedulingHealthShadowMode)
+	overlayBool(&runtime.StickyBreakEnabled, SettingKeySchedulingHealthStickyBreakEnabled)
+	overlayBool(&runtime.PriceAwareEnabled, SettingKeySchedulingPriceAwareEnabled)
+
+	s.schedulingHealthRuntimeCache.Store(&cachedSchedulingHealthRuntime{
+		runtime:   runtime,
+		expiresAt: time.Now().Add(schedulingHealthRuntimeCacheTTL).UnixNano(),
+	})
+}
+
+// SetSchedulingHealthRuntime 设置写路径直写缓存，让本实例立即生效（其他实例靠 TTL 收敛）。
+func (s *SettingService) SetSchedulingHealthRuntime(runtime SchedulingHealthRuntime) {
+	if s == nil {
+		return
+	}
+	s.schedulingHealthRuntimeSF.Forget(schedulingHealthRuntimeRefreshKey)
+	s.schedulingHealthRuntimeCache.Store(&cachedSchedulingHealthRuntime{
+		runtime:   runtime,
+		expiresAt: time.Now().Add(schedulingHealthRuntimeCacheTTL).UnixNano(),
 	})
 }

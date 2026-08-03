@@ -440,6 +440,23 @@ const (
 	SettingKeyDisableTempUnschedulable = "disable_temp_unschedulable"
 
 	// =========================
+	// 账号健康度调度（智能路由候选池）动态开关
+	// =========================
+
+	// 以下四个键是 DB 动态开关（"true"/"false"），覆盖 config.yaml 中同名
+	// gateway.scheduling.* 布尔配置；键在 DB 中不存在时回退到 config 值。
+	// 数值参数（阈值/扣分权重/半衰期等）仍由 config 管理。
+
+	// SettingKeySchedulingHealthScoringEnabled 健康分总开关（采集 + 排序）
+	SettingKeySchedulingHealthScoringEnabled = "scheduling_health_scoring_enabled"
+	// SettingKeySchedulingHealthShadowMode 影子模式：只采集记日志，不影响排序
+	SettingKeySchedulingHealthShadowMode = "scheduling_health_shadow_mode"
+	// SettingKeySchedulingHealthStickyBreakEnabled 粘性会话账号跌入隔离观察层时是否打破粘性
+	SettingKeySchedulingHealthStickyBreakEnabled = "scheduling_health_sticky_break_enabled"
+	// SettingKeySchedulingPriceAwareEnabled 价格感知调度：同层同优先级组内按价格×负载综合分选择
+	SettingKeySchedulingPriceAwareEnabled = "scheduling_price_aware_enabled"
+
+	// =========================
 	// Request Rectifier (请求整流器)
 	// =========================
 

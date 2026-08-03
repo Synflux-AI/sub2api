@@ -4676,6 +4676,84 @@
               </div>
 
               <div
+                class="flex items-center justify-between border-t border-gray-100 pt-5 dark:border-dark-700"
+              >
+                <div>
+                  <label
+                    class="text-sm font-medium text-gray-700 dark:text-gray-300"
+                  >
+                    {{ t("admin.settings.scheduling.healthScoring") }}
+                  </label>
+                  <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                    {{ t("admin.settings.scheduling.healthScoringHint") }}
+                  </p>
+                </div>
+                <Toggle
+                  v-model="form.scheduling_health_scoring_enabled"
+                  data-testid="scheduling-health-scoring-toggle"
+                />
+              </div>
+
+              <div
+                v-if="form.scheduling_health_scoring_enabled"
+                class="flex items-center justify-between border-t border-gray-100 pt-5 dark:border-dark-700"
+              >
+                <div>
+                  <label
+                    class="text-sm font-medium text-gray-700 dark:text-gray-300"
+                  >
+                    {{ t("admin.settings.scheduling.healthShadowMode") }}
+                  </label>
+                  <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                    {{ t("admin.settings.scheduling.healthShadowModeHint") }}
+                  </p>
+                </div>
+                <Toggle
+                  v-model="form.scheduling_health_shadow_mode"
+                  data-testid="scheduling-health-shadow-toggle"
+                />
+              </div>
+
+              <div
+                v-if="form.scheduling_health_scoring_enabled"
+                class="flex items-center justify-between border-t border-gray-100 pt-5 dark:border-dark-700"
+              >
+                <div>
+                  <label
+                    class="text-sm font-medium text-gray-700 dark:text-gray-300"
+                  >
+                    {{ t("admin.settings.scheduling.healthStickyBreak") }}
+                  </label>
+                  <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                    {{ t("admin.settings.scheduling.healthStickyBreakHint") }}
+                  </p>
+                </div>
+                <Toggle
+                  v-model="form.scheduling_health_sticky_break_enabled"
+                  data-testid="scheduling-health-sticky-break-toggle"
+                />
+              </div>
+
+              <div
+                class="flex items-center justify-between border-t border-gray-100 pt-5 dark:border-dark-700"
+              >
+                <div>
+                  <label
+                    class="text-sm font-medium text-gray-700 dark:text-gray-300"
+                  >
+                    {{ t("admin.settings.scheduling.priceAware") }}
+                  </label>
+                  <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                    {{ t("admin.settings.scheduling.priceAwareHint") }}
+                  </p>
+                </div>
+                <Toggle
+                  v-model="form.scheduling_price_aware_enabled"
+                  data-testid="scheduling-price-aware-toggle"
+                />
+              </div>
+
+              <div
                 v-if="!form.openai_advanced_scheduler_enabled"
                 class="flex items-center justify-between border-t border-gray-100 pt-5 dark:border-dark-700"
               >
@@ -9144,6 +9222,10 @@ const form = reactive<SettingsForm>({
   max_claude_code_version: "",
   // 分组隔离
   allow_ungrouped_key_scheduling: false,
+  scheduling_health_scoring_enabled: false,
+  scheduling_health_shadow_mode: true,
+  scheduling_health_sticky_break_enabled: true,
+  scheduling_price_aware_enabled: false,
   openai_low_upstream_rate_priority_enabled: false,
   openai_oauth_scheduling_rate_multiplier: 1,
   openai_advanced_scheduler_enabled: false,
@@ -10626,6 +10708,10 @@ async function saveSettings() {
       min_claude_code_version: form.min_claude_code_version,
       max_claude_code_version: form.max_claude_code_version,
       allow_ungrouped_key_scheduling: form.allow_ungrouped_key_scheduling,
+      scheduling_health_scoring_enabled: form.scheduling_health_scoring_enabled,
+      scheduling_health_shadow_mode: form.scheduling_health_shadow_mode,
+      scheduling_health_sticky_break_enabled: form.scheduling_health_sticky_break_enabled,
+      scheduling_price_aware_enabled: form.scheduling_price_aware_enabled,
       enable_fingerprint_unification: form.enable_fingerprint_unification,
       enable_metadata_passthrough: form.enable_metadata_passthrough,
       enable_cch_signing: form.enable_cch_signing,

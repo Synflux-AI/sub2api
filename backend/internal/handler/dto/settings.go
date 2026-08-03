@@ -218,6 +218,10 @@ type SystemSettings struct {
 	PaymentVisibleMethodWxpayEnabled  bool   `json:"payment_visible_method_wxpay_enabled"`
 
 	// OpenAI account scheduling
+	SchedulingHealthScoringEnabled                         bool    `json:"scheduling_health_scoring_enabled"`
+	SchedulingHealthShadowMode                             bool    `json:"scheduling_health_shadow_mode"`
+	SchedulingHealthStickyBreakEnabled                     bool    `json:"scheduling_health_sticky_break_enabled"`
+	SchedulingPriceAwareEnabled                            bool    `json:"scheduling_price_aware_enabled"`
 	OpenAILowUpstreamRatePriorityEnabled                   bool    `json:"openai_low_upstream_rate_priority_enabled"`
 	OpenAIOAuthSchedulingRateMultiplier                    float64 `json:"openai_oauth_scheduling_rate_multiplier"`
 	OpenAIAdvancedSchedulerEnabled                         bool    `json:"openai_advanced_scheduler_enabled"`

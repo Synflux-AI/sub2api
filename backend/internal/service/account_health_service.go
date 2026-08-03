@@ -53,6 +53,8 @@ type AccountHealthCache interface {
 type AccountHealthService struct {
 	cache AccountHealthCache
 	cfg   *config.Config
+	// settingService 提供健康分布尔开关的 DB 动态覆盖（可为 nil，此时回退 config 静态值）
+	settingService *SettingService
 
 	// unhealthyMarks 记录本实例观测到的带伤账号（score < 100），
 	// 成功加分只对带伤账号写 Redis。value 为过期时间。
@@ -63,10 +65,11 @@ type AccountHealthService struct {
 }
 
 // NewAccountHealthService 创建账号健康度服务
-func NewAccountHealthService(cache AccountHealthCache, cfg *config.Config) *AccountHealthService {
+func NewAccountHealthService(cache AccountHealthCache, cfg *config.Config, settingService *SettingService) *AccountHealthService {
 	return &AccountHealthService{
 		cache:          cache,
 		cfg:            cfg,
+		settingService: settingService,
 		unhealthyMarks: make(map[int64]time.Time),
 	}
 }
@@ -78,16 +81,42 @@ func (s *AccountHealthService) schedulingConfig() *config.GatewaySchedulingConfi
 	return &s.cfg.Gateway.Scheduling
 }
 
+// runtimeToggles 返回布尔开关的生效值：settingService 存在时走 DB 动态覆盖
+// （stale-while-revalidate，不阻塞热路径），否则回退 config 静态值。
+func (s *AccountHealthService) runtimeToggles() SchedulingHealthRuntime {
+	if s == nil {
+		return SchedulingHealthRuntime{}
+	}
+	if s.settingService != nil {
+		return s.settingService.GetSchedulingHealthRuntime(context.Background())
+	}
+	cfg := s.schedulingConfig()
+	if cfg == nil {
+		return SchedulingHealthRuntime{}
+	}
+	return SchedulingHealthRuntime{
+		ScoringEnabled:     cfg.HealthScoringEnabled,
+		ShadowMode:         cfg.HealthShadowMode,
+		StickyBreakEnabled: cfg.HealthStickyBreakEnabled,
+		PriceAwareEnabled:  cfg.PriceAwareEnabled,
+	}
+}
+
 // Enabled 健康分采集是否开启（含影子模式）
 func (s *AccountHealthService) Enabled() bool {
-	cfg := s.schedulingConfig()
-	return cfg != nil && cfg.HealthScoringEnabled && s.cache != nil
+	if s == nil || s.cache == nil || s.schedulingConfig() == nil {
+		return false
+	}
+	return s.runtimeToggles().ScoringEnabled
 }
 
 // SortingActive 健康分是否参与调度排序（开启且非影子模式）
 func (s *AccountHealthService) SortingActive() bool {
-	cfg := s.schedulingConfig()
-	return s.Enabled() && !cfg.HealthShadowMode
+	if s == nil || s.cache == nil || s.schedulingConfig() == nil {
+		return false
+	}
+	rt := s.runtimeToggles()
+	return rt.ScoringEnabled && !rt.ShadowMode
 }
 
 // RecordPoolMode 池模式账号是否采集健康分
@@ -98,8 +127,10 @@ func (s *AccountHealthService) RecordPoolMode() bool {
 
 // StickyBreakEnabled 粘性会话账号跌入 tier 2 时是否打破粘性
 func (s *AccountHealthService) StickyBreakEnabled() bool {
-	cfg := s.schedulingConfig()
-	return cfg != nil && cfg.HealthStickyBreakEnabled
+	if s == nil || s.schedulingConfig() == nil {
+		return false
+	}
+	return s.runtimeToggles().StickyBreakEnabled
 }
 
 // penaltyForStatus 返回状态码对应的扣分（负数）；0 表示该状态码不计入健康分。

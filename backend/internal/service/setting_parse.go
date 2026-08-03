@@ -847,6 +847,24 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	result.PaymentVisibleMethodWxpaySource = NormalizeVisibleMethodSource("wxpay", settings[SettingPaymentVisibleMethodWxpaySource])
 	result.PaymentVisibleMethodAlipayEnabled = settings[SettingPaymentVisibleMethodAlipayEnabled] == "true"
 	result.PaymentVisibleMethodWxpayEnabled = settings[SettingPaymentVisibleMethodWxpayEnabled] == "true"
+	// 健康分调度开关：DB 键存在时覆盖，缺失时回退 config（纯 config 部署行为不变）
+	schedulingHealthDefaults := s.configSchedulingHealthRuntime()
+	result.SchedulingHealthScoringEnabled = schedulingHealthDefaults.ScoringEnabled
+	result.SchedulingHealthShadowMode = schedulingHealthDefaults.ShadowMode
+	result.SchedulingHealthStickyBreakEnabled = schedulingHealthDefaults.StickyBreakEnabled
+	result.SchedulingPriceAwareEnabled = schedulingHealthDefaults.PriceAwareEnabled
+	if v, ok := settings[SettingKeySchedulingHealthScoringEnabled]; ok && v != "" {
+		result.SchedulingHealthScoringEnabled = v == "true"
+	}
+	if v, ok := settings[SettingKeySchedulingHealthShadowMode]; ok && v != "" {
+		result.SchedulingHealthShadowMode = v == "true"
+	}
+	if v, ok := settings[SettingKeySchedulingHealthStickyBreakEnabled]; ok && v != "" {
+		result.SchedulingHealthStickyBreakEnabled = v == "true"
+	}
+	if v, ok := settings[SettingKeySchedulingPriceAwareEnabled]; ok && v != "" {
+		result.SchedulingPriceAwareEnabled = v == "true"
+	}
 	result.OpenAILowUpstreamRatePriorityEnabled = settings[SettingKeyOpenAILowUpstreamRatePriorityEnabled] == "true"
 	result.OpenAIOAuthSchedulingRateMultiplier = parseOpenAIOAuthSchedulingRateMultiplier(settings[SettingKeyOpenAIOAuthSchedulingRateMultiplier])
 	result.OpenAIAdvancedSchedulerEnabled = settings[openAIAdvancedSchedulerSettingKey] == "true"

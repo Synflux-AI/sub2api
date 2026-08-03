@@ -1076,6 +1076,10 @@ export interface Account {
     upstream_billing_probe?: UpstreamBillingProbeSnapshot
     // 出站注入 X-Trace-Id（账号级开关，对所有平台/类型生效，默认关闭）
     trace_id_passthrough?: boolean
+    codex_reset_credit_snapshot?: {
+      available_count?: number
+      credits?: { expires_at?: string }[]
+    }
   } & Record<string, unknown>)
   // Advanced mode: custom outbound HTTP headers merged into upstream requests.
   // Disabled by default; UI surfaces these via a collapsible advanced panel.

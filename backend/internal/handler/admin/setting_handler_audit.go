@@ -455,6 +455,18 @@ func diffSettings(before *service.SystemSettings, after *service.SystemSettings,
 	if before.PaymentVisibleMethodWxpayEnabled != after.PaymentVisibleMethodWxpayEnabled {
 		changed = append(changed, "payment_visible_method_wxpay_enabled")
 	}
+	if before.SchedulingHealthScoringEnabled != after.SchedulingHealthScoringEnabled {
+		changed = append(changed, "scheduling_health_scoring_enabled")
+	}
+	if before.SchedulingHealthShadowMode != after.SchedulingHealthShadowMode {
+		changed = append(changed, "scheduling_health_shadow_mode")
+	}
+	if before.SchedulingHealthStickyBreakEnabled != after.SchedulingHealthStickyBreakEnabled {
+		changed = append(changed, "scheduling_health_sticky_break_enabled")
+	}
+	if before.SchedulingPriceAwareEnabled != after.SchedulingPriceAwareEnabled {
+		changed = append(changed, "scheduling_price_aware_enabled")
+	}
 	if before.OpenAILowUpstreamRatePriorityEnabled != after.OpenAILowUpstreamRatePriorityEnabled {
 		changed = append(changed, "openai_low_upstream_rate_priority_enabled")
 	}

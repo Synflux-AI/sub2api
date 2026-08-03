@@ -229,6 +229,12 @@ type SystemSettings struct {
 	PaymentVisibleMethodAlipayEnabled bool
 	PaymentVisibleMethodWxpayEnabled  bool
 
+	// 账号健康度调度（智能路由候选池）：DB 键缺失时回退 config，见 parseSettings
+	SchedulingHealthScoringEnabled     bool
+	SchedulingHealthShadowMode         bool
+	SchedulingHealthStickyBreakEnabled bool
+	SchedulingPriceAwareEnabled        bool
+
 	// OpenAI 账号调度
 	OpenAILowUpstreamRatePriorityEnabled                   bool
 	OpenAIOAuthSchedulingRateMultiplier                    float64

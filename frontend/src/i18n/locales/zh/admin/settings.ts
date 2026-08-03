@@ -352,7 +352,15 @@ export default {
         title: '网关调度设置',
         description: '控制 API Key 的调度行为',
         allowUngroupedKey: '允许未分组 Key 调度',
-        allowUngroupedKeyHint: '关闭后，未分配到任何分组的 API Key 将无法发起请求（返回 403）。建议保持关闭以确保所有 Key 都归属明确的分组。'
+        allowUngroupedKeyHint: '关闭后，未分配到任何分组的 API Key 将无法发起请求（返回 403）。建议保持关闭以确保所有 Key 都归属明确的分组。',
+        healthScoring: '账号健康分调度',
+        healthScoringHint: '按上游错误（429/403/5xx/超时等）为账号计算 0-100 健康分，调度时健康账号优先（主池 ≥70 / 候选池 30-70 / 隔离观察 <30）。只改变排序，不会把账号移出候选集；约 1 分钟内对所有实例生效。',
+        healthShadowMode: '影子模式（只采集不排序）',
+        healthShadowModeHint: '开启时只采集健康分并记录日志，不影响调度排序。建议先在影子模式下观察账号分数分布，再关闭影子模式正式启用排序。',
+        healthStickyBreak: '低健康分打破粘性会话',
+        healthStickyBreakHint: '粘性会话绑定的账号跌入隔离观察层（健康分 <30）时自动切换到健康账号。切换会损失一次上下文缓存，但避免请求持续打向接近熔断的账号。',
+        priceAware: '价格感知调度',
+        priceAwareHint: '同健康层、同优先级的账号中，按「账号计费倍率 × 负载」综合分优先选择更便宜的账号；账号负载达到守卫阈值（默认 80%）后价格优势作废，防止低价账号被打爆。'
       },
       upstreamBillingProbe: {
         title: '上游倍率自动探测',
@@ -418,8 +426,8 @@ export default {
         antigravityUserAgentVersionPlaceholder: '1.23.2',
         antigravityUserAgentVersionHint: '留空时使用 ANTIGRAVITY_USER_AGENT_VERSION 或内置默认值 1.23.2；填写后后台设置优先。',
         openaiCodexUserAgent: 'OpenAI Codex UA',
-        openaiCodexUserAgentPlaceholder: 'codex-tui/0.125.0 (Ubuntu 22.4.0; x86_64) xterm-256color (codex-tui; 0.125.0)',
-        openaiCodexUserAgentHint: '用于规避 OpenAI 上游 Cloudflare 对浏览器 UA 的访问质询。仅在检测到客户端 User-Agent 为浏览器（Mozilla/...）时生效，其他客户端原样透传。留空使用内置默认值。',
+        openaiCodexUserAgentPlaceholder: 'codex_cli_rs/0.144.1 (Ubuntu 22.4.0; x86_64) xterm-256color',
+        openaiCodexUserAgentHint: '用于规避 OpenAI 上游 Cloudflare 对浏览器 UA 的访问质询。仅在检测到客户端 User-Agent 为浏览器（Mozilla/...）时生效，其他客户端原样透传。留空使用内置默认值。建议填写 codex_cli_rs 形态：上游按 originator 分桶调度容量，落在降载桶的身份会被回 server_is_overloaded 并触发账号冷却。',
         codexHardeningTitle: 'Codex 设置',
         codexClientRestrictionTitle: 'Codex 客户端限制',
         codexHardeningDesc:

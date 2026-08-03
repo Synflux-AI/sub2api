@@ -449,6 +449,10 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	updates[SettingPaymentVisibleMethodWxpaySource] = settings.PaymentVisibleMethodWxpaySource
 	updates[SettingPaymentVisibleMethodAlipayEnabled] = strconv.FormatBool(settings.PaymentVisibleMethodAlipayEnabled)
 	updates[SettingPaymentVisibleMethodWxpayEnabled] = strconv.FormatBool(settings.PaymentVisibleMethodWxpayEnabled)
+	updates[SettingKeySchedulingHealthScoringEnabled] = strconv.FormatBool(settings.SchedulingHealthScoringEnabled)
+	updates[SettingKeySchedulingHealthShadowMode] = strconv.FormatBool(settings.SchedulingHealthShadowMode)
+	updates[SettingKeySchedulingHealthStickyBreakEnabled] = strconv.FormatBool(settings.SchedulingHealthStickyBreakEnabled)
+	updates[SettingKeySchedulingPriceAwareEnabled] = strconv.FormatBool(settings.SchedulingPriceAwareEnabled)
 	updates[SettingKeyOpenAILowUpstreamRatePriorityEnabled] = strconv.FormatBool(settings.OpenAILowUpstreamRatePriorityEnabled)
 	updates[SettingKeyOpenAIOAuthSchedulingRateMultiplier] = strconv.FormatFloat(settings.OpenAIOAuthSchedulingRateMultiplier, 'f', -1, 64)
 	updates[openAIAdvancedSchedulerSettingKey] = strconv.FormatBool(settings.OpenAIAdvancedSchedulerEnabled)
@@ -631,6 +635,13 @@ func (s *SettingService) refreshCachedSettings(settings *SystemSettings) {
 			SettingKeyOpenAIAdvancedSchedulerWeightSessionSticky:    settings.OpenAIAdvancedSchedulerWeightSessionSticky,
 		}),
 		expiresAt: time.Now().Add(openAIAdvancedSchedulerSettingCacheTTL).UnixNano(),
+	})
+	// 健康分调度动态开关：设置写入后直写缓存，本实例立即生效（其他实例靠 60s TTL 收敛）。
+	s.SetSchedulingHealthRuntime(SchedulingHealthRuntime{
+		ScoringEnabled:     settings.SchedulingHealthScoringEnabled,
+		ShadowMode:         settings.SchedulingHealthShadowMode,
+		StickyBreakEnabled: settings.SchedulingHealthStickyBreakEnabled,
+		PriceAwareEnabled:  settings.SchedulingPriceAwareEnabled,
 	})
 	// Invalidate the quota auto-pause cache and let the next read trigger a fresh load.
 	// We can't know from here whether ops_advanced_settings was also touched, so be

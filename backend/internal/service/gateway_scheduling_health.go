@@ -23,6 +23,18 @@ func (s *GatewayService) accountHealthService() *AccountHealthService {
 	return s.rateLimitService.HealthService()
 }
 
+// priceAwareEnabled 价格感知调度是否开启：settingService 存在时走 DB 动态覆盖
+// （stale-while-revalidate，不阻塞热路径），否则回退 config 静态值。
+func (s *GatewayService) priceAwareEnabled() bool {
+	if s == nil {
+		return false
+	}
+	if s.settingService != nil {
+		return s.settingService.GetSchedulingHealthRuntime(context.Background()).PriceAwareEnabled
+	}
+	return s.schedulingConfig().PriceAwareEnabled
+}
+
 // withHealthPrefetch 批量预取候选账号健康分写入 context（一次 pipeline 读）。
 // 影子模式只记录日志不注入排序；Redis 失败时不注入（全员视为满分，fail-open）。
 func (s *GatewayService) withHealthPrefetch(ctx context.Context, accounts []Account) context.Context {
@@ -148,7 +160,7 @@ func filterByBestHealthTier(accounts []accountWithLoad, tierOf func(*Account) in
 // 价格感知未开启或倍率全为 0 时返回 nil（调用方退回纯负载比较）。
 func (s *GatewayService) computeCostLoadBuckets(items []accountWithLoad) map[int64]int {
 	cfg := s.schedulingConfig()
-	if !cfg.PriceAwareEnabled || len(items) == 0 {
+	if !s.priceAwareEnabled() || len(items) == 0 {
 		return nil
 	}
 	maxMultiplier := 0.0
