@@ -95,4 +95,13 @@ config.global.stubs = {
 }
 
 // 设置全局测试超时
-vi.setConfig({ testTimeout: 10000 })
+//
+// 30s 不是给单个用例留的执行预算，而是给 CI 的 CPU 争抢留的余量：Jenkins 的
+// CI stage 把 backend-unit / golangci-lint / govulncheck / frontend 四个 stage
+// 并行跑，frontend stage 内部又并发 eslint + vue-tsc + vitest + pnpm audit，
+// 合计 ~7 个 CPU 密集进程挤在一台只有 2 executor、无 agent 的机器上。
+// 实测同一次构建里，同一批用例在 Jenkins 上比本地慢 18x~84x（中位数 ~42x）。
+// 原来的 10s 对本地最慢的用例（SettingsView「submits the compact home page
+// toggle」，本地 91ms）只剩 110x 余量，正好压在劣化区间的上沿，会随机超时。
+// 30s 把余量抬到 330x，约为实测最差值的 4 倍。
+vi.setConfig({ testTimeout: 30000 })
