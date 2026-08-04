@@ -462,14 +462,14 @@ func DefaultStreamTimeoutSettings() *StreamTimeoutSettings {
 
 // RectifierSettings 请求整流器配置
 type RectifierSettings struct {
-	Enabled                  bool     `json:"enabled"`                    // 总开关
-	ThinkingSignatureEnabled bool     `json:"thinking_signature_enabled"` // Thinking 签名整流
-	ThinkingBudgetEnabled    bool     `json:"thinking_budget_enabled"`    // Thinking Budget 整流
-	APIKeySignatureEnabled   bool     `json:"apikey_signature_enabled"`   // API Key 签名整流开关
-	APIKeySignaturePatterns  []string `json:"apikey_signature_patterns"`  // API Key 自定义匹配关键词
+	Enabled                  bool `json:"enabled"`                    // 总开关
+	ThinkingSignatureEnabled bool `json:"thinking_signature_enabled"` // Thinking 签名整流
+	ThinkingBudgetEnabled    bool `json:"thinking_budget_enabled"`    // Thinking Budget 整流
+	APIKeySignatureEnabled   bool `json:"apikey_signature_enabled"`   // API Key 签名整流开关
 
 	// APIKeySignatureFailoverEnabled API Key 签名错误切换账号开关。
-	// 开启后：API Key 账号去签名重试仍返回签名错误时，failover 到其他账号重试。
+	// 历史 apikey_signature_patterns JSON 字段不再读取；自定义匹配能力已移至
+	// 独立的 ErrorHandlingRuleSettings，且不会自动迁移旧数据。
 	APIKeySignatureFailoverEnabled bool `json:"apikey_signature_failover_enabled"`
 }
 

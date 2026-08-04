@@ -24,6 +24,8 @@ var ctxLoggingMigratedFiles = []string{
 	"gateway_upstream_request.go",
 	"gateway_upstream_response.go",
 	"gateway_anthropic_passthrough.go",
+	// 错误处理规则引擎：触发日志是排查/调优这套规则的唯一抓手，必须带关联 ID
+	"gateway_error_handling_rule.go",
 	// OpenAI-compat / responses / bedrock 流式路径
 	"gateway_forward_as_responses.go",
 	"openai_gateway_chat_completions_raw.go",

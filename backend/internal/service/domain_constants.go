@@ -463,6 +463,9 @@ const (
 	// SettingKeyRectifierSettings stores JSON config for rectifier settings (thinking signature + budget).
 	SettingKeyRectifierSettings = "rectifier_settings"
 
+	// SettingKeyErrorHandlingRules stores the API Key error handling rule engine config.
+	SettingKeyErrorHandlingRules = "error_handling_rule_settings"
+
 	// =========================
 	// Beta Policy Settings
 	// =========================

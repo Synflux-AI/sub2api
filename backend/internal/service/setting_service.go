@@ -76,6 +76,10 @@ type SettingService struct {
 	panelRateLimitCache atomic.Value
 	panelRateLimitSF    singleflight.Group
 
+	// Error handling rules are read on every eligible upstream error response.
+	errorHandlingRuleCache atomic.Value
+	errorHandlingRuleSF    singleflight.Group
+
 	// openAIQuotaAutoPauseSettingsCache holds the most recently observed quota auto-pause
 	// settings. GetOpenAIQuotaAutoPauseSettings reads this atomic.Value on the request hot
 	// path without ever blocking on the DB; when the cached entry expires, a background

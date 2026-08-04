@@ -1343,7 +1343,6 @@ export interface RectifierSettings {
   thinking_signature_enabled: boolean;
   thinking_budget_enabled: boolean;
   apikey_signature_enabled: boolean;
-  apikey_signature_patterns: string[];
   apikey_signature_failover_enabled: boolean;
 }
 
@@ -1368,6 +1367,59 @@ export async function updateRectifierSettings(
 ): Promise<RectifierSettings> {
   const { data } = await apiClient.put<RectifierSettings>(
     "/admin/settings/rectifier",
+    settings,
+  );
+  return data;
+}
+
+// ==================== Error Handling Rules ====================
+
+/**
+ * Action taken when an error handling rule matches.
+ * - retry: resend the same request on the same account, then fail over
+ * - failover: switch account immediately
+ * - passthrough: return the upstream error to the client as-is
+ */
+export type ErrorHandlingRuleAction = "retry" | "failover" | "passthrough";
+
+/**
+ * Error handling rule interface.
+ * Matches backend dto.ErrorHandlingRule.
+ */
+export interface ErrorHandlingRule {
+  id: string;
+  name: string;
+  status_codes: number[];
+  keywords: string[];
+  action: ErrorHandlingRuleAction;
+  /** null means "use default_retry_count"; only meaningful for retry */
+  retry_count: number | null;
+}
+
+/**
+ * Error handling rule engine settings interface.
+ * Matches backend dto.ErrorHandlingRuleSettings.
+ */
+export interface ErrorHandlingRuleSettings {
+  enabled: boolean;
+  default_retry_count: number;
+  rules: ErrorHandlingRule[];
+}
+
+/** Get error handling rule settings. */
+export async function getErrorHandlingRuleSettings(): Promise<ErrorHandlingRuleSettings> {
+  const { data } = await apiClient.get<ErrorHandlingRuleSettings>(
+    "/admin/settings/error-handling-rules",
+  );
+  return data;
+}
+
+/** Update error handling rule settings. */
+export async function updateErrorHandlingRuleSettings(
+  settings: ErrorHandlingRuleSettings,
+): Promise<ErrorHandlingRuleSettings> {
+  const { data } = await apiClient.put<ErrorHandlingRuleSettings>(
+    "/admin/settings/error-handling-rules",
     settings,
   );
   return data;
@@ -1530,6 +1582,8 @@ export const settingsAPI = {
   updateDisableTempUnschedSettings,
   getRectifierSettings,
   updateRectifierSettings,
+  getErrorHandlingRuleSettings,
+  updateErrorHandlingRuleSettings,
   getBetaPolicySettings,
   updateBetaPolicySettings,
   getWebSearchEmulationConfig,

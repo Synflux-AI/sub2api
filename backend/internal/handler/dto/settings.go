@@ -441,13 +441,27 @@ type DisableTempUnschedSettings struct {
 
 // RectifierSettings 请求整流器配置 DTO
 type RectifierSettings struct {
-	Enabled                  bool     `json:"enabled"`
-	ThinkingSignatureEnabled bool     `json:"thinking_signature_enabled"`
-	ThinkingBudgetEnabled    bool     `json:"thinking_budget_enabled"`
-	APIKeySignatureEnabled   bool     `json:"apikey_signature_enabled"`
-	APIKeySignaturePatterns  []string `json:"apikey_signature_patterns"`
+	Enabled                  bool `json:"enabled"`
+	ThinkingSignatureEnabled bool `json:"thinking_signature_enabled"`
+	ThinkingBudgetEnabled    bool `json:"thinking_budget_enabled"`
+	APIKeySignatureEnabled   bool `json:"apikey_signature_enabled"`
 
 	APIKeySignatureFailoverEnabled bool `json:"apikey_signature_failover_enabled"`
+}
+
+type ErrorHandlingRule struct {
+	ID          string   `json:"id"`
+	Name        string   `json:"name"`
+	StatusCodes []int    `json:"status_codes"`
+	Keywords    []string `json:"keywords"`
+	Action      string   `json:"action"`
+	RetryCount  *int     `json:"retry_count"`
+}
+
+type ErrorHandlingRuleSettings struct {
+	Enabled           bool                `json:"enabled"`
+	DefaultRetryCount int                 `json:"default_retry_count"`
+	Rules             []ErrorHandlingRule `json:"rules"`
 }
 
 // BetaPolicyRule Beta 策略规则 DTO

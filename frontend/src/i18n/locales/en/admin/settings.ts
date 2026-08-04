@@ -1060,14 +1060,38 @@ export default {
           'Automatically strip signatures and retry when API Key accounts receive signature-related errors (built-in patterns always apply)',
         apikeySignatureFailover: 'Switch Account on API Key Signature Error',
         apikeySignatureFailoverHint:
-          'When an API Key account still returns a signature error after the strip-and-retry, automatically switch to another account (same matching rules, including custom patterns)',
-        apikeyPatterns: 'Custom Match Patterns',
-        apikeyPatternsHint:
-          'Additional keywords matched against the response body (case-insensitive). Built-in patterns always apply; use these for supplementary matching.',
-        apikeyPatternPlaceholder: 'e.g., thinking_error',
-        addPattern: 'Add Pattern',
+          'When an API Key account still returns a built-in-pattern signature error after the strip-and-retry, automatically switch to another account. Use "Error Handling Rules" below for custom keywords',
         saved: 'Rectifier settings saved',
         saveFailed: 'Failed to save rectifier settings'
+      },
+      errorHandlingRule: {
+        title: 'Error Handling Rules',
+        description:
+          'Match upstream error responses by status code and/or keyword, then apply the configured action. API Key accounts only. For deterministic errors that reproduce on any account (prompt is too long, max_tokens over limit), prefer "Return to client" so they do not burn the retry budget and drain the account pool.',
+        enabled: 'Enable Error Handling Rules',
+        enabledHint: 'Independent switch, not affected by the "Enable Request Rectifier" master switch',
+        defaultRetryCount: 'Default In-Place Retry Count',
+        defaultRetryCountHint: 'Used when a rule does not set its own; 0 means switch accounts immediately on match; max {max}',
+        namePlaceholder: 'Rule note (optional)',
+        statusCodes: 'Status Codes',
+        keywords: 'Keywords',
+        keywordsPlaceholder: 'One keyword per line; leave empty to not filter by keyword (case-insensitive)',
+        action: 'Action on Match',
+        actionRetry: 'Retry on same account, then fail over',
+        actionFailover: 'Switch account immediately',
+        actionPassthrough: 'Return to client (no retry, no failover)',
+        passthroughWarning:
+          'Note: this action returns the raw upstream error body to the client (the default path hides upstream details for 401/403/429/5xx), and it still returns that body even when the error already disabled the account — no failover happens.',
+        retryCount: 'This Rule\'s Retry Count',
+        retryCountPlaceholder: 'Leave empty to use the default',
+        noRetryForAction: 'This action does not retry on the same account',
+        moveUp: 'Move rule up',
+        moveDown: 'Move rule down',
+        addRule: 'Add Rule',
+        emptyMatcher: 'Rule {index} needs at least one status code or keyword',
+        invalidStatusCode: 'Rule {index} has an invalid status code "{value}"; use integers between 100 and 599',
+        saved: 'Error handling rules saved',
+        saveFailed: 'Failed to save error handling rules'
       },
       betaPolicy: {
         title: 'Beta Policy',
