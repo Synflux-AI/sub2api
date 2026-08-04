@@ -674,6 +674,9 @@ func partialStreamUsageResult(resp *http.Response, streamResult *streamingResult
 		Duration:         time.Since(startTime),
 		FirstTokenMs:     streamResult.firstTokenMs,
 		ClientDisconnect: streamResult.clientDisconnect,
+		// 这条结果是「流没跑完但已经产生了 usage」，照常入账但不能算成功：
+		// 上游截断的账号不该靠它给健康分回血。
+		StreamIncomplete: true,
 	}
 }
 
