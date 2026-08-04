@@ -1108,14 +1108,38 @@ export default {
           '当 API Key 账号的上游返回签名相关错误时，自动去除签名并重试（内置规则始终生效）',
         apikeySignatureFailover: 'API Key 签名错误切换账号',
         apikeySignatureFailoverHint:
-          '当 API Key 账号去签名重试后仍返回签名错误时，自动切换到其他账号重试（匹配规则同上，含自定义关键词）',
-        apikeyPatterns: '自定义匹配关键词',
-        apikeyPatternsHint:
-          '额外的关键词，匹配响应体中的内容（不区分大小写）。内置规则始终生效，此处用于补充额外匹配。',
-        apikeyPatternPlaceholder: '例如：thinking_error 或 签名无效',
-        addPattern: '添加关键词',
+          '当 API Key 账号去签名重试后仍返回内置模式判定的签名错误时，自动切换到其他账号重试。自定义关键词请改用下方的「错误处理规则」',
         saved: '整流器设置保存成功',
         saveFailed: '保存整流器设置失败'
+      },
+      errorHandlingRule: {
+        title: '错误处理规则',
+        description:
+          '按状态码和/或关键字匹配上游错误响应，命中后按配置的动作处理。仅对 API Key 账号生效。换任何账号都会复现的确定性错误（如 prompt is too long、max_tokens 超限），建议配成「直接返回客户端」，避免空耗重试预算直至账号池耗尽。',
+        enabled: '启用错误处理规则',
+        enabledHint: '独立开关，不受「启用请求整流器」总开关影响',
+        defaultRetryCount: '默认原地重试次数',
+        defaultRetryCountHint: '规则未单独配置时使用；0 表示命中即切换账号；最大 {max}',
+        namePlaceholder: '规则备注（选填）',
+        statusCodes: '状态码',
+        keywords: '关键字',
+        keywordsPlaceholder: '每行一个关键字，留空表示不限制（大小写不敏感）',
+        action: '命中后动作',
+        actionRetry: '同账号重试，用尽后换号',
+        actionFailover: '立即切换账号',
+        actionPassthrough: '直接返回客户端（不重试不换号）',
+        passthroughWarning:
+          '注意：该动作会把上游原始错误内容原样返回给客户端（默认逻辑会隐藏 401/403/429/5xx 的上游细节）；即使这次错误已导致账号被禁用，也照样返回原始内容且不换号。',
+        retryCount: '本规则重试次数',
+        retryCountPlaceholder: '留空则用默认值',
+        noRetryForAction: '该动作不做同账号重试，无需配置重试次数',
+        moveUp: '上移规则',
+        moveDown: '下移规则',
+        addRule: '添加规则',
+        emptyMatcher: '第 {index} 条规则至少要填写一个状态码或关键字',
+        invalidStatusCode: '第 {index} 条规则的状态码「{value}」无效，请填写 100–599 之间的整数',
+        saved: '错误处理规则保存成功',
+        saveFailed: '保存错误处理规则失败'
       },
       betaPolicy: {
         title: 'Beta 策略',

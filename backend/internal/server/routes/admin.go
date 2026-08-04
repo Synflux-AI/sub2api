@@ -587,6 +587,9 @@ func registerSettingsRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		// 请求整流器配置
 		adminSettings.GET("/rectifier", h.Admin.Setting.GetRectifierSettings)
 		adminSettings.PUT("/rectifier", h.Admin.Setting.UpdateRectifierSettings)
+		// API Key error handling rules
+		adminSettings.GET("/error-handling-rules", h.Admin.Setting.GetErrorHandlingRuleSettings)
+		adminSettings.PUT("/error-handling-rules", h.Admin.Setting.UpdateErrorHandlingRuleSettings)
 		// Beta 策略配置
 		adminSettings.GET("/beta-policy", h.Admin.Setting.GetBetaPolicySettings)
 		adminSettings.PUT("/beta-policy", h.Admin.Setting.UpdateBetaPolicySettings)

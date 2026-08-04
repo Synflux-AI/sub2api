@@ -172,6 +172,17 @@ func (s *AccountHealthService) RecordUpstreamError(accountID int64, statusCode i
 
 // RecordTimeout 记录一次流超时/网络错误（异步写）。
 func (s *AccountHealthService) RecordTimeout(accountID int64) {
+	s.recordStreamFailure(accountID, "timeout")
+}
+
+// RecordStreamIncomplete 记录一次上游流中断：HTTP 200 但流末缺 terminal 事件。
+// 复用 HealthPenaltyTimeout —— 语义同为「连接/流层面没有正常收尾」，不额外引入配置项；
+// event 标签单独区分，便于在 account_health_updated 日志里看清是哪一类。
+func (s *AccountHealthService) RecordStreamIncomplete(accountID int64) {
+	s.recordStreamFailure(accountID, "stream_incomplete")
+}
+
+func (s *AccountHealthService) recordStreamFailure(accountID int64, event string) {
 	if s == nil || accountID <= 0 || !s.Enabled() {
 		return
 	}
@@ -180,7 +191,7 @@ func (s *AccountHealthService) RecordTimeout(accountID int64) {
 		return
 	}
 	s.markUnhealthy(accountID)
-	s.applyDeltaAsync(accountID, -cfg.HealthPenaltyTimeout, "timeout", 0)
+	s.applyDeltaAsync(accountID, -cfg.HealthPenaltyTimeout, event, 0)
 }
 
 // RecordSuccess 记录一次成功请求（仅带伤账号才写 Redis，健康账号零开销）。

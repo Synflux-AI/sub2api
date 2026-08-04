@@ -116,19 +116,15 @@ func (s *GatewayService) shouldRectifySignatureError(ctx context.Context, accoun
 		if err != nil || !settings.Enabled || !settings.APIKeySignatureEnabled {
 			return false
 		}
-		// 先检查内置模式（同 OAuth），再检查自定义关键词
-		if s.isThinkingBlockSignatureError(respBody) {
-			return true
-		}
-		return matchSignaturePatterns(respBody, settings.APIKeySignaturePatterns)
+		return s.isThinkingBlockSignatureError(respBody)
 	}
 	// OAuth/SetupToken/Upstream/Bedrock 等：保持原有行为（内置模式 + 原开关）
 	return s.isThinkingBlockSignatureError(respBody) && s.settingService.IsSignatureRectifierEnabled(ctx)
 }
 
-// isSignatureFailoverStatus 判断状态码是否在「签名/关键词错误切换账号」的适用范围内。
+// isSignatureFailoverStatus 判断状态码是否在签名错误切换账号的适用范围内。
 // 400 是签名错误的常规状态码；422 是部分 Claude 中转上游在请求体反序列化失败等
-// 场景下返回的状态码，同样允许经内置模式/自定义关键词匹配后切换账号。
+// 场景下返回的状态码，同样允许经内置模式匹配后切换账号。
 func isSignatureFailoverStatus(statusCode int) bool {
 	return statusCode == http.StatusBadRequest || statusCode == http.StatusUnprocessableEntity
 }
@@ -147,44 +143,13 @@ func (s *GatewayService) shouldFailoverSignatureError(ctx context.Context, accou
 	if err != nil || !settings.Enabled || !settings.APIKeySignatureFailoverEnabled {
 		return false
 	}
-	if s.isThinkingBlockSignatureError(respBody) {
-		return true
-	}
-	return matchSignaturePatterns(respBody, settings.APIKeySignaturePatterns)
+	return s.isThinkingBlockSignatureError(respBody)
 }
 
 // isSignatureErrorPattern 仅做模式匹配，不检查开关。
 // 用于已进入重试流程后的二阶段检测（此时开关已在首次调用时验证过）。
-func (s *GatewayService) isSignatureErrorPattern(ctx context.Context, account *Account, respBody []byte) bool {
-	if s.isThinkingBlockSignatureError(respBody) {
-		return true
-	}
-	if account.Type == AccountTypeAPIKey {
-		settings, err := s.settingService.GetRectifierSettings(ctx)
-		if err != nil {
-			return false
-		}
-		return matchSignaturePatterns(respBody, settings.APIKeySignaturePatterns)
-	}
-	return false
-}
-
-// matchSignaturePatterns 检查响应体是否匹配自定义关键词列表（不区分大小写）。
-func matchSignaturePatterns(respBody []byte, patterns []string) bool {
-	if len(patterns) == 0 {
-		return false
-	}
-	bodyLower := strings.ToLower(string(respBody))
-	for _, p := range patterns {
-		p = strings.TrimSpace(p)
-		if p == "" {
-			continue
-		}
-		if strings.Contains(bodyLower, strings.ToLower(p)) {
-			return true
-		}
-	}
-	return false
+func (s *GatewayService) isSignatureErrorPattern(_ context.Context, _ *Account, respBody []byte) bool {
+	return s.isThinkingBlockSignatureError(respBody)
 }
 
 // isThinkingBlockSignatureError 检测是否是thinking block相关错误
@@ -709,6 +674,9 @@ func partialStreamUsageResult(resp *http.Response, streamResult *streamingResult
 		Duration:         time.Since(startTime),
 		FirstTokenMs:     streamResult.firstTokenMs,
 		ClientDisconnect: streamResult.clientDisconnect,
+		// 这条结果是「流没跑完但已经产生了 usage」，照常入账但不能算成功：
+		// 上游截断的账号不该靠它给健康分回血。
+		StreamIncomplete: true,
 	}
 }
 

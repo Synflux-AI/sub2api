@@ -363,6 +363,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 	var resp *http.Response
 	lastWireBody := body
 	retryStart := time.Now()
+	var errorRuleTracker errorHandlingRuleTracker
 	for attempt := 1; attempt <= maxRetryAttempts; attempt++ {
 		// 构建上游请求（每次重试需要重新构建，因为请求体需要重新读取）
 		upstreamCtx, releaseUpstreamCtx := detachStreamUpstreamContext(ctx, reqStream)
@@ -539,6 +540,18 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 								Header:     retryResp.Header.Clone(),
 								Body:       io.NopCloser(bytes.NewReader(retryRespBody)),
 							}
+							if s.errorHandlingRulesActive(ctx, account) {
+								// 原 body 已在上面 readUpstreamErrorBody 后关闭，这里的
+								// resp.Body 是新建的 NopCloser，无需再 Close。
+								outcome, result, ruleErr := s.applyErrorHandlingRule(ctx, c, &errorRuleTracker, account, resp, retryRespBody, reqModel, attempt, retryStart, false)
+								switch outcome {
+								case errorHandlingRuleOutcomeDone:
+									return result, ruleErr
+								case errorHandlingRuleOutcomeRetry:
+									continue
+								}
+								resp.Body = io.NopCloser(bytes.NewReader(retryRespBody))
+							}
 							break
 						}
 						if retryResp != nil && retryResp.Body != nil {
@@ -551,6 +564,17 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 
 					// Retry failed: restore original response body and continue handling.
 					resp.Body = io.NopCloser(bytes.NewReader(respBody))
+					if s.errorHandlingRulesActive(ctx, account) {
+						// 原 body 已在进入 400 分支时关闭，这里的 resp.Body 是新建的 NopCloser。
+						outcome, result, ruleErr := s.applyErrorHandlingRule(ctx, c, &errorRuleTracker, account, resp, respBody, reqModel, attempt, retryStart, false)
+						switch outcome {
+						case errorHandlingRuleOutcomeDone:
+							return result, ruleErr
+						case errorHandlingRuleOutcomeRetry:
+							continue
+						}
+						resp.Body = io.NopCloser(bytes.NewReader(respBody))
+					}
 					break
 				}
 				// 不是签名错误（或整流器已关闭），继续检查 budget 约束
@@ -605,6 +629,38 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 				}
 
 				resp.Body = io.NopCloser(bytes.NewReader(respBody))
+				if s.errorHandlingRulesActive(ctx, account) {
+					// 原 body 已在进入 400 分支时关闭，这里的 resp.Body 是新建的 NopCloser。
+					outcome, result, ruleErr := s.applyErrorHandlingRule(ctx, c, &errorRuleTracker, account, resp, respBody, reqModel, attempt, retryStart, false)
+					switch outcome {
+					case errorHandlingRuleOutcomeDone:
+						return result, ruleErr
+					case errorHandlingRuleOutcomeRetry:
+						continue
+					}
+					resp.Body = io.NopCloser(bytes.NewReader(respBody))
+				}
+			}
+		}
+
+		// The configurable rules are an extra priority layer before the existing
+		// hard-coded retry/failover table. Check activation before reading up to 512KB.
+		if resp.StatusCode > 400 && s.errorHandlingRulesActive(ctx, account) {
+			ruleRespBody, readErr := s.readUpstreamErrorBody(resp)
+			if readErr == nil {
+				_ = resp.Body.Close()
+				outcome, result, ruleErr := s.applyErrorHandlingRule(ctx, c, &errorRuleTracker, account, resp, ruleRespBody, reqModel, attempt, retryStart, false)
+				switch outcome {
+				case errorHandlingRuleOutcomeDone:
+					return result, ruleErr
+				case errorHandlingRuleOutcomeRetry:
+					continue
+				}
+				resp.Body = io.NopCloser(bytes.NewReader(ruleRespBody))
+			} else {
+				// The rule layer must not leave the existing fallback with a consumed body.
+				_ = resp.Body.Close()
+				resp.Body = io.NopCloser(bytes.NewReader(ruleRespBody))
 			}
 		}
 
@@ -668,6 +724,25 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 		return nil, errors.New("upstream request failed: empty response")
 	}
 	defer func() { _ = resp.Body.Close() }()
+
+	// 循环内的接入点覆盖不到从 400 分支内部 break 出来的几条路径：重试预算耗尽
+	// （上面的 time.Since(retryStart) >= maxRetryElapsed）、工具块降级重试的应答、
+	// budget 整流重试的应答——后两者还可能带回任意状态码。这里兜住它们，
+	// 已在循环内评估过的响应靠 tracker 里的指针跳过，不重复匹配。
+	//
+	// 此处不可能再原地重试（循环已经结束），传 maxRetryAttempts 让 retry 动作
+	// 按既定语义降级为换号。
+	if resp.StatusCode >= 400 && !errorRuleTracker.alreadyEvaluated(resp) && s.errorHandlingRulesActive(ctx, account) {
+		ruleRespBody, readErr := s.readUpstreamErrorBody(resp)
+		_ = resp.Body.Close()
+		resp.Body = io.NopCloser(bytes.NewReader(ruleRespBody))
+		if readErr == nil {
+			outcome, result, ruleErr := s.applyErrorHandlingRule(ctx, c, &errorRuleTracker, account, resp, ruleRespBody, reqModel, maxRetryAttempts, retryStart, false)
+			if outcome == errorHandlingRuleOutcomeDone {
+				return result, ruleErr
+			}
+		}
+	}
 
 	// 处理重试耗尽的情况
 	if resp.StatusCode >= 400 && s.shouldRetryUpstreamError(account, resp.StatusCode) {
@@ -740,7 +815,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 		// 签名错误切换账号：同账号去签名重试仍是签名 400 时（重试发生在上面的 for 循环内），
 		// 若开启「API Key 签名错误切换账号」，包装成 UpstreamFailoverError 触发 failover 换号。
 		// 422 同样参与判定：部分中转上游对请求体反序列化失败返回 422（无对应的去签名
-		// 重试，命中内置模式/自定义关键词后直接切号）。
+		// 重试，命中内置模式后直接切号）。
 		if isSignatureFailoverStatus(resp.StatusCode) {
 			respBody, readErr := s.readUpstreamErrorBody(resp)
 			if readErr == nil {

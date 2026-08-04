@@ -1,11 +1,13 @@
 package admin
 
 import (
+	"errors"
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/google/uuid"
 
 	"github.com/gin-gonic/gin"
 )
@@ -306,27 +308,21 @@ func (h *SettingHandler) GetRectifierSettings(c *gin.Context) {
 		return
 	}
 
-	patterns := settings.APIKeySignaturePatterns
-	if patterns == nil {
-		patterns = []string{}
-	}
 	response.Success(c, dto.RectifierSettings{
 		Enabled:                        settings.Enabled,
 		ThinkingSignatureEnabled:       settings.ThinkingSignatureEnabled,
 		ThinkingBudgetEnabled:          settings.ThinkingBudgetEnabled,
 		APIKeySignatureEnabled:         settings.APIKeySignatureEnabled,
-		APIKeySignaturePatterns:        patterns,
 		APIKeySignatureFailoverEnabled: settings.APIKeySignatureFailoverEnabled,
 	})
 }
 
 // UpdateRectifierSettingsRequest 更新整流器配置请求
 type UpdateRectifierSettingsRequest struct {
-	Enabled                  bool     `json:"enabled"`
-	ThinkingSignatureEnabled bool     `json:"thinking_signature_enabled"`
-	ThinkingBudgetEnabled    bool     `json:"thinking_budget_enabled"`
-	APIKeySignatureEnabled   bool     `json:"apikey_signature_enabled"`
-	APIKeySignaturePatterns  []string `json:"apikey_signature_patterns"`
+	Enabled                  bool `json:"enabled"`
+	ThinkingSignatureEnabled bool `json:"thinking_signature_enabled"`
+	ThinkingBudgetEnabled    bool `json:"thinking_budget_enabled"`
+	APIKeySignatureEnabled   bool `json:"apikey_signature_enabled"`
 
 	APIKeySignatureFailoverEnabled bool `json:"apikey_signature_failover_enabled"`
 }
@@ -340,32 +336,11 @@ func (h *SettingHandler) UpdateRectifierSettings(c *gin.Context) {
 		return
 	}
 
-	// 校验并清理自定义匹配关键词
-	const maxPatterns = 50
-	const maxPatternLen = 500
-	if len(req.APIKeySignaturePatterns) > maxPatterns {
-		response.BadRequest(c, "Too many signature patterns (max 50)")
-		return
-	}
-	var cleanedPatterns []string
-	for _, p := range req.APIKeySignaturePatterns {
-		p = strings.TrimSpace(p)
-		if p == "" {
-			continue
-		}
-		if len(p) > maxPatternLen {
-			response.BadRequest(c, "Signature pattern too long (max 500 characters)")
-			return
-		}
-		cleanedPatterns = append(cleanedPatterns, p)
-	}
-
 	settings := &service.RectifierSettings{
 		Enabled:                        req.Enabled,
 		ThinkingSignatureEnabled:       req.ThinkingSignatureEnabled,
 		ThinkingBudgetEnabled:          req.ThinkingBudgetEnabled,
 		APIKeySignatureEnabled:         req.APIKeySignatureEnabled,
-		APIKeySignaturePatterns:        cleanedPatterns,
 		APIKeySignatureFailoverEnabled: req.APIKeySignatureFailoverEnabled,
 	}
 
@@ -381,17 +356,92 @@ func (h *SettingHandler) UpdateRectifierSettings(c *gin.Context) {
 		return
 	}
 
-	updatedPatterns := updatedSettings.APIKeySignaturePatterns
-	if updatedPatterns == nil {
-		updatedPatterns = []string{}
-	}
 	response.Success(c, dto.RectifierSettings{
 		Enabled:                        updatedSettings.Enabled,
 		ThinkingSignatureEnabled:       updatedSettings.ThinkingSignatureEnabled,
 		ThinkingBudgetEnabled:          updatedSettings.ThinkingBudgetEnabled,
 		APIKeySignatureEnabled:         updatedSettings.APIKeySignatureEnabled,
-		APIKeySignaturePatterns:        updatedPatterns,
 		APIKeySignatureFailoverEnabled: updatedSettings.APIKeySignatureFailoverEnabled,
+	})
+}
+
+func toDTOErrorHandlingRules(rules []service.ErrorHandlingRule) []dto.ErrorHandlingRule {
+	out := make([]dto.ErrorHandlingRule, len(rules))
+	for i, rule := range rules {
+		out[i] = dto.ErrorHandlingRule{
+			ID: rule.ID, Name: rule.Name, StatusCodes: rule.StatusCodes, Keywords: rule.Keywords,
+			Action: rule.Action, RetryCount: rule.RetryCount,
+		}
+	}
+	return out
+}
+
+// GetErrorHandlingRuleSettings returns the API Key error handling rules.
+func (h *SettingHandler) GetErrorHandlingRuleSettings(c *gin.Context) {
+	settings, err := h.settingService.GetErrorHandlingRuleSettings(c.Request.Context())
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, dto.ErrorHandlingRuleSettings{
+		Enabled: settings.Enabled, DefaultRetryCount: settings.DefaultRetryCount,
+		Rules: toDTOErrorHandlingRules(settings.Rules),
+	})
+}
+
+type UpdateErrorHandlingRuleSettingsRequest struct {
+	Enabled           bool                    `json:"enabled"`
+	DefaultRetryCount int                     `json:"default_retry_count"`
+	Rules             []dto.ErrorHandlingRule `json:"rules"`
+}
+
+// UpdateErrorHandlingRuleSettings validates and persists the API Key error handling rules.
+func (h *SettingHandler) UpdateErrorHandlingRuleSettings(c *gin.Context) {
+	var req UpdateErrorHandlingRuleSettingsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+
+	rules := make([]service.ErrorHandlingRule, len(req.Rules))
+	for i, rule := range req.Rules {
+		id := strings.TrimSpace(rule.ID)
+		if id == "" {
+			id = uuid.New().String()
+		}
+		keywords := make([]string, 0, len(rule.Keywords))
+		for _, keyword := range rule.Keywords {
+			if keyword = strings.TrimSpace(keyword); keyword != "" {
+				keywords = append(keywords, keyword)
+			}
+		}
+		rules[i] = service.ErrorHandlingRule{
+			ID: id, Name: strings.TrimSpace(rule.Name), StatusCodes: rule.StatusCodes,
+			Keywords: keywords, Action: rule.Action, RetryCount: rule.RetryCount,
+		}
+	}
+
+	settings := &service.ErrorHandlingRuleSettings{
+		Enabled: req.Enabled, DefaultRetryCount: req.DefaultRetryCount, Rules: rules,
+	}
+	if err := h.settingService.SetErrorHandlingRuleSettings(c.Request.Context(), settings); err != nil {
+		// 只有「管理员填错了」才是 400，且保留可读的规则定位信息；仓储写入失败等
+		// 服务端故障走 ErrorFrom，返回 5xx 且不把内部错误文本回显给客户端。
+		if errors.Is(err, service.ErrErrorHandlingRuleSettingsInvalid) {
+			response.BadRequest(c, err.Error())
+			return
+		}
+		response.ErrorFrom(c, err)
+		return
+	}
+	updated, err := h.settingService.GetErrorHandlingRuleSettings(c.Request.Context())
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, dto.ErrorHandlingRuleSettings{
+		Enabled: updated.Enabled, DefaultRetryCount: updated.DefaultRetryCount,
+		Rules: toDTOErrorHandlingRules(updated.Rules),
 	})
 }
 

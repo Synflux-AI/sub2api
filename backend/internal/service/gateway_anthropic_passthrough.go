@@ -94,6 +94,7 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 
 	var resp *http.Response
 	retryStart := time.Now()
+	var errorRuleTracker errorHandlingRuleTracker
 	for attempt := 1; attempt <= maxRetryAttempts; attempt++ {
 		upstreamCtx, releaseUpstreamCtx := detachStreamUpstreamContext(ctx, input.RequestStream)
 		upstreamReq, wireBody, err := s.buildUpstreamRequestAnthropicAPIKeyPassthrough(upstreamCtx, c, account, input.Body, token)
@@ -138,6 +139,27 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 				},
 			})
 			return nil, fmt.Errorf("upstream request failed: %s", safeErr)
+		}
+
+		// Rules take priority over the passthrough path's existing status table.
+		// Retry resends input.Body unchanged; activation is checked before reading the body.
+		if resp.StatusCode >= 400 && s.errorHandlingRulesActive(ctx, account) {
+			ruleRespBody, readErr := s.readUpstreamErrorBody(resp)
+			if readErr == nil {
+				_ = resp.Body.Close()
+				outcome, result, ruleErr := s.applyErrorHandlingRule(ctx, c, &errorRuleTracker, account, resp, ruleRespBody, input.RequestModel, attempt, retryStart, true)
+				switch outcome {
+				case errorHandlingRuleOutcomeDone:
+					return result, ruleErr
+				case errorHandlingRuleOutcomeRetry:
+					continue
+				}
+				resp.Body = io.NopCloser(bytes.NewReader(ruleRespBody))
+			} else {
+				// Preserve the partial body for the existing fallback when upstream reading fails.
+				_ = resp.Body.Close()
+				resp.Body = io.NopCloser(bytes.NewReader(ruleRespBody))
+			}
 		}
 
 		// 透传分支禁止 400 请求体降级重试（该重试会改写请求体）

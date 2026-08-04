@@ -82,6 +82,32 @@ type postUsageBillingParams struct {
 	AccountRateMultiplier float64
 	APIKeyService         APIKeyQuotaUpdater
 	Platform              string // 来自 APIKey 关联 Group 的平台标识
+	// HealthOutcome 本次请求给账号健康分的结论。零值＝成功，未显式设置的调用方
+	// 保持原有「记一次成功」的语义。
+	HealthOutcome accountHealthOutcome
+}
+
+// accountHealthOutcome 描述一次已完成计费的请求应当如何影响账号健康分。
+type accountHealthOutcome int
+
+const (
+	// accountHealthOutcomeSuccess 完整成功：带伤账号回血。
+	accountHealthOutcomeSuccess accountHealthOutcome = iota
+	// accountHealthOutcomeNeutral 既不回血也不扣分（如客户端主动断开）。
+	accountHealthOutcomeNeutral
+	// accountHealthOutcomeStreamIncomplete 上游流没有正常收尾：按流中断扣分。
+	accountHealthOutcomeStreamIncomplete
+)
+
+// healthOutcomeForForwardResult 把一次转发结果翻译成健康分结论。
+func healthOutcomeForForwardResult(result *ForwardResult) accountHealthOutcome {
+	if result == nil || !result.StreamIncomplete {
+		return accountHealthOutcomeSuccess
+	}
+	if result.ClientDisconnect {
+		return accountHealthOutcomeNeutral
+	}
+	return accountHealthOutcomeStreamIncomplete
 }
 
 // PlatformFromAPIKey 从 APIKey 关联的 Group 推导 platform 名称。
@@ -311,7 +337,7 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 
 	if result == nil || !result.Applied {
 		deps.deferredService.ScheduleLastUsedUpdate(p.Account.ID)
-		deps.recordAccountHealthSuccess(p.Account.ID)
+		deps.recordAccountHealthOutcome(p.Account.ID, p.HealthOutcome)
 		return false, nil
 	}
 
@@ -343,7 +369,7 @@ func finalizePostUsageBilling(ctx context.Context, p *postUsageBillingParams, de
 	}
 
 	deps.deferredService.ScheduleLastUsedUpdate(p.Account.ID)
-	deps.recordAccountHealthSuccess(p.Account.ID)
+	deps.recordAccountHealthOutcome(p.Account.ID, p.HealthOutcome)
 
 	// Platform quota 累加：仅在 standard（余额）模式生效；订阅模式豁免；仅对有 limit 的用户写
 	// Redis 同步写 + DB 异步持久化（flag=false 降级）或 flusher 异步刷（flag=true）:
@@ -513,12 +539,23 @@ type billingDeps struct {
 	healthService         *AccountHealthService
 }
 
-// recordAccountHealthSuccess 成功请求的健康分回升（仅带伤账号会写 Redis）
-func (d *billingDeps) recordAccountHealthSuccess(accountID int64) {
+// recordAccountHealthOutcome 按本次请求的结论更新账号健康分。
+//
+// 之所以要分三态：流中断（缺 terminal 事件等）会带着已观测到的 usage 和错误一起
+// 走完计费管线，如果沿用「进到这里就是成功」的旧假设，截断流反而会给带伤账号回血，
+// 调度器只会更偏向这个坏账号。
+func (d *billingDeps) recordAccountHealthOutcome(accountID int64, outcome accountHealthOutcome) {
 	if d == nil || d.healthService == nil {
 		return
 	}
-	d.healthService.RecordSuccess(accountID)
+	switch outcome {
+	case accountHealthOutcomeSuccess:
+		d.healthService.RecordSuccess(accountID)
+	case accountHealthOutcomeStreamIncomplete:
+		d.healthService.RecordStreamIncomplete(accountID)
+	case accountHealthOutcomeNeutral:
+		// 客户端主动断开：账号无过错，不扣分；但也不是一次完整成功，不回血。
+	}
 }
 
 func (s *GatewayService) billingDeps() *billingDeps {
@@ -780,7 +817,7 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 		writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.gateway")
 		logger.LegacyPrintf("service.gateway", "[SIMPLE MODE] Usage recorded (not billed): user=%d, tokens=%d", usageLog.UserID, usageLog.TotalTokens())
 		s.deferredService.ScheduleLastUsedUpdate(account.ID)
-		s.rateLimitService.HealthService().RecordSuccess(account.ID)
+		s.billingDeps().recordAccountHealthOutcome(account.ID, healthOutcomeForForwardResult(result))
 		return nil
 	}
 
@@ -806,6 +843,7 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 		AccountRateMultiplier: accountRateMultiplier,
 		APIKeyService:         input.APIKeyService,
 		Platform:              quotaPlatform,
+		HealthOutcome:         healthOutcomeForForwardResult(result),
 	}, s.billingDeps(), s.usageBillingRepo)
 
 	if billingErr != nil {

@@ -581,6 +581,10 @@ type ForwardResult struct {
 	Duration         time.Duration
 	FirstTokenMs     *int // 首字时间（流式请求）
 	ClientDisconnect bool // 客户端是否在流式传输过程中断开
+	// StreamIncomplete 表示流没有正常收尾（缺 terminal 事件、读错误、数据间隔超时等）。
+	// 这种结果带着「已观测到的 usage」和错误一起返回，照常入账；但它不是一次成功的
+	// 请求，不能给账号健康分回血（见 healthOutcomeForForwardResult）。
+	StreamIncomplete bool
 	ReasoningEffort  *string
 
 	// 图片生成计费字段（图片生成模型使用）
