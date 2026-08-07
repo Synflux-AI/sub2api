@@ -80,6 +80,12 @@ func applyOpsErrorSortParams(c *gin.Context, filter *service.OpsErrorLogFilter) 
 	filter.SetSort(c.Query("sort_by"), c.Query("sort_order"))
 }
 
+func applyOpsErrorCorrelationParams(c *gin.Context, filter *service.OpsErrorLogFilter) {
+	filter.TraceID = strings.TrimSpace(c.Query("trace_id"))
+	filter.RequestID = strings.TrimSpace(c.Query("request_id"))
+	filter.ClientRequestID = strings.TrimSpace(c.Query("client_request_id"))
+}
+
 // GET /api/v1/admin/ops/errors
 func (h *OpsHandler) GetErrorLogs(c *gin.Context) {
 	if h.opsService == nil {
@@ -117,6 +123,7 @@ func (h *OpsHandler) GetErrorLogs(c *gin.Context) {
 	filter.Source = strings.TrimSpace(c.Query("error_source"))
 	filter.Query = strings.TrimSpace(c.Query("q"))
 	filter.UserQuery = strings.TrimSpace(c.Query("user_query"))
+	applyOpsErrorCorrelationParams(c, filter)
 	// error_type 单值过滤（错误维度排行下钻「错误类型」用）：复用 ErrorTypesAny 的 ANY() 子句。
 	if et := strings.TrimSpace(c.Query("error_type")); et != "" {
 		filter.ErrorTypesAny = []string{et}
@@ -250,6 +257,7 @@ func (h *OpsHandler) ListRequestErrors(c *gin.Context) {
 	filter.Source = strings.TrimSpace(c.Query("error_source"))
 	filter.Query = strings.TrimSpace(c.Query("q"))
 	filter.UserQuery = strings.TrimSpace(c.Query("user_query"))
+	applyOpsErrorCorrelationParams(c, filter)
 	// error_type 单值过滤（错误维度排行下钻「错误类型」用）：复用 ErrorTypesAny 的 ANY() 子句。
 	if et := strings.TrimSpace(c.Query("error_type")); et != "" {
 		filter.ErrorTypesAny = []string{et}
@@ -365,10 +373,11 @@ func (h *OpsHandler) ListRequestErrorUpstreamErrors(c *gin.Context) {
 		return
 	}
 
-	// Correlate by request_id/client_request_id.
+	// Prefer trace_id so a request can be followed across relay instances.
+	traceID := strings.TrimSpace(detail.TraceID)
 	requestID := strings.TrimSpace(detail.RequestID)
 	clientRequestID := strings.TrimSpace(detail.ClientRequestID)
-	if requestID == "" && clientRequestID == "" {
+	if traceID == "" && requestID == "" && clientRequestID == "" {
 		response.Paginated(c, []*service.OpsErrorLog{}, 0, 1, 10)
 		return
 	}
@@ -405,8 +414,9 @@ func (h *OpsHandler) ListRequestErrorUpstreamErrors(c *gin.Context) {
 		filter.Platform = platform
 	}
 
-	// Prefer exact match on request_id; if missing, fall back to client_request_id.
-	if requestID != "" {
+	if traceID != "" {
+		filter.TraceID = traceID
+	} else if requestID != "" {
 		filter.RequestID = requestID
 	} else {
 		filter.ClientRequestID = clientRequestID
@@ -485,6 +495,7 @@ func (h *OpsHandler) ListUpstreamErrors(c *gin.Context) {
 	filter.Source = strings.TrimSpace(c.Query("error_source"))
 	filter.Query = strings.TrimSpace(c.Query("q"))
 	filter.UserQuery = strings.TrimSpace(c.Query("user_query"))
+	applyOpsErrorCorrelationParams(c, filter)
 
 	if platform := strings.TrimSpace(c.Query("platform")); platform != "" {
 		filter.Platform = platform

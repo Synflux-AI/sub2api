@@ -113,10 +113,10 @@ func emitOpsErrorBusinessEvent(ctx context.Context, entry *service.OpsInsertErro
 	appendInt64Ptr(&fields, "response_latency_ms", entry.ResponseLatencyMs)
 	appendInt64Ptr(&fields, "time_to_first_token_ms", entry.TimeToFirstTokenMs)
 
-	// entry.RequestID / entry.ClientRequestID are intentionally absent: the
-	// handler reads both straight off the request context, so the envelope's
-	// request_id / client_request_id already carry the same values. Emitting
-	// them again would duplicate keys. (usage_logs.request_id is different — it
+	// entry.TraceID / entry.RequestID / entry.ClientRequestID are intentionally
+	// absent: the handler reads them straight off the request context, so the
+	// envelope already carries the same values. Emitting them again would
+	// duplicate keys. (usage_logs.request_id is different — it
 	// is a billing/idempotency key, and the usage projection renames it to
 	// usage_request_id.)
 	logger.EmitBusinessEvent(ctx, logger.BusinessEventKindErrorLog, fields...)

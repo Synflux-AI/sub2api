@@ -32,6 +32,7 @@ func TestGetErrorLogByID_APIKeyPrefixAndUpstreamStatus(t *testing.T) {
 	require.Empty(t, plain.APIKeyPrefix)
 
 	validID, err := repo.InsertErrorLog(ctx, &service.OpsInsertErrorLogInput{
+		TraceID:      "trace-error-123",
 		ErrorPhase:   "request",
 		ErrorType:    "api_error",
 		Severity:     "error",
@@ -44,6 +45,7 @@ func TestGetErrorLogByID_APIKeyPrefixAndUpstreamStatus(t *testing.T) {
 	valid, err := repo.GetErrorLogByID(ctx, validID)
 	require.NoError(t, err)
 	require.Equal(t, "sk-valid", valid.APIKeyPrefix)
+	require.Equal(t, "trace-error-123", valid.TraceID)
 
 	zero := 0
 	credentialFailureID, err := repo.InsertErrorLog(ctx, &service.OpsInsertErrorLogInput{

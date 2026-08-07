@@ -925,6 +925,7 @@ export interface OpsErrorLog {
 
   client_request_id: string
   request_id: string
+  trace_id: string
   message: string
 
   user_id?: number | null
@@ -1126,6 +1127,9 @@ export type OpsErrorListQueryParams = {
   error_source?: string
   resolved?: string
   view?: OpsErrorListView
+  trace_id?: string
+  request_id?: string
+  client_request_id?: string
 
   q?: string
   user_query?: string

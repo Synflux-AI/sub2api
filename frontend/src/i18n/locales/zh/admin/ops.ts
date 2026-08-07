@@ -257,6 +257,7 @@ export default {
         accountId: '账号 ID',
         status: '状态码',
         message: '响应内容',
+        traceId: 'Trace ID',
         ip: 'IP',
         latency: '请求时长',
         clientIp: '客户端 IP',
@@ -304,7 +305,7 @@ export default {
           internal: '内部'
         },
         total: '总计：',
-        searchPlaceholder: '搜索 request_id / client_request_id / message',
+        searchPlaceholder: '搜索 trace_id / request_id / client_request_id / message',
         userSearchPlaceholder: '按用户邮箱筛选'
       },
       // Error Detail Modal
@@ -342,6 +343,7 @@ export default {
         },
         loading: '加载中…',
         requestId: '请求 ID',
+        traceId: 'Trace ID',
         time: '时间',
         phase: '阶段',
         status: '状态码',
