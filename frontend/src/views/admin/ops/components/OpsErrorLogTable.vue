@@ -131,6 +131,15 @@
           <span v-else class="text-sm text-gray-400 dark:text-gray-500">-</span>
         </template>
 
+        <template #cell-trace_id="{ row }">
+          <span
+            v-if="row.trace_id"
+            class="block max-w-[220px] truncate font-mono text-xs text-gray-600 dark:text-gray-400"
+            :title="row.trace_id"
+          >{{ row.trace_id }}</span>
+          <span v-else class="text-sm text-gray-400 dark:text-gray-500">-</span>
+        </template>
+
         <template #cell-user_agent="{ row }">
           <span
             v-if="row.user_agent"
@@ -208,6 +217,7 @@ const allColumns = computed<Column[]>(() => [
   { key: 'category', label: t('usage.errors.category') },
   { key: 'status', label: t('admin.ops.errorLog.status'), sortable: true },
   { key: 'message', label: t('admin.ops.errorLog.message') },
+  { key: 'trace_id', label: t('admin.ops.errorLog.traceId') },
   { key: 'created_at', label: t('admin.ops.errorLog.time'), sortable: true },
   { key: 'user_agent', label: t('usage.userAgent') },
   { key: 'client_ip', label: t('admin.ops.errorLog.ip') },

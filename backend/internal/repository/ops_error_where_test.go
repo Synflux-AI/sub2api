@@ -7,6 +7,21 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
+func TestBuildOpsErrorLogsWhere_TraceIDFilters(t *testing.T) {
+	filter := &service.OpsErrorLogFilter{TraceID: "trace-123", Query: "trace"}
+	where, args := buildOpsErrorLogsWhere(filter)
+
+	if !strings.Contains(where, "e.trace_id = $") {
+		t.Fatalf("where missing exact trace_id filter: %s", where)
+	}
+	if !strings.Contains(where, "e.trace_id ILIKE $") {
+		t.Fatalf("where query does not search trace_id: %s", where)
+	}
+	if len(args) != 2 || args[0] != "trace-123" || args[1] != "%trace%" {
+		t.Fatalf("unexpected args: %v", args)
+	}
+}
+
 func TestBuildOpsErrorLogsWhere_UserScopedFilters(t *testing.T) {
 	uid := int64(42)
 	kid := int64(7)

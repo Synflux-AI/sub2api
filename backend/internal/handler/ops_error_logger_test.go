@@ -9,6 +9,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
@@ -219,6 +220,18 @@ func TestEnqueueOpsErrorLog_SanitizesAndBoundsBodyBeforeQueue(t *testing.T) {
 	require.LessOrEqual(t, len(job.entry.ErrorBody), service.OpsErrorLogQueueBodyMaxBytes)
 	require.NotContains(t, job.entry.ErrorBody, secret)
 	require.Equal(t, int64(1), OpsErrorLogSanitizedTotal())
+}
+
+func TestEnqueueOpsErrorLog_CopiesTraceIDFromContext(t *testing.T) {
+	setupOpsErrorLogTestQueue(t, 1)
+	ops := service.NewOpsService(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	entry := &service.OpsInsertErrorLogInput{ErrorPhase: "upstream", ErrorType: "upstream_error"}
+	ctx := context.WithValue(context.Background(), ctxkey.TraceID, "  trace-error-123  ")
+
+	enqueueOpsErrorLog(ctx, ops, entry)
+	job := <-opsErrorLogQueue
+
+	require.Equal(t, "trace-error-123", job.entry.TraceID)
 }
 
 func TestOpsErrorLoggerMiddleware_DoesNotBreakOuterMiddlewares(t *testing.T) {

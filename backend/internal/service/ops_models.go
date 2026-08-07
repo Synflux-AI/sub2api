@@ -50,6 +50,7 @@ type OpsErrorLog struct {
 
 	ClientRequestID string `json:"client_request_id"`
 	RequestID       string `json:"request_id"`
+	TraceID         string `json:"trace_id"`
 	Message         string `json:"message"`
 
 	UserID      *int64 `json:"user_id"`
@@ -122,6 +123,7 @@ type OpsErrorLogFilter struct {
 	// Optional correlation keys for exact matching.
 	RequestID       string
 	ClientRequestID string
+	TraceID         string
 
 	// User-scoped filters (used by the user-facing error requests endpoint and
 	// by admin drill-down from the usage page).

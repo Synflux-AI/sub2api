@@ -31,6 +31,7 @@ function mountTable(row: Partial<OpsErrorLog>) {
     resolved: false,
     client_request_id: '',
     request_id: 'req-1',
+    trace_id: 'trace-error-123',
     message: 'boom',
     user_email: '',
     account_name: '',
@@ -72,6 +73,14 @@ describe('OpsErrorLogTable user/api-key/account columns', () => {
 
     expect(wrapper.text()).toContain('old-key')
     expect(wrapper.text()).toContain('admin.ops.errorLog.keyDeletedBadge')
+  })
+})
+
+describe('OpsErrorLogTable trace id column', () => {
+  it('renders the persisted trace id', () => {
+    const wrapper = mountTable({ trace_id: 'trace-visible-123' })
+
+    expect(wrapper.text()).toContain('trace-visible-123')
   })
 })
 

@@ -20,6 +20,7 @@ const insertOpsErrorLogSQL = `
 INSERT INTO ops_error_logs (
   request_id,
   client_request_id,
+  trace_id,
   user_id,
   api_key_id,
   account_id,
@@ -57,7 +58,7 @@ INSERT INTO ops_error_logs (
   created_at,
   api_key_prefix
 ) VALUES (
-  $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38
+  $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39
 )`
 
 func NewOpsRepository(db *sql.DB) service.OpsRepository {
@@ -131,6 +132,7 @@ func opsInsertErrorLogArgs(input *service.OpsInsertErrorLogInput) []any {
 	return []any{
 		opsNullString(input.RequestID),
 		opsNullString(input.ClientRequestID),
+		opsNullString(input.TraceID),
 		opsNullInt64(input.UserID),
 		opsNullInt64(input.APIKeyID),
 		opsNullInt64(input.AccountID),
@@ -249,6 +251,7 @@ SELECT
   COALESCE(u2.email, ''),
   COALESCE(e.client_request_id, ''),
   COALESCE(e.request_id, ''),
+  COALESCE(e.trace_id, ''),
   COALESCE(e.error_message, ''),
   e.user_id,
   COALESCE(u.email, ''),
@@ -320,6 +323,7 @@ LIMIT $` + itoa(len(args)+1) + ` OFFSET $` + itoa(len(args)+2)
 			&resolvedByName,
 			&item.ClientRequestID,
 			&item.RequestID,
+			&item.TraceID,
 			&item.Message,
 			&userID,
 			&userEmail,
@@ -421,6 +425,7 @@ SELECT
   e.resolved_by_user_id,
   COALESCE(e.client_request_id, ''),
   COALESCE(e.request_id, ''),
+  COALESCE(e.trace_id, ''),
   COALESCE(e.error_message, ''),
   COALESCE(e.error_body, ''),
   e.upstream_status_code,
@@ -496,6 +501,7 @@ LIMIT 1`
 		&resolvedBy,
 		&out.ClientRequestID,
 		&out.RequestID,
+		&out.TraceID,
 		&out.Message,
 		&out.ErrorBody,
 		&upstreamStatusCode,
@@ -998,12 +1004,16 @@ func buildOpsErrorLogsWhere(filter *service.OpsErrorLogFilter) (string, []any) {
 		args = append(args, crid)
 		clauses = append(clauses, "COALESCE(e.client_request_id,'') = $"+itoa(len(args)))
 	}
+	if traceID := strings.TrimSpace(filter.TraceID); traceID != "" {
+		args = append(args, traceID)
+		clauses = append(clauses, "e.trace_id = $"+itoa(len(args)))
+	}
 
 	if q := strings.TrimSpace(filter.Query); q != "" {
 		like := "%" + q + "%"
 		args = append(args, like)
 		n := itoa(len(args))
-		clauses = append(clauses, "(e.request_id ILIKE $"+n+" OR e.client_request_id ILIKE $"+n+" OR e.error_message ILIKE $"+n+")")
+		clauses = append(clauses, "(e.request_id ILIKE $"+n+" OR e.client_request_id ILIKE $"+n+" OR e.trace_id ILIKE $"+n+" OR e.error_message ILIKE $"+n+")")
 	}
 
 	if userQuery := strings.TrimSpace(filter.UserQuery); userQuery != "" {

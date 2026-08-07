@@ -257,6 +257,7 @@ export default {
         accountId: 'Account ID',
         status: 'Status',
         message: 'Message',
+        traceId: 'Trace ID',
         ip: 'IP',
         latency: 'Request Duration',
         action: 'Action',
@@ -304,7 +305,7 @@ export default {
           internal: 'Internal'
         },
         total: 'Total:',
-        searchPlaceholder: 'Search request_id / client_request_id / message',
+        searchPlaceholder: 'Search trace_id / request_id / client_request_id / message',
         userSearchPlaceholder: 'Filter by user email',
       },
       // Error Detail Modal
@@ -342,6 +343,7 @@ export default {
         },
         loading: 'Loading…',
         requestId: 'Request ID',
+        traceId: 'Trace ID',
         time: 'Time',
         phase: 'Phase',
         status: 'Status',

@@ -100,6 +100,7 @@ type OpsCacheTokenSums struct {
 type OpsInsertErrorLogInput struct {
 	RequestID       string
 	ClientRequestID string
+	TraceID         string
 
 	UserID    *int64
 	APIKeyID  *int64

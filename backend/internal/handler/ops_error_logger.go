@@ -20,6 +20,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/traceid"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
@@ -217,6 +218,17 @@ func enqueueOpsErrorLog(ctx context.Context, ops *service.OpsService, entry *ser
 	if ops == nil || entry == nil {
 		return
 	}
+	traceID := entry.TraceID
+	if ctx != nil {
+		if value, _ := ctx.Value(ctxkey.TraceID).(string); strings.TrimSpace(value) != "" {
+			traceID = value
+		}
+	}
+	if normalized, ok := traceid.Normalize(traceID); ok {
+		entry.TraceID = normalized
+	} else {
+		entry.TraceID = ""
+	}
 	entry.UserAgent = normalizeOpsPersistentUserAgent(entry.UserAgent)
 	if entry.ErrorBody != "" {
 		originalBody := entry.ErrorBody
@@ -412,7 +424,7 @@ func estimateOpsErrorLogJobBytes(entry *service.OpsInsertErrorLogInput) int64 {
 		return 1
 	}
 	const fixedOverhead = 512
-	size := fixedOverhead + len(entry.RequestID) + len(entry.ClientRequestID) +
+	size := fixedOverhead + len(entry.RequestID) + len(entry.ClientRequestID) + len(entry.TraceID) +
 		len(entry.Platform) + len(entry.Model) + len(entry.RequestPath) +
 		len(entry.InboundEndpoint) + len(entry.UpstreamEndpoint) +
 		len(entry.RequestedModel) + len(entry.UpstreamModel) + len(entry.UserAgent) +
