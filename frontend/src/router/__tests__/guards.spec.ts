@@ -118,6 +118,7 @@ function simulateGuard(
   if (authState.isSimpleMode) {
     const restrictedPaths = [
       '/admin/groups',
+      '/admin/error-handling-rules',
       '/admin/subscriptions',
       '/admin/redeem',
       '/subscriptions',
@@ -291,6 +292,22 @@ describe('路由守卫逻辑', () => {
         hasPendingAuthSession: false,
       }
       const redirect = simulateGuard('/admin/groups', { requiresAdmin: true }, authState)
+      expect(redirect).toBe('/admin/dashboard')
+    })
+
+    it('管理员简易模式访问 /admin/error-handling-rules 重定向到 /admin/dashboard', () => {
+      const authState: MockAuthState = {
+        isAuthenticated: true,
+        isAdmin: true,
+        isSimpleMode: true,
+        backendModeEnabled: false,
+        hasPendingAuthSession: false,
+      }
+      const redirect = simulateGuard(
+        '/admin/error-handling-rules',
+        { requiresAdmin: true },
+        authState
+      )
       expect(redirect).toBe('/admin/dashboard')
     })
 

@@ -597,6 +597,18 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/admin/error-handling-rules',
+    name: 'AdminErrorHandlingRules',
+    component: () => import('@/views/admin/ErrorHandlingRulesView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Error Handling Rules',
+      titleKey: 'admin.settings.errorHandlingRule.title',
+      descriptionKey: 'admin.settings.errorHandlingRule.description'
+    }
+  },
+  {
     path: '/admin/risk-control',
     name: 'AdminRiskControl',
     component: () => import('@/views/admin/RiskControlView.vue'),
@@ -940,6 +952,7 @@ router.beforeEach(async (to, _from, next) => {
     const restrictedPaths = [
       '/admin/groups',
       '/admin/routing-strategies',
+      '/admin/error-handling-rules',
       '/admin/subscriptions',
       '/admin/redeem',
       '/subscriptions',
