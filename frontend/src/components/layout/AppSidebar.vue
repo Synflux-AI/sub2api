@@ -778,6 +778,12 @@ const adminNavItems = computed((): NavItem[] => {
       hideInSimpleMode: true
     },
     {
+      path: '/admin/error-handling-rules',
+      label: t('nav.errorHandlingRules'),
+      icon: ShieldIcon,
+      hideInSimpleMode: true
+    },
+    {
       path: '/admin/channels',
       label: t('nav.channelManagement'),
       icon: ChannelIcon,

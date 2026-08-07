@@ -165,6 +165,7 @@ export default {
     users: 'Users',
     groups: 'Groups',
     routingStrategies: 'Routing Strategies',
+    errorHandlingRules: 'Error Handling Rules',
     channels: 'Channels',
     availableChannels: 'Available Channels',
     modelPlaza: 'Model Plaza',
