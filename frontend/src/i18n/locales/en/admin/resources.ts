@@ -518,6 +518,7 @@ export default {
       account: 'Account',
       group: 'Group',
       requestId: 'Request ID',
+      traceId: 'Trace ID',
       requestIdCopied: 'Request ID copied',
       allModels: 'All Models',
       allAccounts: 'All Accounts',

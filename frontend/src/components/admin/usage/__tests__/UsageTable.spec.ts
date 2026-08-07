@@ -72,6 +72,7 @@ const DataTableStub = {
         <slot name="cell-billing_mode" :row="row" />
         <slot name="cell-tokens" :row="row" />
         <slot name="cell-cost" :row="row" />
+        <slot name="cell-trace_id" :row="row" :value="row.trace_id" />
       </div>
     </div>
   `,
@@ -118,6 +119,28 @@ describe('admin UsageTable tooltip', () => {
       height: 20,
       toJSON: () => ({}),
     } as DOMRect)
+  })
+
+  it('renders a usage log Trace ID in its dedicated column cell', () => {
+    const wrapper = mount(UsageTable, {
+      props: {
+        data: [{ ...baseImageRow, trace_id: 'trace-visible-123' }],
+        loading: false,
+        columns: [{ key: 'trace_id', label: 'Trace ID' }],
+      },
+      global: {
+        stubs: {
+          DataTable: DataTableStub,
+          EmptyState: true,
+          Icon: true,
+          Teleport: true,
+        },
+      },
+    })
+
+    const traceID = wrapper.get('[data-testid="usage-trace-id"]')
+    expect(traceID.text()).toBe('trace-visible-123')
+    expect(traceID.attributes('title')).toBe('trace-visible-123')
   })
 
   it('marks only usage rows that actually applied long-context billing', () => {
