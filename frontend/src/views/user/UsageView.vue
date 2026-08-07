@@ -644,6 +644,7 @@ const exportToCSV = async () => {
       'Model',
       'Reasoning Effort',
       'Inbound Endpoint',
+      'Trace ID',
       'IP Address',
       'Type',
       'Billing Mode',
@@ -665,6 +666,7 @@ const exportToCSV = async () => {
       log.model,
       formatReasoningEffort(log.reasoning_effort),
       log.inbound_endpoint || '',
+      log.trace_id || '',
       log.ip_address || '',
       getRequestTypeExportText(log),
       getBillingModeLabel(getDisplayBillingMode(log), t),
@@ -716,6 +718,7 @@ const allColumns = computed<Column[]>(() => [
   { key: 'tokens', label: t('usage.tokens'), sortable: false },
   { key: 'cost', label: t('usage.cost'), sortable: false },
   { key: 'latency', label: t('usage.latency'), sortable: false },
+  { key: 'trace_id', label: t('admin.usage.traceId'), sortable: false },
   { key: 'created_at', label: t('usage.time'), sortable: true },
   { key: 'user_agent', label: t('usage.userAgent'), sortable: false },
 ])
