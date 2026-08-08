@@ -25,13 +25,20 @@ func TestUsageLog_GetStatsWithFilters_AggregatesAndEndpoints(t *testing.T) {
 	now := time.Now().UTC()
 	inboundEndpoint := "/v1/messages"
 	upstreamEndpoint := "/v1/responses"
+	durations := []int{100, 200, 300}
+	firstTokens := []int{20, 40}
 	for i := 0; i < 3; i++ {
+		var firstTokenMs *int
+		if i < len(firstTokens) {
+			firstTokenMs = &firstTokens[i]
+		}
 		_, err := repo.Create(ctx, &service.UsageLog{
 			UserID: user.ID, APIKeyID: apiKey.ID, AccountID: account.ID,
 			Model: "claude-3", InputTokens: 2, OutputTokens: 3,
 			CacheCreationTokens: 4, CacheReadTokens: 5,
 			TotalCost: 0.5, ActualCost: 0.4, CreatedAt: now,
 			InboundEndpoint: &inboundEndpoint, UpstreamEndpoint: &upstreamEndpoint,
+			DurationMs: &durations[i], FirstTokenMs: firstTokenMs,
 		})
 		require.NoError(t, err)
 	}
@@ -49,6 +56,14 @@ func TestUsageLog_GetStatsWithFilters_AggregatesAndEndpoints(t *testing.T) {
 	require.Equal(t, int64(12), stats.TotalCacheCreationTokens)
 	require.Equal(t, int64(15), stats.TotalCacheReadTokens)
 	require.InDelta(t, 1.2, stats.TotalActualCost, 1e-9)
+	require.Equal(t, int64(3), stats.Duration.SampleCount)
+	require.InDelta(t, 200, *stats.Duration.P50Ms, 1e-9)
+	require.InDelta(t, 290, *stats.Duration.P95Ms, 1e-9)
+	require.InDelta(t, 298, *stats.Duration.P99Ms, 1e-9)
+	require.Equal(t, int64(2), stats.TTFT.SampleCount)
+	require.InDelta(t, 30, *stats.TTFT.P50Ms, 1e-9)
+	require.InDelta(t, 39, *stats.TTFT.P95Ms, 1e-9)
+	require.InDelta(t, 39.8, *stats.TTFT.P99Ms, 1e-9)
 	require.NotEmpty(t, stats.Endpoints)
 	require.NotEmpty(t, stats.UpstreamEndpoints)
 	require.NotEmpty(t, stats.EndpointPaths)

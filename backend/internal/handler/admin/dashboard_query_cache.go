@@ -18,17 +18,18 @@ var (
 )
 
 type dashboardTrendCacheKey struct {
-	StartTime   string `json:"start_time"`
-	EndTime     string `json:"end_time"`
-	Granularity string `json:"granularity"`
-	UserID      int64  `json:"user_id"`
-	APIKeyID    int64  `json:"api_key_id"`
-	AccountID   int64  `json:"account_id"`
-	GroupID     int64  `json:"group_id"`
-	Model       string `json:"model"`
-	RequestType *int16 `json:"request_type"`
-	Stream      *bool  `json:"stream"`
-	BillingType *int8  `json:"billing_type"`
+	StartTime      string `json:"start_time"`
+	EndTime        string `json:"end_time"`
+	Granularity    string `json:"granularity"`
+	UserID         int64  `json:"user_id"`
+	APIKeyID       int64  `json:"api_key_id"`
+	AccountID      int64  `json:"account_id"`
+	GroupID        int64  `json:"group_id"`
+	Model          string `json:"model"`
+	RequestType    *int16 `json:"request_type"`
+	Stream         *bool  `json:"stream"`
+	BillingType    *int8  `json:"billing_type"`
+	IncludeLatency bool   `json:"include_latency"`
 }
 
 type dashboardModelGroupCacheKey struct {
@@ -84,22 +85,24 @@ func (h *DashboardHandler) getUsageTrendCached(
 	requestType *int16,
 	stream *bool,
 	billingType *int8,
+	includeLatency bool,
 ) ([]usagestats.TrendDataPoint, bool, error) {
 	key := mustMarshalDashboardCacheKey(dashboardTrendCacheKey{
-		StartTime:   startTime.UTC().Format(time.RFC3339),
-		EndTime:     endTime.UTC().Format(time.RFC3339),
-		Granularity: granularity,
-		UserID:      userID,
-		APIKeyID:    apiKeyID,
-		AccountID:   accountID,
-		GroupID:     groupID,
-		Model:       model,
-		RequestType: requestType,
-		Stream:      stream,
-		BillingType: billingType,
+		StartTime:      startTime.UTC().Format(time.RFC3339),
+		EndTime:        endTime.UTC().Format(time.RFC3339),
+		Granularity:    granularity,
+		UserID:         userID,
+		APIKeyID:       apiKeyID,
+		AccountID:      accountID,
+		GroupID:        groupID,
+		Model:          model,
+		RequestType:    requestType,
+		Stream:         stream,
+		BillingType:    billingType,
+		IncludeLatency: includeLatency,
 	})
 	entry, hit, err := dashboardTrendCache.GetOrLoad(key, func() (any, error) {
-		return h.dashboardService.GetUsageTrendWithFilters(ctx, startTime, endTime, granularity, userID, apiKeyID, accountID, groupID, model, requestType, stream, billingType)
+		return h.dashboardService.GetUsageTrendWithFilters(ctx, startTime, endTime, granularity, userID, apiKeyID, accountID, groupID, model, requestType, stream, billingType, includeLatency)
 	})
 	if err != nil {
 		return nil, hit, err
