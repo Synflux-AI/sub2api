@@ -57,6 +57,7 @@ func (s *dailyUsageRepoStub) GetUsageTrendByModelWithFilters(
 	requestType *int16,
 	stream *bool,
 	billingType *int8,
+	upstreamModelMismatch *bool,
 ) ([]usagestats.TrendModelDataPoint, error) {
 	s.byModelCalled = true
 	s.startTime = startTime

@@ -1461,7 +1461,7 @@ func (s *UsageLogRepoSuite) TestGetUsageTrendByModelWithFilters() {
 	startTime := base.Add(-1 * time.Hour)
 	endTime := base.Add(48 * time.Hour)
 
-	rows, err := s.repo.GetUsageTrendByModelWithFilters(s.ctx, startTime, endTime, "day", user.ID, 0, 0, 0, "", nil, nil, nil)
+	rows, err := s.repo.GetUsageTrendByModelWithFilters(s.ctx, startTime, endTime, "day", user.ID, 0, 0, 0, "", nil, nil, nil, nil)
 	s.Require().NoError(err, "GetUsageTrendByModelWithFilters user filter")
 	s.Require().Len(rows, 3)
 	for _, r := range rows {
@@ -1470,7 +1470,7 @@ func (s *UsageLogRepoSuite) TestGetUsageTrendByModelWithFilters() {
 	}
 
 	// 模型过滤后只剩该模型的两天
-	rows, err = s.repo.GetUsageTrendByModelWithFilters(s.ctx, startTime, endTime, "day", user.ID, 0, 0, 0, "claude-3-opus", nil, nil, nil)
+	rows, err = s.repo.GetUsageTrendByModelWithFilters(s.ctx, startTime, endTime, "day", user.ID, 0, 0, 0, "claude-3-opus", nil, nil, nil, nil)
 	s.Require().NoError(err, "GetUsageTrendByModelWithFilters model filter")
 	s.Require().Len(rows, 2)
 	for _, r := range rows {

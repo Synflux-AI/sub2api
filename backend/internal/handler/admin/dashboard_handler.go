@@ -64,6 +64,18 @@ func parseTimeRange(c *gin.Context) (time.Time, time.Time) {
 	return startTime, endTime
 }
 
+func parseOptionalBoolDashboardFilter(c *gin.Context, name string) (*bool, error) {
+	raw := strings.TrimSpace(c.Query(name))
+	if raw == "" {
+		return nil, nil
+	}
+	value, err := strconv.ParseBool(raw)
+	if err != nil {
+		return nil, err
+	}
+	return &value, nil
+}
+
 // GetStats handles getting dashboard statistics
 // GET /api/v1/admin/dashboard/stats
 func (h *DashboardHandler) GetStats(c *gin.Context) {
@@ -200,6 +212,7 @@ func (h *DashboardHandler) GetUsageTrend(c *gin.Context) {
 	var requestType *int16
 	var stream *bool
 	var billingType *int8
+	var upstreamModelMismatch *bool
 
 	if userIDStr := c.Query("user_id"); userIDStr != "" {
 		if id, err := strconv.ParseInt(userIDStr, 10, 64); err == nil {
@@ -249,10 +262,15 @@ func (h *DashboardHandler) GetUsageTrend(c *gin.Context) {
 			return
 		}
 	}
+	upstreamModelMismatch, err := parseOptionalBoolDashboardFilter(c, "upstream_model_mismatch")
+	if err != nil {
+		response.BadRequest(c, "Invalid upstream_model_mismatch value, use true or false")
+		return
+	}
 
 	// group_by=model 返回按天×模型的明细行(每行带 model),默认行为不变;该路径不走快照缓存。
 	if c.Query("group_by") == "model" {
-		trend, err := h.dashboardService.GetUsageTrendByModelWithFilters(c.Request.Context(), startTime, endTime, granularity, userID, apiKeyID, accountID, groupID, model, requestType, stream, billingType)
+		trend, err := h.dashboardService.GetUsageTrendByModelWithFilters(c.Request.Context(), startTime, endTime, granularity, userID, apiKeyID, accountID, groupID, model, requestType, stream, billingType, upstreamModelMismatch)
 		if err != nil {
 			response.Error(c, 500, "Failed to get usage trend")
 			return
@@ -266,7 +284,7 @@ func (h *DashboardHandler) GetUsageTrend(c *gin.Context) {
 		return
 	}
 
-	trend, hit, err := h.getUsageTrendCached(c.Request.Context(), startTime, endTime, granularity, userID, apiKeyID, accountID, groupID, model, requestType, stream, billingType)
+	trend, hit, err := h.getUsageTrendCached(c.Request.Context(), startTime, endTime, granularity, userID, apiKeyID, accountID, groupID, model, requestType, stream, billingType, upstreamModelMismatch)
 	if err != nil {
 		response.Error(c, 500, "Failed to get usage trend")
 		return
@@ -293,6 +311,7 @@ func (h *DashboardHandler) GetModelStats(c *gin.Context) {
 	var requestType *int16
 	var stream *bool
 	var billingType *int8
+	var upstreamModelMismatch *bool
 
 	if userIDStr := c.Query("user_id"); userIDStr != "" {
 		if id, err := strconv.ParseInt(userIDStr, 10, 64); err == nil {
@@ -346,8 +365,13 @@ func (h *DashboardHandler) GetModelStats(c *gin.Context) {
 			return
 		}
 	}
+	upstreamModelMismatch, err := parseOptionalBoolDashboardFilter(c, "upstream_model_mismatch")
+	if err != nil {
+		response.BadRequest(c, "Invalid upstream_model_mismatch value, use true or false")
+		return
+	}
 
-	stats, hit, err := h.getModelStatsCached(c.Request.Context(), startTime, endTime, userID, apiKeyID, accountID, groupID, modelSource, requestType, stream, billingType)
+	stats, hit, err := h.getModelStatsCached(c.Request.Context(), startTime, endTime, userID, apiKeyID, accountID, groupID, modelSource, requestType, stream, billingType, upstreamModelMismatch)
 	if err != nil {
 		response.Error(c, 500, "Failed to get model statistics")
 		return
@@ -371,6 +395,7 @@ func (h *DashboardHandler) GetGroupStats(c *gin.Context) {
 	var requestType *int16
 	var stream *bool
 	var billingType *int8
+	var upstreamModelMismatch *bool
 
 	if userIDStr := c.Query("user_id"); userIDStr != "" {
 		if id, err := strconv.ParseInt(userIDStr, 10, 64); err == nil {
@@ -417,8 +442,13 @@ func (h *DashboardHandler) GetGroupStats(c *gin.Context) {
 			return
 		}
 	}
+	upstreamModelMismatch, err := parseOptionalBoolDashboardFilter(c, "upstream_model_mismatch")
+	if err != nil {
+		response.BadRequest(c, "Invalid upstream_model_mismatch value, use true or false")
+		return
+	}
 
-	stats, hit, err := h.getGroupStatsCached(c.Request.Context(), startTime, endTime, userID, apiKeyID, accountID, groupID, requestType, stream, billingType)
+	stats, hit, err := h.getGroupStatsCached(c.Request.Context(), startTime, endTime, userID, apiKeyID, accountID, groupID, requestType, stream, billingType, upstreamModelMismatch)
 	if err != nil {
 		response.Error(c, 500, "Failed to get group statistics")
 		return
