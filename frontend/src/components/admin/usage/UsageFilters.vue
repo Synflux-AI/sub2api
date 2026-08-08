@@ -121,6 +121,20 @@
           </div>
         </div>
 
+        <div v-if="showActions && mode !== 'ranking'" class="w-full sm:w-auto sm:min-w-[220px]">
+          <label class="input-label">{{ t('admin.usage.traceId') }}</label>
+          <input
+            v-model.trim="filters.trace_id"
+            data-testid="usage-trace-id-filter"
+            type="text"
+            class="input font-mono"
+            :placeholder="t('admin.usage.traceId')"
+            spellcheck="false"
+            @change="emitChange"
+            @keyup.enter="emitChange"
+          />
+        </div>
+
         <!-- Request Type Filter (usage only) -->
         <div v-if="mode !== 'errors'" class="w-full sm:w-auto sm:min-w-[180px]">
           <label class="input-label">{{ t('usage.type') }}</label>

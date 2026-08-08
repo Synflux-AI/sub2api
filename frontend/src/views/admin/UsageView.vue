@@ -814,6 +814,7 @@ const loadAdminErrors = async () => {
       phase: filters.value.error_phase || undefined,
       category: filters.value.error_category || undefined,
       status_codes: filters.value.status_code != null ? String(filters.value.status_code) : undefined,
+      trace_id: filters.value.trace_id?.trim() || undefined,
       sort_by: errSortBy.value,
       sort_order: errSortOrder.value,
     })

@@ -188,6 +188,7 @@ func (h *DashboardHandler) buildSnapshotV2Response(
 			filters.Stream,
 			filters.BillingType,
 			filters.UpstreamModelMismatch,
+			false,
 		)
 		if err != nil {
 			return nil, errors.New("failed to get usage trend")

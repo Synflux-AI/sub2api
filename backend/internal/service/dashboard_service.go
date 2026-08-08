@@ -124,7 +124,28 @@ func (s *DashboardService) GetDashboardStats(ctx context.Context) (*usagestats.D
 	return stats, nil
 }
 
-func (s *DashboardService) GetUsageTrendWithFilters(ctx context.Context, startTime, endTime time.Time, granularity string, userID, apiKeyID, accountID, groupID int64, model string, requestType *int16, stream *bool, billingType *int8) ([]usagestats.TrendDataPoint, error) {
+func (s *DashboardService) GetUsageTrendWithFilters(ctx context.Context, startTime, endTime time.Time, granularity string, userID, apiKeyID, accountID, groupID int64, model string, requestType *int16, stream *bool, billingType *int8, includeLatency bool) ([]usagestats.TrendDataPoint, error) {
+	type usageTrendWithUsageFiltersRepository interface {
+		GetUsageTrendWithUsageFilters(ctx context.Context, startTime, endTime time.Time, granularity string, filters usagestats.UsageLogFilters) ([]usagestats.TrendDataPoint, error)
+	}
+	if filterRepo, ok := s.usageRepo.(usageTrendWithUsageFiltersRepository); ok {
+		trend, err := filterRepo.GetUsageTrendWithUsageFilters(ctx, startTime, endTime, granularity, usagestats.UsageLogFilters{
+			UserID:            userID,
+			APIKeyID:          apiKeyID,
+			AccountID:         accountID,
+			GroupID:           groupID,
+			Model:             model,
+			ModelFilterSource: usagestats.ModelSourceRequested,
+			RequestType:       requestType,
+			Stream:            stream,
+			BillingType:       billingType,
+			IncludeLatency:    includeLatency,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("get usage trend with filters: %w", err)
+		}
+		return trend, nil
+	}
 	trend, err := s.usageRepo.GetUsageTrendWithFilters(ctx, startTime, endTime, granularity, userID, apiKeyID, accountID, groupID, model, requestType, stream, billingType)
 	if err != nil {
 		return nil, fmt.Errorf("get usage trend with filters: %w", err)
@@ -151,7 +172,7 @@ func (s *DashboardService) GetUsageTrendWithUsageFilters(ctx context.Context, st
 		}
 		return trend, nil
 	}
-	return s.GetUsageTrendWithFilters(ctx, startTime, endTime, granularity, filters.UserID, filters.APIKeyID, filters.AccountID, filters.GroupID, filters.Model, filters.RequestType, filters.Stream, filters.BillingType)
+	return s.GetUsageTrendWithFilters(ctx, startTime, endTime, granularity, filters.UserID, filters.APIKeyID, filters.AccountID, filters.GroupID, filters.Model, filters.RequestType, filters.Stream, filters.BillingType, filters.IncludeLatency)
 }
 
 func (s *DashboardService) GetModelStatsWithFilters(ctx context.Context, startTime, endTime time.Time, userID, apiKeyID, accountID, groupID int64, requestType *int16, stream *bool, billingType *int8) ([]usagestats.ModelStat, error) {

@@ -30,6 +30,7 @@ type dashboardTrendCacheKey struct {
 	Stream                *bool  `json:"stream"`
 	BillingType           *int8  `json:"billing_type"`
 	UpstreamModelMismatch *bool  `json:"upstream_model_mismatch"`
+	IncludeLatency        bool   `json:"include_latency"`
 }
 
 type dashboardModelGroupCacheKey struct {
@@ -87,6 +88,7 @@ func (h *DashboardHandler) getUsageTrendCached(
 	stream *bool,
 	billingType *int8,
 	upstreamModelMismatch *bool,
+	includeLatency bool,
 ) ([]usagestats.TrendDataPoint, bool, error) {
 	key := mustMarshalDashboardCacheKey(dashboardTrendCacheKey{
 		StartTime:             startTime.UTC().Format(time.RFC3339),
@@ -101,12 +103,14 @@ func (h *DashboardHandler) getUsageTrendCached(
 		Stream:                stream,
 		BillingType:           billingType,
 		UpstreamModelMismatch: upstreamModelMismatch,
+		IncludeLatency:        includeLatency,
 	})
 	entry, hit, err := dashboardTrendCache.GetOrLoad(key, func() (any, error) {
 		return h.dashboardService.GetUsageTrendWithUsageFilters(ctx, startTime, endTime, granularity, usagestats.UsageLogFilters{
 			UserID: userID, APIKeyID: apiKeyID, AccountID: accountID, GroupID: groupID,
 			Model: model, RequestType: requestType, Stream: stream, BillingType: billingType,
 			UpstreamModelMismatch: upstreamModelMismatch,
+			IncludeLatency:        includeLatency,
 		})
 	})
 	if err != nil {

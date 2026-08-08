@@ -14,6 +14,7 @@ const messages: Record<string, string> = {
   'admin.usage.allModels': 'All Models',
   'admin.usage.account': 'Account',
   'admin.usage.searchAccountPlaceholder': 'Search account...',
+  'admin.usage.traceId': 'Trace ID',
   'usage.type': 'Type',
   'admin.usage.allTypes': 'All Types',
   'usage.ws': 'WS',
@@ -257,5 +258,28 @@ describe('UsageFilters — model options come from prop (no dup request)', () =>
 
     const opts = (wrapper.vm as any).modelOptions as Array<{ value: string | null; label: string }>
     expect(opts.map((o) => o.value)).toEqual([null, 'claude-3', 'gpt-4o'])
+  })
+})
+
+describe('UsageFilters — Trace ID', () => {
+  it('writes the exact Trace ID filter and applies it on change', async () => {
+    const filters = defaultFilters() as ReturnType<typeof defaultFilters> & { trace_id?: string }
+    const wrapper = mount(UsageFilters, {
+      props: {
+        modelValue: filters,
+        exporting: false,
+        startDate: '2026-05-01',
+        endDate: '2026-05-28',
+        showActions: true,
+        modelOptions: [],
+      },
+      global: { stubs: { Select: true, Teleport: true } },
+    })
+
+    const input = wrapper.get('[data-testid="usage-trace-id-filter"]')
+    await input.setValue(' trace-0123 ')
+
+    expect(filters.trace_id).toBe('trace-0123')
+    expect(wrapper.emitted('change')).toHaveLength(1)
   })
 })

@@ -81,15 +81,26 @@ type DashboardStats struct {
 
 // TrendDataPoint represents a single point in trend data
 type TrendDataPoint struct {
-	Date                string  `json:"date"`
-	Requests            int64   `json:"requests"`
-	InputTokens         int64   `json:"input_tokens"`
-	OutputTokens        int64   `json:"output_tokens"`
-	CacheCreationTokens int64   `json:"cache_creation_tokens"`
-	CacheReadTokens     int64   `json:"cache_read_tokens"`
-	TotalTokens         int64   `json:"total_tokens"`
-	Cost                float64 `json:"cost"`        // 标准计费
-	ActualCost          float64 `json:"actual_cost"` // 实际扣除
+	Date                string             `json:"date"`
+	Requests            int64              `json:"requests"`
+	InputTokens         int64              `json:"input_tokens"`
+	OutputTokens        int64              `json:"output_tokens"`
+	CacheCreationTokens int64              `json:"cache_creation_tokens"`
+	CacheReadTokens     int64              `json:"cache_read_tokens"`
+	TotalTokens         int64              `json:"total_tokens"`
+	Cost                float64            `json:"cost"`        // 标准计费
+	ActualCost          float64            `json:"actual_cost"` // 实际扣除
+	Duration            LatencyPercentiles `json:"duration"`
+	TTFT                LatencyPercentiles `json:"ttft"`
+}
+
+// LatencyPercentiles summarizes non-null latency samples in milliseconds.
+// Percentiles remain null when no samples are available for the window or bucket.
+type LatencyPercentiles struct {
+	P50Ms       *float64 `json:"p50_ms"`
+	P95Ms       *float64 `json:"p95_ms"`
+	P99Ms       *float64 `json:"p99_ms"`
+	SampleCount int64    `json:"sample_count"`
 }
 
 // TrendModelDataPoint represents a single trend point broken down by model.
@@ -289,6 +300,7 @@ type UsageLogFilters struct {
 	AccountID int64
 	GroupID   int64
 	RequestID string
+	TraceID   string
 	Model     string
 	// ModelFilterSource controls how Model is matched. Empty preserves raw usage_logs.model semantics.
 	ModelFilterSource     string
@@ -299,26 +311,30 @@ type UsageLogFilters struct {
 	UpstreamModelMismatch *bool
 	StartTime             *time.Time
 	EndTime               *time.Time
+	// IncludeLatency forces trend queries to read raw logs because aggregate tables do not store percentiles.
+	IncludeLatency bool
 	// ExactTotal requests exact COUNT(*) for pagination. Default false for fast large-table paging.
 	ExactTotal bool
 }
 
 // UsageStats represents usage statistics
 type UsageStats struct {
-	TotalRequests            int64          `json:"total_requests"`
-	TotalInputTokens         int64          `json:"total_input_tokens"`
-	TotalOutputTokens        int64          `json:"total_output_tokens"`
-	TotalCacheTokens         int64          `json:"total_cache_tokens"`
-	TotalCacheCreationTokens int64          `json:"total_cache_creation_tokens"`
-	TotalCacheReadTokens     int64          `json:"total_cache_read_tokens"`
-	TotalTokens              int64          `json:"total_tokens"`
-	TotalCost                float64        `json:"total_cost"`
-	TotalActualCost          float64        `json:"total_actual_cost"`
-	TotalAccountCost         *float64       `json:"total_account_cost,omitempty"`
-	AverageDurationMs        float64        `json:"average_duration_ms"`
-	Endpoints                []EndpointStat `json:"endpoints,omitempty"`
-	UpstreamEndpoints        []EndpointStat `json:"upstream_endpoints,omitempty"`
-	EndpointPaths            []EndpointStat `json:"endpoint_paths,omitempty"`
+	TotalRequests            int64              `json:"total_requests"`
+	TotalInputTokens         int64              `json:"total_input_tokens"`
+	TotalOutputTokens        int64              `json:"total_output_tokens"`
+	TotalCacheTokens         int64              `json:"total_cache_tokens"`
+	TotalCacheCreationTokens int64              `json:"total_cache_creation_tokens"`
+	TotalCacheReadTokens     int64              `json:"total_cache_read_tokens"`
+	TotalTokens              int64              `json:"total_tokens"`
+	TotalCost                float64            `json:"total_cost"`
+	TotalActualCost          float64            `json:"total_actual_cost"`
+	TotalAccountCost         *float64           `json:"total_account_cost,omitempty"`
+	AverageDurationMs        float64            `json:"average_duration_ms"`
+	Duration                 LatencyPercentiles `json:"duration"`
+	TTFT                     LatencyPercentiles `json:"ttft"`
+	Endpoints                []EndpointStat     `json:"endpoints,omitempty"`
+	UpstreamEndpoints        []EndpointStat     `json:"upstream_endpoints,omitempty"`
+	EndpointPaths            []EndpointStat     `json:"endpoint_paths,omitempty"`
 }
 
 // PlatformUsage 表示某用户/某 API key 在单个"有效平台"维度的用量明细。
