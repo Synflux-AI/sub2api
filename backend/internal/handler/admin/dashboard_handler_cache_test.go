@@ -20,6 +20,15 @@ type dashboardUsageRepoCacheProbe struct {
 	usersTrendCalls atomic.Int32
 }
 
+func (r *dashboardUsageRepoCacheProbe) GetUsageTrendWithUsageFilters(
+	ctx context.Context,
+	startTime, endTime time.Time,
+	granularity string,
+	filters usagestats.UsageLogFilters,
+) ([]usagestats.TrendDataPoint, error) {
+	return r.GetUsageTrendWithFilters(ctx, startTime, endTime, granularity, filters.UserID, filters.APIKeyID, filters.AccountID, filters.GroupID, filters.Model, filters.RequestType, filters.Stream, filters.BillingType)
+}
+
 func (r *dashboardUsageRepoCacheProbe) GetUsageTrendWithFilters(
 	ctx context.Context,
 	startTime, endTime time.Time,
@@ -90,6 +99,30 @@ func TestDashboardHandler_GetUsageTrend_UsesCache(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec2.Code)
 	require.Equal(t, "hit", rec2.Header().Get("X-Snapshot-Cache"))
 	require.Equal(t, int32(1), repo.trendCalls.Load())
+}
+
+func TestDashboardHandler_GetUsageTrend_CachesLatencySeparately(t *testing.T) {
+	t.Cleanup(resetDashboardReadCachesForTest)
+	resetDashboardReadCachesForTest()
+
+	gin.SetMode(gin.TestMode)
+	repo := &dashboardUsageRepoCacheProbe{}
+	dashboardSvc := service.NewDashboardService(repo, nil, nil, nil)
+	handler := NewDashboardHandler(dashboardSvc, nil)
+	router := gin.New()
+	router.GET("/admin/dashboard/trend", handler.GetUsageTrend)
+
+	for _, target := range []string{
+		"/admin/dashboard/trend?start_date=2026-03-01&end_date=2026-03-07&granularity=day",
+		"/admin/dashboard/trend?start_date=2026-03-01&end_date=2026-03-07&granularity=day&include_latency=true",
+	} {
+		req := httptest.NewRequest(http.MethodGet, target, nil)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		require.Equal(t, http.StatusOK, rec.Code)
+		require.Equal(t, "miss", rec.Header().Get("X-Snapshot-Cache"))
+	}
+	require.Equal(t, int32(2), repo.trendCalls.Load())
 }
 
 func TestDashboardHandler_GetUserUsageTrend_UsesCache(t *testing.T) {

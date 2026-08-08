@@ -517,6 +517,35 @@ describe('admin UsageView errors tab filter forwarding', () => {
       group_id: 3,
     }))
   })
+
+  it('forwards Trace ID to both normal and error log lists', async () => {
+    const wrapper = mount(UsageView, {
+      global: { stubs: {
+        AppLayout: AppLayoutStub, UsageStatsCards: true, UsageFilters: UsageFiltersStub,
+        UsageTable: true, UsageExportProgress: true, UsageCleanupDialog: true,
+        UserBalanceHistoryModal: true, Pagination: true, Select: true,
+        DateRangePicker: true, Icon: true, TokenUsageTrend: true,
+        ModelDistributionChart: true, GroupDistributionChart: true, EndpointDistributionChart: true,
+        UserTokenRanking: true, OpsErrorLogTable: true, OpsErrorDetailModal: true,
+      } },
+    })
+    vi.advanceTimersByTime(120)
+    await flushPromises()
+
+    const vm = wrapper.vm as any
+    vm.filters.trace_id = 'trace-0123'
+    list.mockClear()
+    vm.applyFilters()
+    await flushPromises()
+
+    expect(list).toHaveBeenCalledWith(expect.objectContaining({ trace_id: 'trace-0123' }), expect.anything())
+
+    const tabs = wrapper.findAll('[data-testid="usage-detail-tab"]')
+    await tabs[1].trigger('click')
+    await flushPromises()
+
+    expect(listErrorLogs).toHaveBeenCalledWith(expect.objectContaining({ trace_id: 'trace-0123' }))
+  })
 })
 
 describe('admin UsageView ranking tab', () => {

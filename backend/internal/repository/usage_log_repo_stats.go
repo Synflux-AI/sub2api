@@ -724,7 +724,15 @@ func (r *usageLogRepository) GetStatsWithFilters(ctx context.Context, filters Us
 			COALESCE(SUM(total_cost), 0) as total_cost,
 			COALESCE(SUM(actual_cost), 0) as total_actual_cost,
 			COALESCE(SUM(COALESCE(account_stats_cost, total_cost) * COALESCE(account_rate_multiplier, 1)), 0) as total_account_cost,
-			COALESCE(AVG(duration_ms), 0) as avg_duration_ms
+			COALESCE(AVG(duration_ms), 0) as avg_duration_ms,
+			percentile_cont(0.50) WITHIN GROUP (ORDER BY duration_ms) FILTER (WHERE duration_ms IS NOT NULL) as duration_p50_ms,
+			percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms) FILTER (WHERE duration_ms IS NOT NULL) as duration_p95_ms,
+			percentile_cont(0.99) WITHIN GROUP (ORDER BY duration_ms) FILTER (WHERE duration_ms IS NOT NULL) as duration_p99_ms,
+			COUNT(duration_ms) as duration_sample_count,
+			percentile_cont(0.50) WITHIN GROUP (ORDER BY first_token_ms) FILTER (WHERE first_token_ms IS NOT NULL) as ttft_p50_ms,
+			percentile_cont(0.95) WITHIN GROUP (ORDER BY first_token_ms) FILTER (WHERE first_token_ms IS NOT NULL) as ttft_p95_ms,
+			percentile_cont(0.99) WITHIN GROUP (ORDER BY first_token_ms) FILTER (WHERE first_token_ms IS NOT NULL) as ttft_p99_ms,
+			COUNT(first_token_ms) as ttft_sample_count
 		FROM usage_logs
 		%s
 	`, buildWhere(conditions))
@@ -757,6 +765,14 @@ func (r *usageLogRepository) GetStatsWithFilters(ctx context.Context, filters Us
 			&stats.TotalActualCost,
 			&totalAccountCost,
 			&stats.AverageDurationMs,
+			&stats.Duration.P50Ms,
+			&stats.Duration.P95Ms,
+			&stats.Duration.P99Ms,
+			&stats.Duration.SampleCount,
+			&stats.TTFT.P50Ms,
+			&stats.TTFT.P95Ms,
+			&stats.TTFT.P99Ms,
+			&stats.TTFT.SampleCount,
 		)
 	}
 	// endpoint 明细:best-effort(失败 log + 返空),不致命。
