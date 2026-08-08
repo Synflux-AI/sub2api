@@ -323,7 +323,7 @@ func (s *UsageService) GetUserUsageTrendByUserID(ctx context.Context, userID int
 
 // GetUserUsageTrendByModelByUserID returns per-user usage trend broken down by model.
 func (s *UsageService) GetUserUsageTrendByModelByUserID(ctx context.Context, userID int64, startTime, endTime time.Time, granularity string) ([]usagestats.TrendModelDataPoint, error) {
-	trend, err := s.usageRepo.GetUsageTrendByModelWithFilters(ctx, startTime, endTime, granularity, userID, 0, 0, 0, "", nil, nil, nil)
+	trend, err := s.usageRepo.GetUsageTrendByModelWithFilters(ctx, startTime, endTime, granularity, userID, 0, 0, 0, "", nil, nil, nil, nil)
 	if err != nil {
 		return nil, fmt.Errorf("get user usage trend by model: %w", err)
 	}
@@ -332,7 +332,7 @@ func (s *UsageService) GetUserUsageTrendByModelByUserID(ctx context.Context, use
 
 // GetAPIKeyUsageTrendByModel returns a user's API key daily usage trend broken down by model.
 func (s *UsageService) GetAPIKeyUsageTrendByModel(ctx context.Context, userID, apiKeyID int64, startTime, endTime time.Time, granularity string) ([]usagestats.TrendModelDataPoint, error) {
-	trend, err := s.usageRepo.GetUsageTrendByModelWithFilters(ctx, startTime, endTime, granularity, userID, apiKeyID, 0, 0, "", nil, nil, nil)
+	trend, err := s.usageRepo.GetUsageTrendByModelWithFilters(ctx, startTime, endTime, granularity, userID, apiKeyID, 0, 0, "", nil, nil, nil, nil)
 	if err != nil {
 		return nil, fmt.Errorf("get api key usage trend by model: %w", err)
 	}
