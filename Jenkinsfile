@@ -64,7 +64,7 @@ pipeline {
     stage('CI') {
       parallel {
         stage('Backend unit tests') {
-          steps { ciStage('backend-unit', '''docker run --rm -v "$WORKSPACE":/w -w /w/backend -v jenkins-sub2api-gomod:/go/pkg/mod -v jenkins-sub2api-gocache:/root/.cache/go-build -e GOPROXY -e GOSUMDB "$GO_IMAGE" sh -c 'apk add --no-cache make >/dev/null; set -o pipefail; make test-unit 2>&1 | tee /tmp/backend-unit.log; rc=$?; if [ "$rc" -ne 0 ]; then echo "--- unit failure summary ---"; grep -B 5 -A 60 -- "--- FAIL:" /tmp/backend-unit.log || true; fi; exit "$rc"' ''') }
+          steps { ciStage('backend-unit', '''docker run --rm -v "$WORKSPACE":/w -w /w/backend -v jenkins-sub2api-gomod:/go/pkg/mod -v jenkins-sub2api-gocache:/root/.cache/go-build -e GOPROXY -e GOSUMDB "$GO_IMAGE" sh -c 'apk add --no-cache make >/dev/null && make test-unit' ''') }
         }
         stage('golangci-lint') {
           steps { ciStage('golangci-lint', '''docker run --rm -v "$WORKSPACE":/w -w /w/backend -v jenkins-sub2api-gomod:/go/pkg/mod -v jenkins-sub2api-gocache:/root/.cache/go-build -v jenkins-sub2api-golangci:/root/.cache/golangci-lint -e GOPROXY -e GOSUMDB "$LINT_IMAGE" golangci-lint run --timeout=30m''') }
