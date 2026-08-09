@@ -77,3 +77,33 @@ func TestGetUserBreakdownStatsRequestTypeIncludesLegacyFallback(t *testing.T) {
 	require.Empty(t, rows)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
+
+func TestGetUserUsageTrendSort(t *testing.T) {
+	for _, tc := range []struct {
+		sortBy  string
+		orderBy string
+	}{
+		{"actual_cost", "SUM(actual_cost)"},
+		{"requests", "COUNT(*)"},
+		{"total_tokens", "SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens)"},
+		{"invalid", "SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens)"},
+	} {
+		t.Run(tc.sortBy, func(t *testing.T) {
+			db, mock := newSQLMock(t)
+			repo := &usageLogRepository{sql: db}
+			start := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+			end := start.Add(24 * time.Hour)
+
+			mock.ExpectQuery(regexp.QuoteMeta("ORDER BY "+tc.orderBy+" DESC, user_id ASC")).
+				WithArgs(start, end, 8, start, end).
+				WillReturnRows(sqlmock.NewRows([]string{
+					"date", "user_id", "email", "username", "notes", "requests", "tokens", "cost", "actual_cost",
+				}))
+
+			rows, err := repo.GetUserUsageTrend(context.Background(), start, end, "day", 8, tc.sortBy)
+			require.NoError(t, err)
+			require.Empty(t, rows)
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
