@@ -164,6 +164,8 @@ type GroupStat struct {
 type UserUsageTrendPoint struct {
 	Date       string  `json:"date"`
 	UserID     int64   `json:"user_id"`
+	Key        string  `json:"key,omitempty"`
+	Label      string  `json:"label,omitempty"`
 	Email      string  `json:"email"`
 	Username   string  `json:"username"`
 	Notes      string  `json:"notes"`

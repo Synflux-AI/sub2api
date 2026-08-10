@@ -1634,6 +1634,41 @@ func (s *UsageLogRepoSuite) TestGetUserUsageTrend() {
 	s.True(seenUser2)
 }
 
+func (s *UsageLogRepoSuite) TestGetUserUsageTrend_AggregatesOthers() {
+	users := make([]*service.User, 3)
+	keys := make([]*service.APIKey, 3)
+	for i := range users {
+		users[i] = mustCreateUser(s.T(), s.client, &service.User{Email: fmt.Sprintf("usertrend-other-%d@test.com", i)})
+		keys[i] = mustCreateApiKey(s.T(), s.client, &service.APIKey{
+			UserID: users[i].ID,
+			Key:    fmt.Sprintf("sk-usertrend-other-%d", i),
+			Name:   fmt.Sprintf("k%d", i),
+		})
+	}
+	account := mustCreateAccount(s.T(), s.client, &service.Account{Name: "acc-usertrend-others"})
+	base := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
+	for i, tokens := range []int{300, 200, 100} {
+		s.createUsageLog(users[i], keys[i], account, tokens, 0, float64(3-i), base)
+	}
+
+	trend, err := s.repo.GetUserUsageTrend(s.ctx, base.Add(-time.Hour), base.Add(24*time.Hour), "day", 2, "total_tokens")
+	s.Require().NoError(err)
+	s.Require().Len(trend, 3)
+
+	var others *UserUsageTrendPoint
+	for i := range trend {
+		if trend[i].Key == "__others__" {
+			others = &trend[i]
+		}
+	}
+	s.Require().NotNil(others)
+	s.Equal(int64(0), others.UserID)
+	s.Equal("其他", others.Label)
+	s.Equal(int64(1), others.Requests)
+	s.Equal(int64(100), others.Tokens)
+	s.Equal(1.0, others.ActualCost)
+}
+
 // --- GetAPIKeyUsageTrend ---
 
 func (s *UsageLogRepoSuite) TestGetAPIKeyUsageTrend() {
