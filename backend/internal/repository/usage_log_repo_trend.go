@@ -106,19 +106,21 @@ func (r *usageLogRepository) GetUserUsageTrend(ctx context.Context, startTime, e
 		)
 		SELECT
 			TO_CHAR(u.created_at, '%s') as date,
-			u.user_id,
-			COALESCE(us.email, '') as email,
-			COALESCE(us.username, '') as username,
-			COALESCE(us.notes, '') as notes,
+			CASE WHEN top.user_id IS NULL THEN 0 ELSE u.user_id END as user_id,
+			CASE WHEN top.user_id IS NULL THEN '__others__' ELSE u.user_id::text END as key,
+			CASE WHEN top.user_id IS NULL THEN '其他' ELSE '' END as label,
+			CASE WHEN top.user_id IS NULL THEN '' ELSE COALESCE(us.email, '') END as email,
+			CASE WHEN top.user_id IS NULL THEN '' ELSE COALESCE(us.username, '') END as username,
+			CASE WHEN top.user_id IS NULL THEN '' ELSE COALESCE(us.notes, '') END as notes,
 			COUNT(*) as requests,
 			COALESCE(SUM(u.input_tokens + u.output_tokens + u.cache_creation_tokens + u.cache_read_tokens), 0) as tokens,
 			COALESCE(SUM(u.total_cost), 0) as cost,
 			COALESCE(SUM(u.actual_cost), 0) as actual_cost
 		FROM usage_logs u
+		LEFT JOIN top_users top ON u.user_id = top.user_id
 		LEFT JOIN users us ON u.user_id = us.id
-		WHERE u.user_id IN (SELECT user_id FROM top_users)
-		  AND u.created_at >= $4 AND u.created_at < $5
-		GROUP BY date, u.user_id, us.email, us.username, us.notes
+		WHERE u.created_at >= $4 AND u.created_at < $5
+		GROUP BY 1, 2, 3, 4, 5, 6, 7
 		ORDER BY date ASC, tokens DESC
 	`, orderBy, dateFormat)
 
@@ -138,7 +140,7 @@ func (r *usageLogRepository) GetUserUsageTrend(ctx context.Context, startTime, e
 	results = make([]UserUsageTrendPoint, 0)
 	for rows.Next() {
 		var row UserUsageTrendPoint
-		if err = rows.Scan(&row.Date, &row.UserID, &row.Email, &row.Username, &row.Notes, &row.Requests, &row.Tokens, &row.Cost, &row.ActualCost); err != nil {
+		if err = rows.Scan(&row.Date, &row.UserID, &row.Key, &row.Label, &row.Email, &row.Username, &row.Notes, &row.Requests, &row.Tokens, &row.Cost, &row.ActualCost); err != nil {
 			return nil, err
 		}
 		results = append(results, row)

@@ -107,3 +107,24 @@ func TestGetUserUsageTrendSort(t *testing.T) {
 		})
 	}
 }
+
+func TestGetUserUsageTrendIncludesOthers(t *testing.T) {
+	db, mock := newSQLMock(t)
+	repo := &usageLogRepository{sql: db}
+	start := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	end := start.Add(24 * time.Hour)
+
+	mock.ExpectQuery("__others__").
+		WithArgs(start, end, 8, start, end).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"date", "user_id", "key", "label", "email", "username", "notes", "requests", "tokens", "cost", "actual_cost",
+		}).AddRow("2026-07-01", 0, "__others__", "其他", "", "", "", 3, 300, 1.5, 1.2))
+
+	rows, err := repo.GetUserUsageTrend(context.Background(), start, end, "day", 8, "total_tokens")
+	require.NoError(t, err)
+	require.Equal(t, []UserUsageTrendPoint{{
+		Date: "2026-07-01", UserID: 0, Key: "__others__", Label: "其他",
+		Requests: 3, Tokens: 300, Cost: 1.5, ActualCost: 1.2,
+	}}, rows)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
