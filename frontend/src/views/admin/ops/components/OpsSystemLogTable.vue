@@ -5,6 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { opsAPI, type OpsRuntimeLogConfig, type OpsSystemLog, type OpsSystemLogSinkHealth } from '@/api/admin/ops'
 import Pagination from '@/components/common/Pagination.vue'
 import Select from '@/components/common/Select.vue'
+import OpsSystemLogDetails from './OpsSystemLogDetails.vue'
 import { useAppStore } from '@/stores'
 import { extractApiErrorMessage } from '@/utils/apiError'
 
@@ -27,6 +28,7 @@ const logs = ref<OpsSystemLog[]>([])
 const total = ref(0)
 const page = ref(1)
 const pageSize = ref(20)
+const expandedLogIDs = ref(new Set<number>())
 
 const health = ref<OpsSystemLogSinkHealth>({
   queue_depth: 0,
@@ -58,6 +60,7 @@ const filters = reactive({
   component: '',
   request_id: '',
   client_request_id: '',
+  trace_id: '',
   user_id: '',
   api_key_id: '',
   account_id: '',
@@ -146,6 +149,8 @@ const formatSystemLogDetail = (row: OpsSystemLog) => {
   const corrParts: string[] = []
   if (row.request_id) corrParts.push(`req=${row.request_id}`)
   if (row.client_request_id) corrParts.push(`client_req=${row.client_request_id}`)
+  const traceID = getExtraString(extra, 'trace_id')
+  if (traceID) corrParts.push(`trace=${traceID}`)
   if (row.user_id != null) corrParts.push(`user=${row.user_id}`)
   if (row.api_key_id != null) corrParts.push(`key=${row.api_key_id}`)
   if (row.account_id != null) corrParts.push(`acc=${row.account_id}`)
@@ -162,11 +167,56 @@ const formatSystemLogDetail = (row: OpsSystemLog) => {
   return parts.join('  ')
 }
 
+const isLogExpanded = (id: number) => expandedLogIDs.value.has(id)
+
+const toggleLogDetails = (id: number) => {
+  const next = new Set(expandedLogIDs.value)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  expandedLogIDs.value = next
+}
+
 const toRFC3339 = (value: string) => {
   if (!value) return undefined
   const d = new Date(value)
   if (Number.isNaN(d.getTime())) return undefined
   return d.toISOString()
+}
+
+const timeRangeMilliseconds: Record<typeof filters.time_range, number> = {
+  '5m': 5 * 60 * 1000,
+  '30m': 30 * 60 * 1000,
+  '1h': 60 * 60 * 1000,
+  '6h': 6 * 60 * 60 * 1000,
+  '24h': 24 * 60 * 60 * 1000,
+  '7d': 7 * 24 * 60 * 60 * 1000,
+  '30d': 30 * 24 * 60 * 60 * 1000
+}
+
+const buildCleanupTimeRange = () => {
+  const explicitStart = toRFC3339(filters.start_time)
+  const explicitEnd = toRFC3339(filters.end_time)
+  if (explicitStart && explicitEnd) {
+    return { start_time: explicitStart, end_time: explicitEnd }
+  }
+
+  if (explicitStart) {
+    return { start_time: explicitStart, end_time: new Date().toISOString() }
+  }
+
+  if (explicitEnd) {
+    const end = new Date(explicitEnd)
+    return {
+      start_time: new Date(end.getTime() - timeRangeMilliseconds['1h']).toISOString(),
+      end_time: explicitEnd
+    }
+  }
+
+  const end = new Date()
+  return {
+    start_time: new Date(end.getTime() - timeRangeMilliseconds[filters.time_range]).toISOString(),
+    end_time: end.toISOString()
+  }
 }
 
 const buildQuery = () => {
@@ -186,6 +236,7 @@ const buildQuery = () => {
   if (filters.component.trim()) query.component = filters.component.trim()
   if (filters.request_id.trim()) query.request_id = filters.request_id.trim()
   if (filters.client_request_id.trim()) query.client_request_id = filters.client_request_id.trim()
+  if (filters.trace_id.trim()) query.trace_id = filters.trace_id.trim()
   if (filters.user_id.trim()) {
     const v = Number.parseInt(filters.user_id.trim(), 10)
     if (Number.isFinite(v) && v > 0) query.user_id = v
@@ -293,13 +344,13 @@ const cleanupCurrentFilter = async () => {
   if (!ok) return
   try {
     const payload = {
-      start_time: toRFC3339(filters.start_time),
-      end_time: toRFC3339(filters.end_time),
+      ...buildCleanupTimeRange(),
       host: filters.host.trim() || undefined,
       level: filters.level.trim() || undefined,
       component: filters.component.trim() || undefined,
       request_id: filters.request_id.trim() || undefined,
       client_request_id: filters.client_request_id.trim() || undefined,
+      trace_id: filters.trace_id.trim() || undefined,
       user_id: filters.user_id.trim() ? Number.parseInt(filters.user_id.trim(), 10) : undefined,
       api_key_id: filters.api_key_id.trim() ? Number.parseInt(filters.api_key_id.trim(), 10) : undefined,
       account_id: filters.account_id.trim() ? Number.parseInt(filters.account_id.trim(), 10) : undefined,
@@ -330,6 +381,7 @@ const resetFilters = () => {
   filters.component = ''
   filters.request_id = ''
   filters.client_request_id = ''
+  filters.trace_id = ''
   filters.user_id = ''
   filters.api_key_id = ''
   filters.account_id = ''
@@ -480,6 +532,10 @@ onMounted(async () => {
         <input v-model="filters.client_request_id" type="text" class="input mt-1" />
       </label>
       <label class="text-xs text-gray-600 dark:text-gray-300">
+        {{ t('admin.ops.systemLogs.traceId') }}
+        <input v-model="filters.trace_id" type="text" class="input mt-1" />
+      </label>
+      <label class="text-xs text-gray-600 dark:text-gray-300">
         user_id
         <input v-model="filters.user_id" type="text" class="input mt-1" />
       </label>
@@ -526,9 +582,25 @@ onMounted(async () => {
           <div v-if="row.host" class="truncate text-xs text-gray-500 dark:text-gray-400" :title="row.host">
             {{ row.host }}
           </div>
-          <div class="whitespace-normal break-all text-xs text-gray-700 dark:text-gray-300">
-            {{ formatSystemLogDetail(row) }}
+          <div class="flex items-start gap-2">
+            <div class="min-w-0 flex-1 whitespace-normal break-all text-xs text-gray-700 dark:text-gray-300">
+              {{ formatSystemLogDetail(row) }}
+            </div>
+            <button
+              type="button"
+              class="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-gray-500 hover:bg-gray-100 hover:text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white"
+              :aria-expanded="isLogExpanded(row.id)"
+              :aria-label="t(isLogExpanded(row.id) ? 'admin.ops.systemLogs.hideDetails' : 'admin.ops.systemLogs.showDetails')"
+              :title="t(isLogExpanded(row.id) ? 'admin.ops.systemLogs.hideDetails' : 'admin.ops.systemLogs.showDetails')"
+              :data-testid="`toggle-system-log-${row.id}`"
+              @click="toggleLogDetails(row.id)"
+            >
+              <svg class="h-4 w-4 transition-transform" :class="{ 'rotate-180': isLogExpanded(row.id) }" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="m6 9 6 6 6-6" />
+              </svg>
+            </button>
           </div>
+          <OpsSystemLogDetails v-if="isLogExpanded(row.id)" :log="row" class="-mx-3 -mb-3 mt-3" />
         </div>
       </div>
       <div v-else class="overflow-auto">
@@ -542,20 +614,44 @@ onMounted(async () => {
             </tr>
           </thead>
           <tbody class="divide-y divide-gray-100 dark:divide-dark-800">
-            <tr v-for="row in logs" :key="row.id" class="align-top">
-              <td class="px-3 py-2 text-xs text-gray-700 dark:text-gray-300">{{ formatTime(row.created_at) }}</td>
-              <td class="px-3 py-2 text-xs text-gray-700 dark:text-gray-300">
-                <span class="block truncate" :title="row.host || '-'">{{ row.host || '-' }}</span>
-              </td>
-              <td class="px-3 py-2 text-xs">
-                <span class="inline-flex rounded-full px-2 py-0.5 font-semibold" :class="levelBadgeClass(row.level)">
-                  {{ row.level }}
-                </span>
-              </td>
-              <td class="px-3 py-2 text-xs text-gray-700 dark:text-gray-300 whitespace-normal break-all">
-                {{ formatSystemLogDetail(row) }}
-              </td>
-            </tr>
+            <template v-for="row in logs" :key="row.id">
+              <tr class="align-top">
+                <td class="px-3 py-2 text-xs text-gray-700 dark:text-gray-300">{{ formatTime(row.created_at) }}</td>
+                <td class="px-3 py-2 text-xs text-gray-700 dark:text-gray-300">
+                  <span class="block truncate" :title="row.host || '-'">{{ row.host || '-' }}</span>
+                </td>
+                <td class="px-3 py-2 text-xs">
+                  <span class="inline-flex rounded-full px-2 py-0.5 font-semibold" :class="levelBadgeClass(row.level)">
+                    {{ row.level }}
+                  </span>
+                </td>
+                <td class="px-3 py-2 text-xs text-gray-700 dark:text-gray-300">
+                  <div class="flex items-start gap-2">
+                    <div class="min-w-0 flex-1 whitespace-normal break-all">
+                      {{ formatSystemLogDetail(row) }}
+                    </div>
+                    <button
+                      type="button"
+                      class="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-gray-500 hover:bg-gray-100 hover:text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-gray-400 dark:hover:bg-dark-700 dark:hover:text-white"
+                      :aria-expanded="isLogExpanded(row.id)"
+                      :aria-label="t(isLogExpanded(row.id) ? 'admin.ops.systemLogs.hideDetails' : 'admin.ops.systemLogs.showDetails')"
+                      :title="t(isLogExpanded(row.id) ? 'admin.ops.systemLogs.hideDetails' : 'admin.ops.systemLogs.showDetails')"
+                      :data-testid="`toggle-system-log-${row.id}`"
+                      @click="toggleLogDetails(row.id)"
+                    >
+                      <svg class="h-4 w-4 transition-transform" :class="{ 'rotate-180': isLogExpanded(row.id) }" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="m6 9 6 6 6-6" />
+                      </svg>
+                    </button>
+                  </div>
+                </td>
+              </tr>
+              <tr v-if="isLogExpanded(row.id)">
+                <td colspan="4" class="p-0">
+                  <OpsSystemLogDetails :log="row" />
+                </td>
+              </tr>
+            </template>
           </tbody>
         </table>
       </div>

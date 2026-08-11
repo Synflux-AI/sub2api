@@ -191,6 +191,22 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_usage_logs_upstream_model_mismatch_c
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestPrepareNonTransactionalMigration_OpsSystemLogTraceIDIndexDropsInvalidIndexBeforeRetry(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	mock.ExpectQuery("SELECT EXISTS \\(").
+		WithArgs(opsSystemLogsTraceIDIndex).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+	mock.ExpectExec("DROP INDEX CONCURRENTLY IF EXISTS idx_ops_system_logs_trace_id").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+
+	err = prepareNonTransactionalMigration(context.Background(), db, opsSystemLogsTraceIDIndexMigration)
+	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestApplyMigrationsFS_PaymentOrdersOutTradeNoUniqueMigration_FailsFastOnDuplicatePrecheck(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)

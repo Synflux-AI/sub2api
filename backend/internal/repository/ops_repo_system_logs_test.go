@@ -23,6 +23,7 @@ func TestBuildOpsSystemLogsWhere_WithClientRequestIDAndUserID(t *testing.T) {
 		Component:       "http.access",
 		RequestID:       "req-1",
 		ClientRequestID: "creq-1",
+		TraceID:         " trace-exact-1 ",
 		UserID:          &userID,
 		APIKeyID:        &apiKeyID,
 		AccountID:       &accountID,
@@ -38,14 +39,20 @@ func TestBuildOpsSystemLogsWhere_WithClientRequestIDAndUserID(t *testing.T) {
 	if where == "" {
 		t.Fatalf("where should not be empty")
 	}
-	if len(args) != 13 {
-		t.Fatalf("args len = %d, want 13", len(args))
+	if len(args) != 14 {
+		t.Fatalf("args len = %d, want 14", len(args))
 	}
 	if !contains(where, "l.host = $") {
 		t.Fatalf("where should include host condition: %s", where)
 	}
 	if !contains(where, "COALESCE(l.client_request_id,'') = $") {
 		t.Fatalf("where should include client_request_id condition: %s", where)
+	}
+	if !contains(where, "l.extra ->> 'trace_id' = $") {
+		t.Fatalf("where should include exact trace_id condition: %s", where)
+	}
+	if got := args[7]; got != "trace-exact-1" {
+		t.Fatalf("trace_id arg = %v, want trimmed exact value", got)
 	}
 	if !contains(where, "l.user_id = $") {
 		t.Fatalf("where should include user_id condition: %s", where)
@@ -74,6 +81,7 @@ func TestBuildOpsSystemLogsCleanupWhere_WithClientRequestIDAndUserID(t *testing.
 	filter := &service.OpsSystemLogCleanupFilter{
 		Host:            "api-node-2",
 		ClientRequestID: "creq-9",
+		TraceID:         "trace-exact-9",
 		UserID:          &userID,
 		APIKeyID:        &apiKeyID,
 	}
@@ -82,14 +90,17 @@ func TestBuildOpsSystemLogsCleanupWhere_WithClientRequestIDAndUserID(t *testing.
 	if !hasConstraint {
 		t.Fatalf("expected hasConstraint=true")
 	}
-	if len(args) != 4 {
-		t.Fatalf("args len = %d, want 4", len(args))
+	if len(args) != 5 {
+		t.Fatalf("args len = %d, want 5", len(args))
 	}
 	if !contains(where, "l.host = $") {
 		t.Fatalf("where should include host condition: %s", where)
 	}
 	if !contains(where, "COALESCE(l.client_request_id,'') = $") {
 		t.Fatalf("where should include client_request_id condition: %s", where)
+	}
+	if !contains(where, "l.extra ->> 'trace_id' = $") {
+		t.Fatalf("cleanup where should include exact trace_id condition: %s", where)
 	}
 	if !contains(where, "l.user_id = $") {
 		t.Fatalf("where should include user_id condition: %s", where)
