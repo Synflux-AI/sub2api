@@ -415,6 +415,53 @@ func TestPassthroughStreamCleanEOFDoesNotRetryAfterSemanticOutput(t *testing.T) 
 	require.Contains(t, recorder.Body.String(), "event: message_start")
 }
 
+func TestPassthroughStreamClientDisconnectPreservesPartialUsageInsteadOfRetryingEOFRule(t *testing.T) {
+	upstream := &sequencedHTTPUpstream{responses: []sequencedUpstreamResponse{{
+		status: 200,
+		body:   `data: {"type":"message_start","message":{"usage":{"input_tokens":9,"cache_read_input_tokens":2}}}` + "\n\n",
+	}}}
+	svc := newErrorHandlingRulePassthroughService(t, upstream, &ErrorHandlingRuleSettings{
+		Enabled: true,
+		Rules: []ErrorHandlingRule{{
+			ID: "early-eof", StatusCodes: []int{http.StatusBadGateway}, Keywords: []string{"missing terminal event"},
+			Action: ErrorHandlingActionRetry, RetryCount: errorHandlingIntPtr(1), ExhaustedAction: ErrorHandlingExhaustedActionDefault,
+		}},
+	})
+	c, _ := newErrorHandlingRuleTestContextWithRecorder()
+	c.Writer = &failWriteResponseWriter{ResponseWriter: c.Writer}
+
+	result, err := svc.Forward(context.Background(), c, newErrorHandlingRulePassthroughAccount(), newErrorHandlingRuleStreamParsed(t))
+
+	require.ErrorContains(t, err, "missing terminal event")
+	require.NotNil(t, result, "observed usage must survive a downstream disconnect for billing")
+	require.True(t, result.StreamIncomplete)
+	require.True(t, result.ClientDisconnect)
+	require.Equal(t, 9, result.Usage.InputTokens)
+	require.Equal(t, 2, result.Usage.CacheReadInputTokens)
+	require.Equal(t, 1, upstream.calls, "a disconnected client must not trigger another upstream attempt")
+}
+
+func TestPassthroughStreamClientDisconnectPreservesPartialUsageInsteadOfRetryingErrorRule(t *testing.T) {
+	body := `data: {"type":"message_start","message":{"usage":{"input_tokens":7}}}` + "\n\n" +
+		"event: error\ndata: " + streamRuleConcurrencyError + "\n\n"
+	upstream := &sequencedHTTPUpstream{responses: []sequencedUpstreamResponse{{status: 200, body: body}}}
+	svc := newErrorHandlingRulePassthroughService(t, upstream, &ErrorHandlingRuleSettings{
+		Enabled: true,
+		Rules:   []ErrorHandlingRule{streamErrorRule(ErrorHandlingActionRetry, 1, ErrorHandlingExhaustedActionDefault)},
+	})
+	c, _ := newErrorHandlingRuleTestContextWithRecorder()
+	c.Writer = &failWriteResponseWriter{ResponseWriter: c.Writer}
+
+	result, err := svc.Forward(context.Background(), c, newErrorHandlingRulePassthroughAccount(), newErrorHandlingRuleStreamParsed(t))
+
+	require.ErrorContains(t, err, "missing terminal event")
+	require.NotNil(t, result, "observed usage must survive a downstream disconnect for billing")
+	require.True(t, result.StreamIncomplete)
+	require.True(t, result.ClientDisconnect)
+	require.Equal(t, 7, result.Usage.InputTokens)
+	require.Equal(t, 1, upstream.calls, "a disconnected client must not trigger another upstream attempt")
+}
+
 func TestPassthroughStreamEventBufferIsBoundedAcrossLines(t *testing.T) {
 	c, recorder := newErrorHandlingRuleTestContextWithRecorder()
 	svc := &GatewayService{cfg: &config.Config{Gateway: config.GatewayConfig{MaxLineSize: 128}}}

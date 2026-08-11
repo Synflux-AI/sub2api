@@ -765,15 +765,20 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthroughWithRu
 			// Unmatched events intentionally retain the legacy fallback contract;
 			// matched events end this attempt immediately with one rule decision.
 			sawAnyErrorEvent = true
-			decision := s.decideErrorHandlingRule(ctx, ruleTracker, account, statusCode, event.data, model, errorHandlingRuleDecisionOptions{
-				Attempt: attempt, IgnoreRetryElapsed: true, SemanticEventForwarded: semanticEventForwarded, IndependentRetryBudget: true,
-			})
-			if decision.Matched {
-				return &anthropicPassthroughStreamRuleMatch{
-					decision: decision, statusCode: statusCode, body: append([]byte(nil), event.data...),
-					errType: errType, errMessage: errMessage, rawEvent: append([]byte(nil), event.raw...),
-					semanticEventForwarded: semanticEventForwarded,
-				}, nil
+			// Once the downstream is gone, keep draining only to collect usage. A rule
+			// retry/failover would discard that partial result and can create extra
+			// upstream spend for a request that no longer has a receiver (#5148).
+			if !clientDisconnected && ctx.Err() == nil {
+				decision := s.decideErrorHandlingRule(ctx, ruleTracker, account, statusCode, event.data, model, errorHandlingRuleDecisionOptions{
+					Attempt: attempt, IgnoreRetryElapsed: true, SemanticEventForwarded: semanticEventForwarded, IndependentRetryBudget: true,
+				})
+				if decision.Matched {
+					return &anthropicPassthroughStreamRuleMatch{
+						decision: decision, statusCode: statusCode, body: append([]byte(nil), event.data...),
+						errType: errType, errMessage: errMessage, rawEvent: append([]byte(nil), event.raw...),
+						semanticEventForwarded: semanticEventForwarded,
+					}, nil
+				}
 			}
 		}
 
@@ -822,7 +827,7 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthroughWithRu
 							return resultWithUsage(), nil, fmt.Errorf("stream usage incomplete after timeout")
 						}
 					}
-					if !semanticEventForwarded && !sawAnyErrorEvent {
+					if !semanticEventForwarded && !sawAnyErrorEvent && !clientDisconnected && ctx.Err() == nil {
 						body := []byte(`{"type":"error","error":{"type":"stream_error","message":"stream usage incomplete: missing terminal event"}}`)
 						decision := s.decideErrorHandlingRule(ctx, ruleTracker, account, http.StatusBadGateway, body, model, errorHandlingRuleDecisionOptions{
 							Attempt: attempt, IgnoreRetryElapsed: true, IndependentRetryBudget: true,
