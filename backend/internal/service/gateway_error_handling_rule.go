@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,9 +14,35 @@ import (
 	"go.uber.org/zap"
 )
 
+type anthropicSafeError struct {
+	Type  string `json:"type"`
+	Error *struct {
+		Type    string `json:"type"`
+		Message string `json:"message"`
+	} `json:"error"`
+}
+
+func safeAnthropicError(body []byte) (string, string) {
+	var payload anthropicSafeError
+	if json.Unmarshal(body, &payload) == nil && payload.Error != nil {
+		errType := strings.TrimSpace(payload.Error.Type)
+		message := sanitizeUpstreamErrorMessage(strings.TrimSpace(payload.Error.Message))
+		if errType != "" && message != "" {
+			return errType, message
+		}
+	}
+	message := sanitizeUpstreamErrorMessage(strings.TrimSpace(extractUpstreamErrorMessage(body)))
+	if message == "" {
+		message = "Upstream request failed"
+	}
+	return "upstream_error", message
+}
+
 type errorHandlingRuleTracker struct {
 	ruleID  string
 	retries int
+
+	retriesByRule map[string]int
 
 	// evaluated 记录最近一次被规则引擎评估过的响应对象。转发主循环里有若干条
 	// 从 400 分支内部 break 出去的路径，它们带出的响应从没经过任何接入点，
@@ -35,6 +62,30 @@ func (t *errorHandlingRuleTracker) consume(ruleID string, retryLimit int) bool {
 	return true
 }
 
+func (t *errorHandlingRuleTracker) consumeForRule(ruleID string, retryLimit int) bool {
+	if t.retriesByRule == nil {
+		t.retriesByRule = make(map[string]int)
+	}
+	if t.retriesByRule[ruleID] >= retryLimit {
+		return false
+	}
+	t.retriesByRule[ruleID]++
+	return true
+}
+
+func (t *errorHandlingRuleTracker) retryCount(ruleID string, independent bool) int {
+	if t == nil {
+		return 0
+	}
+	if !independent {
+		return t.retries
+	}
+	if t.retriesByRule == nil {
+		return 0
+	}
+	return t.retriesByRule[ruleID]
+}
+
 func (t *errorHandlingRuleTracker) markEvaluated(resp *http.Response) {
 	t.evaluated = resp
 }
@@ -51,8 +102,34 @@ const (
 	errorHandlingRuleOutcomeDone
 )
 
+type errorHandlingRuleDecision struct {
+	Matched          bool
+	RuleID           string
+	RuleName         string
+	ConfiguredAction string
+	EffectiveAction  string
+	RetryDelay       time.Duration
+	ExhaustedAction  string
+	DowngradeReason  string
+	RetryUsed        int
+	RetryLimit       int
+	RetryElapsed     time.Duration
+}
+
+type errorHandlingRuleDecisionOptions struct {
+	Attempt                int
+	RetryStart             time.Time
+	IgnoreRetryElapsed     bool
+	SemanticEventForwarded bool
+	IndependentRetryBudget bool
+}
+
+func isErrorHandlingRuleAccount(account *Account) bool {
+	return account != nil && account.Platform == PlatformAnthropic && account.Type == AccountTypeAPIKey
+}
+
 func (s *GatewayService) errorHandlingRulesActive(ctx context.Context, account *Account) bool {
-	if account == nil || account.Type != AccountTypeAPIKey || s == nil || s.settingService == nil {
+	if !isErrorHandlingRuleAccount(account) || s == nil || s.settingService == nil {
 		return false
 	}
 	settings := s.settingService.GetErrorHandlingRuleSettingsCached(ctx)
@@ -60,7 +137,7 @@ func (s *GatewayService) errorHandlingRulesActive(ctx context.Context, account *
 }
 
 func (s *GatewayService) matchErrorHandlingRuleForAccount(ctx context.Context, account *Account, statusCode int, respBody []byte) (*ErrorHandlingRule, int) {
-	if account == nil || account.Type != AccountTypeAPIKey || s == nil || s.settingService == nil {
+	if !isErrorHandlingRuleAccount(account) || s == nil || s.settingService == nil {
 		return nil, 0
 	}
 	settings := s.settingService.GetErrorHandlingRuleSettingsCached(ctx)
@@ -88,6 +165,83 @@ func restoreErrorHandlingRuleBody(resp *http.Response, respBody []byte) {
 	resp.Body = io.NopCloser(bytes.NewReader(respBody))
 }
 
+// decideErrorHandlingRule only matches rules, consumes the selected rule's retry
+// budget, and computes the effective action. Response writes, sleeps, and account
+// side effects are deliberately left to the caller.
+func (s *GatewayService) decideErrorHandlingRule(
+	ctx context.Context,
+	tracker *errorHandlingRuleTracker,
+	account *Account,
+	statusCode int,
+	respBody []byte,
+	reqModel string,
+	opts errorHandlingRuleDecisionOptions,
+) errorHandlingRuleDecision {
+	if s.builtinSignatureHandlingOwns(ctx, account, statusCode, respBody, reqModel) {
+		return errorHandlingRuleDecision{}
+	}
+	rule, retryLimit := s.matchErrorHandlingRuleForAccount(ctx, account, statusCode, respBody)
+	if rule == nil {
+		return errorHandlingRuleDecision{}
+	}
+
+	decision := errorHandlingRuleDecision{
+		Matched:          true,
+		RuleID:           rule.ID,
+		RuleName:         rule.Name,
+		ConfiguredAction: rule.Action,
+		EffectiveAction:  rule.Action,
+		ExhaustedAction:  rule.ExhaustedAction,
+		RetryLimit:       retryLimit,
+	}
+	if !opts.RetryStart.IsZero() {
+		decision.RetryElapsed = time.Since(opts.RetryStart)
+	}
+
+	if opts.SemanticEventForwarded &&
+		(rule.Action == ErrorHandlingActionRetry || rule.Action == ErrorHandlingActionFailover) {
+		decision.EffectiveAction = ErrorHandlingActionPassthrough
+		decision.DowngradeReason = "semantic_output_started"
+		return decision
+	}
+	if rule.Action != ErrorHandlingActionRetry {
+		return decision
+	}
+	if tracker == nil {
+		decision.EffectiveAction = ErrorHandlingActionFailover
+		decision.DowngradeReason = "retry_tracker_missing"
+		return decision
+	}
+
+	consumeRetry := tracker.consume
+	if opts.IndependentRetryBudget {
+		consumeRetry = tracker.consumeForRule
+	}
+	switch {
+	case !consumeRetry(rule.ID, retryLimit):
+		decision.EffectiveAction = ErrorHandlingActionFailover
+		decision.DowngradeReason = "retry_budget_exhausted"
+		decision.RetryUsed = retryLimit
+	case !opts.IgnoreRetryElapsed && decision.RetryElapsed >= maxRetryElapsed:
+		decision.EffectiveAction = ErrorHandlingActionFailover
+		decision.DowngradeReason = "retry_window_elapsed"
+		decision.RetryUsed = tracker.retryCount(rule.ID, opts.IndependentRetryBudget)
+	case opts.Attempt >= maxRetryAttempts:
+		decision.EffectiveAction = ErrorHandlingActionFailover
+		decision.DowngradeReason = "max_attempts_reached"
+		decision.RetryUsed = tracker.retryCount(rule.ID, opts.IndependentRetryBudget)
+	default:
+		decision.RetryUsed = tracker.retryCount(rule.ID, opts.IndependentRetryBudget)
+		decision.RetryDelay = retryBackoffDelay(opts.Attempt)
+		if !opts.IgnoreRetryElapsed {
+			if remaining := maxRetryElapsed - decision.RetryElapsed; decision.RetryDelay > remaining {
+				decision.RetryDelay = remaining
+			}
+		}
+	}
+	return decision
+}
+
 func (s *GatewayService) applyErrorHandlingRule(
 	ctx context.Context,
 	c *gin.Context,
@@ -101,45 +255,56 @@ func (s *GatewayService) applyErrorHandlingRule(
 	passthroughPath bool,
 ) (errorHandlingRuleOutcome, *ForwardResult, error) {
 	tracker.markEvaluated(resp)
-
-	if s.builtinSignatureHandlingOwns(ctx, account, resp.StatusCode, respBody, reqModel) {
+	decision := s.decideErrorHandlingRule(ctx, tracker, account, resp.StatusCode, respBody, reqModel, errorHandlingRuleDecisionOptions{
+		Attempt: attempt, RetryStart: retryStart,
+	})
+	if !decision.Matched {
 		return errorHandlingRuleOutcomeNone, nil, nil
 	}
+	s.logErrorHandlingRuleDecision(ctx, c, account, resp.StatusCode, resp.Header, respBody, attempt, passthroughPath, decision)
 
-	rule, retryLimit := s.matchErrorHandlingRuleForAccount(ctx, account, resp.StatusCode, respBody)
-	if rule == nil {
-		return errorHandlingRuleOutcomeNone, nil, nil
-	}
-
-	// 先把动作定下来再执行，日志才能一条讲清「配的是什么」和「实际做了什么」。
-	action := rule.Action
-	retryUsed := 0
-	downgrade := ""
-	elapsed := time.Since(retryStart)
-	if action == ErrorHandlingActionRetry {
-		switch {
-		case !tracker.consume(rule.ID, retryLimit):
-			action, downgrade = ErrorHandlingActionFailover, "retry_budget_exhausted"
-			retryUsed = retryLimit
-		case elapsed >= maxRetryElapsed:
-			action, downgrade = ErrorHandlingActionFailover, "retry_window_elapsed"
-			retryUsed = tracker.retries
-		case attempt >= maxRetryAttempts:
-			action, downgrade = ErrorHandlingActionFailover, "max_attempts_reached"
-			retryUsed = tracker.retries
-		default:
-			retryUsed = tracker.retries
+	switch decision.EffectiveAction {
+	case ErrorHandlingActionPassthrough:
+		return errorHandlingRuleOutcomeDone, nil, s.writeErrorHandlingRulePassthrough(ctx, c, resp, respBody, account, reqModel)
+	case ErrorHandlingActionFailover:
+		return errorHandlingRuleOutcomeDone, nil, s.errorHandlingRuleFailover(ctx, resp, respBody, account, reqModel, decision, false)
+	case ErrorHandlingActionRetry:
+		if decision.RetryDelay > 0 {
+			if err := sleepWithContext(ctx, decision.RetryDelay); err != nil {
+				return errorHandlingRuleOutcomeDone, nil, err
+			}
 		}
+		return errorHandlingRuleOutcomeRetry, nil, nil
+	default:
+		gatewayLog(ctx).Warn("error_handling_rule_unknown_action",
+			zap.String("rule_id", decision.RuleID), zap.String("rule_action", decision.ConfiguredAction))
+		return errorHandlingRuleOutcomeNone, nil, nil
+	}
+}
+
+func (s *GatewayService) logErrorHandlingRuleDecision(
+	ctx context.Context,
+	c *gin.Context,
+	account *Account,
+	statusCode int,
+	respHeader http.Header,
+	respBody []byte,
+	attempt int,
+	passthroughPath bool,
+	decision errorHandlingRuleDecision,
+) {
+	if !decision.Matched {
+		return
 	}
 
 	appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 		Platform:           account.Platform,
 		AccountID:          account.ID,
 		AccountName:        account.Name,
-		UpstreamStatusCode: resp.StatusCode,
-		UpstreamRequestID:  resp.Header.Get("x-request-id"),
+		UpstreamStatusCode: statusCode,
+		UpstreamRequestID:  respHeader.Get("x-request-id"),
 		Passthrough:        passthroughPath,
-		Kind:               "error_handling_rule_" + action,
+		Kind:               "error_handling_rule_" + decision.EffectiveAction,
 		Message:            extractUpstreamErrorMessage(respBody),
 		Detail: func() string {
 			if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
@@ -158,51 +323,28 @@ func (s *GatewayService) applyErrorHandlingRule(
 	// warn+ 写进 ops_system_logs；生产把 log.level 调到 warn 时 info 行会被 zap
 	// 直接丢掉，Vector 也就没得采。引擎只在上游报错时才触发，warn 不会刷屏。
 	fields := []zap.Field{
-		zap.String("rule_id", rule.ID),
-		zap.String("rule_name", rule.Name),
-		zap.String("rule_action", rule.Action),
-		zap.String("outcome", action),
-		zap.Int("upstream_status_code", resp.StatusCode),
-		zap.String("upstream_request_id", resp.Header.Get("x-request-id")),
+		zap.String("rule_id", decision.RuleID),
+		zap.String("rule_name", decision.RuleName),
+		zap.String("rule_action", decision.ConfiguredAction),
+		zap.String("outcome", decision.EffectiveAction),
+		zap.String("exhausted_action", decision.ExhaustedAction),
+		zap.Int("upstream_status_code", statusCode),
+		zap.String("upstream_request_id", respHeader.Get("x-request-id")),
 		zap.Int64("account_id", account.ID),
 		zap.String("account_name", account.Name),
 		zap.String("platform", account.Platform),
 		zap.Bool("passthrough_path", passthroughPath),
 		zap.Int("attempt", attempt),
-		zap.Duration("retry_elapsed", elapsed),
+		zap.Duration("retry_elapsed", decision.RetryElapsed),
 		zap.String("upstream_message", truncateString(sanitizeUpstreamErrorMessage(extractUpstreamErrorMessage(respBody)), 256)),
 	}
-	if rule.Action == ErrorHandlingActionRetry {
-		fields = append(fields, zap.Int("rule_retry_used", retryUsed), zap.Int("rule_retry_limit", retryLimit))
+	if decision.ConfiguredAction == ErrorHandlingActionRetry {
+		fields = append(fields, zap.Int("rule_retry_used", decision.RetryUsed), zap.Int("rule_retry_limit", decision.RetryLimit))
 	}
-	if downgrade != "" {
-		fields = append(fields, zap.String("downgrade_reason", downgrade))
+	if decision.DowngradeReason != "" {
+		fields = append(fields, zap.String("downgrade_reason", decision.DowngradeReason))
 	}
 	gatewayLog(ctx).Warn("error_handling_rule_matched", fields...)
-
-	switch action {
-	case ErrorHandlingActionPassthrough:
-		return errorHandlingRuleOutcomeDone, nil, s.writeErrorHandlingRulePassthrough(ctx, c, resp, respBody, account, reqModel)
-	case ErrorHandlingActionFailover:
-		return errorHandlingRuleOutcomeDone, nil, s.errorHandlingRuleFailover(ctx, resp, respBody, account, reqModel)
-	case ErrorHandlingActionRetry:
-		delay := retryBackoffDelay(attempt)
-		if remaining := maxRetryElapsed - elapsed; delay > remaining {
-			delay = remaining
-		}
-		if delay > 0 {
-			if err := sleepWithContext(ctx, delay); err != nil {
-				return errorHandlingRuleOutcomeDone, nil, err
-			}
-		}
-		return errorHandlingRuleOutcomeRetry, nil, nil
-	default:
-		// matchErrorHandlingRule 已经过滤掉未知 action，这里是兜底：绝不能让未知
-		// 动作掉进 retry 分支——那条路不消耗重试计数，等于无上限原地重试。
-		gatewayLog(ctx).Warn("error_handling_rule_unknown_action",
-			zap.String("rule_id", rule.ID), zap.String("rule_action", rule.Action))
-		return errorHandlingRuleOutcomeNone, nil, nil
-	}
 }
 
 // writeErrorHandlingRulePassthrough commits the exact upstream status and body.
@@ -239,12 +381,35 @@ func (s *GatewayService) writeErrorHandlingRulePassthrough(ctx context.Context, 
 	return fmt.Errorf("upstream error: %d (error handling rule passthrough) message=%s", resp.StatusCode, message)
 }
 
-func (s *GatewayService) errorHandlingRuleFailover(ctx context.Context, resp *http.Response, respBody []byte, account *Account, reqModel string) error {
+func (s *GatewayService) errorHandlingRuleFailover(
+	ctx context.Context,
+	resp *http.Response,
+	respBody []byte,
+	account *Account,
+	reqModel string,
+	decision errorHandlingRuleDecision,
+	streamRule bool,
+) error {
 	restoreErrorHandlingRuleBody(resp, respBody)
 	s.handleFailoverSideEffects(ctx, resp, account, reqModel)
+	errType, errMessage := safeAnthropicError(respBody)
+	retryableOnSameAccount := account.IsPoolMode() && account.IsPoolModeRetryableStatus(resp.StatusCode)
+	nextAccountAction := NextAccountLegacyRetry
+	if streamRule {
+		// SSE rule retries are fully owned by retry_count inside the service attempt
+		// loop. Pool-mode retries must not stack when the rule switches account.
+		retryableOnSameAccount = false
+		nextAccountAction = NextAccountRetry
+	}
 	return &UpstreamFailoverError{
 		StatusCode:             resp.StatusCode,
 		ResponseBody:           respBody,
-		RetryableOnSameAccount: account.IsPoolMode() && account.IsPoolModeRetryableStatus(resp.StatusCode),
+		ResponseHeaders:        resp.Header.Clone(),
+		RetryableOnSameAccount: retryableOnSameAccount,
+		NextAccountAction:      nextAccountAction,
+		ErrorRuleID:            decision.RuleID,
+		ExhaustedAction:        decision.ExhaustedAction,
+		SafeErrorType:          errType,
+		SafeErrorMessage:       errMessage,
 	}
 }

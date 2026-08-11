@@ -1,8 +1,6 @@
 package service
 
-// 本文件由 gateway_service.go 纯移动拆分而来：Anthropic APIKey 直通
-// （passthrough）转发路径及其流式/非流式响应与 usage 解析。仅做代码搬迁，
-// 无任何行为变更。
+// Anthropic APIKey 直通（passthrough）转发路径，以及流式/非流式响应和 usage 解析。
 
 import (
 	"bufio"
@@ -95,6 +93,7 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 	var resp *http.Response
 	retryStart := time.Now()
 	var errorRuleTracker errorHandlingRuleTracker
+	var streamState anthropicPassthroughStreamState
 	for attempt := 1; attempt <= maxRetryAttempts; attempt++ {
 		upstreamCtx, releaseUpstreamCtx := detachStreamUpstreamContext(ctx, input.RequestStream)
 		upstreamReq, wireBody, err := s.buildUpstreamRequestAnthropicAPIKeyPassthrough(upstreamCtx, c, account, input.Body, token)
@@ -206,6 +205,59 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 				continue
 			}
 			break
+		}
+
+		if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices && input.RequestStream {
+			streamResult, ruleMatch, streamErr := s.handleStreamingResponseAnthropicAPIKeyPassthroughWithRules(
+				ctx, resp, c, account, input.StartTime, input.RequestModel, &errorRuleTracker, &streamState, attempt,
+			)
+			_ = resp.Body.Close()
+			if ruleMatch != nil {
+				s.logErrorHandlingRuleDecision(ctx, c, account, ruleMatch.statusCode, resp.Header, ruleMatch.body, attempt, true, ruleMatch.decision)
+				switch ruleMatch.decision.EffectiveAction {
+				case ErrorHandlingActionRetry:
+					if ruleMatch.decision.RetryDelay > 0 {
+						if err := sleepWithContext(ctx, ruleMatch.decision.RetryDelay); err != nil {
+							return nil, err
+						}
+					}
+					continue
+				case ErrorHandlingActionFailover:
+					virtualResp := &http.Response{StatusCode: ruleMatch.statusCode, Header: resp.Header.Clone(), Body: http.NoBody}
+					err := s.errorHandlingRuleFailover(ctx, virtualResp, ruleMatch.body, account, input.RequestModel, ruleMatch.decision, true)
+					if failoverErr, ok := err.(*UpstreamFailoverError); ok {
+						failoverErr.SafeToFailoverAfterWrite = !ruleMatch.semanticEventForwarded
+					}
+					return nil, err
+				case ErrorHandlingActionPassthrough:
+					err := s.writeAnthropicPassthroughStreamRuleError(ctx, c, resp, account, input.RequestModel, ruleMatch)
+					if partial := partialStreamUsageResult(c, resp, streamResult, input.OriginalModel, input.RequestModel, input.StartTime, err); partial != nil {
+						return partial, err
+					}
+					return nil, err
+				}
+			}
+			if streamErr != nil {
+				if partial := partialStreamUsageResult(c, resp, streamResult, input.OriginalModel, input.RequestModel, input.StartTime, streamErr); partial != nil {
+					return partial, streamErr
+				}
+				return nil, streamErr
+			}
+			if streamResult == nil || streamResult.usage == nil {
+				streamResult = &streamingResult{usage: &ClaudeUsage{}}
+			}
+			return &ForwardResult{
+				RequestID:                     resp.Header.Get("x-request-id"),
+				Usage:                         *streamResult.usage,
+				Model:                         input.OriginalModel,
+				UpstreamModel:                 input.RequestModel,
+				UpstreamResponseModel:         observedUpstreamResponseModel(c),
+				UpstreamResponseModelConflict: observedUpstreamResponseModelConflict(c),
+				Stream:                        true,
+				Duration:                      time.Since(input.StartTime),
+				FirstTokenMs:                  streamResult.firstTokenMs,
+				ClientDisconnect:              streamResult.clientDisconnect,
+			}, nil
 		}
 
 		break
@@ -323,20 +375,7 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 	var usage *ClaudeUsage
 	var firstTokenMs *int
 	var clientDisconnect bool
-	if input.RequestStream {
-		streamResult, err := s.handleStreamingResponseAnthropicAPIKeyPassthrough(ctx, resp, c, account, input.StartTime, input.RequestModel)
-		if err != nil {
-			// 流中断时保留已观测到的 usage 与错误一起返回，避免上游已计量的请求
-			// 完全漏记漏计费（issue #5148）。
-			if partial := partialStreamUsageResult(c, resp, streamResult, input.OriginalModel, input.RequestModel, input.StartTime, err); partial != nil {
-				return partial, err
-			}
-			return nil, err
-		}
-		usage = streamResult.usage
-		firstTokenMs = streamResult.firstTokenMs
-		clientDisconnect = streamResult.clientDisconnect
-	} else {
+	if !input.RequestStream {
 		usage, err = s.handleNonStreamingResponseAnthropicAPIKeyPassthrough(ctx, resp, c, account)
 		if err != nil {
 			return nil, err
@@ -433,6 +472,110 @@ func (s *GatewayService) buildUpstreamRequestAnthropicAPIKeyPassthrough(
 	return req, body, nil
 }
 
+const anthropicPassthroughSSEFramingAllowance = 4 * 1024
+
+type anthropicPassthroughSSEEvent struct {
+	raw       []byte
+	eventName string
+	data      []byte
+}
+
+type anthropicPassthroughStreamRuleMatch struct {
+	decision               errorHandlingRuleDecision
+	statusCode             int
+	body                   []byte
+	errType                string
+	errMessage             string
+	rawEvent               []byte
+	semanticEventForwarded bool
+	synthetic              bool
+}
+
+type anthropicPassthroughStreamState struct {
+	semanticEventForwarded bool
+}
+
+func buildAnthropicPassthroughSSEEvent(lines []string, terminated bool) anthropicPassthroughSSEEvent {
+	var raw strings.Builder
+	dataLines := make([]string, 0, 1)
+	eventName := ""
+	for _, line := range lines {
+		_, _ = raw.WriteString(line)
+		_ = raw.WriteByte('\n')
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "event:") {
+			eventName = strings.TrimSpace(strings.TrimPrefix(trimmed, "event:"))
+		}
+		if data, ok := extractAnthropicSSEDataLine(line); ok {
+			dataLines = append(dataLines, data)
+		}
+	}
+	if terminated {
+		_ = raw.WriteByte('\n')
+	}
+	return anthropicPassthroughSSEEvent{
+		raw:       []byte(raw.String()),
+		eventName: eventName,
+		data:      []byte(strings.Join(dataLines, "\n")),
+	}
+}
+
+func anthropicPassthroughSSEError(event anthropicPassthroughSSEEvent) (int, string, string, bool) {
+	var payload anthropicSafeError
+	parsed := json.Unmarshal(event.data, &payload) == nil
+	errorObjectNonEmpty := false
+	if parsed && payload.Type == "error" {
+		var envelope map[string]json.RawMessage
+		var fields map[string]json.RawMessage
+		if json.Unmarshal(event.data, &envelope) == nil && json.Unmarshal(envelope["error"], &fields) == nil {
+			errorObjectNonEmpty = len(fields) > 0
+		}
+	}
+	isError := strings.EqualFold(strings.TrimSpace(event.eventName), "error") ||
+		(parsed && payload.Type == "error" && payload.Error != nil && errorObjectNonEmpty)
+	if !isError {
+		return 0, "", "", false
+	}
+	errType, message := safeAnthropicError(event.data)
+	statusCode := http.StatusInternalServerError
+	switch errType {
+	case "invalid_request_error":
+		statusCode = http.StatusBadRequest
+	case "authentication_error":
+		statusCode = http.StatusUnauthorized
+	case "permission_error":
+		statusCode = http.StatusForbidden
+	case "not_found_error":
+		statusCode = http.StatusNotFound
+	case "request_too_large":
+		statusCode = http.StatusRequestEntityTooLarge
+	case "rate_limit_error":
+		statusCode = http.StatusTooManyRequests
+	case "overloaded_error":
+		statusCode = 529
+	}
+	return statusCode, errType, message, true
+}
+
+func anthropicPassthroughSSEEventIsSemantic(event anthropicPassthroughSSEEvent) bool {
+	if _, _, _, isError := anthropicPassthroughSSEError(event); isError {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(event.eventName), "ping") {
+		return false
+	}
+	if gjson.GetBytes(event.data, "type").String() == "ping" {
+		return false
+	}
+	for _, line := range strings.Split(strings.TrimSuffix(string(event.raw), "\n"), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed != "" && !strings.HasPrefix(trimmed, ":") {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 	ctx context.Context,
 	resp *http.Response,
@@ -441,6 +584,29 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 	startTime time.Time,
 	model string,
 ) (*streamingResult, error) {
+	result, match, err := s.handleStreamingResponseAnthropicAPIKeyPassthroughWithRules(
+		ctx, resp, c, account, startTime, model, nil, nil, 0,
+	)
+	if match != nil {
+		return result, fmt.Errorf("stream matched error handling rule %s", match.decision.RuleID)
+	}
+	return result, err
+}
+
+func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthroughWithRules(
+	ctx context.Context,
+	resp *http.Response,
+	c *gin.Context,
+	account *Account,
+	startTime time.Time,
+	model string,
+	ruleTracker *errorHandlingRuleTracker,
+	streamState *anthropicPassthroughStreamState,
+	attempt int,
+) (*streamingResult, *anthropicPassthroughStreamRuleMatch, error) {
+	if streamState == nil {
+		streamState = &anthropicPassthroughStreamState{}
+	}
 	observer := upstreamResponseModelObserverFromContext(c)
 	if observer == nil {
 		observer = beginUpstreamResponseModelObservation(c)
@@ -449,13 +615,9 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 		s.rateLimitService.UpdateSessionWindow(ctx, account, resp.Header)
 	}
 
-	writeAnthropicPassthroughResponseHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
-
-	contentType := strings.TrimSpace(resp.Header.Get("Content-Type"))
-	if contentType == "" {
-		contentType = "text/event-stream"
-	}
-	c.Header("Content-Type", contentType)
+	// Only transport headers are stable across attempts. Attempt-local headers are
+	// applied immediately before the first semantic event, if they are still mutable.
+	c.Header("Content-Type", "text/event-stream")
 	if c.Writer.Header().Get("Cache-Control") == "" {
 		c.Header("Cache-Control", "no-cache")
 	}
@@ -463,26 +625,38 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 		c.Header("Connection", "keep-alive")
 	}
 	c.Header("X-Accel-Buffering", "no")
-	if v := resp.Header.Get("x-request-id"); v != "" {
-		c.Header("x-request-id", v)
+	applyAttemptHeaders := func() {
+		if c.Writer.Written() {
+			return
+		}
+		writeAnthropicPassthroughResponseHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
+		c.Header("Content-Type", "text/event-stream")
+		c.Header("Cache-Control", "no-cache")
+		c.Header("Connection", "keep-alive")
+		c.Header("X-Accel-Buffering", "no")
 	}
 
 	w := c.Writer
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		return nil, errors.New("streaming not supported")
+		return nil, nil, errors.New("streaming not supported")
 	}
 
 	usage := &ClaudeUsage{}
 	var firstTokenMs *int
 	clientDisconnected := false
 	sawTerminalEvent := false
+	// Keep semantic output sticky across rule retries. This remains a safety net
+	// even though a matched retry/failover is already downgraded after semantics.
+	semanticEventForwarded := streamState.semanticEventForwarded
+	sawAnyErrorEvent := false
 
 	scanner := bufio.NewScanner(resp.Body)
 	maxLineSize := defaultMaxLineSize
 	if s.cfg != nil && s.cfg.Gateway.MaxLineSize > 0 {
 		maxLineSize = s.cfg.Gateway.MaxLineSize
 	}
+	maxEventSize := maxLineSize + anthropicPassthroughSSEFramingAllowance
 	scanBuf := getSSEScannerBuf64K()
 	scanner.Buffer(scanBuf[:0], maxLineSize)
 
@@ -557,81 +731,150 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 		}
 		keepaliveTimer.Reset(keepaliveInterval)
 	}
-	inPartialEvent := false
+	pendingEventLines := make([]string, 0, 4)
+	pendingEventSize := 0
+	resultWithUsage := func() *streamingResult {
+		return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected}
+	}
+	writeEvent := func(event anthropicPassthroughSSEEvent, semantic bool) {
+		if clientDisconnected {
+			return
+		}
+		if semantic {
+			applyAttemptHeaders()
+		}
+		restored := reverseToolNamesIfPresent(c, event.raw)
+		n, err := w.Write(restored)
+		if semantic && n > 0 {
+			semanticEventForwarded = true
+			streamState.semanticEventForwarded = true
+		}
+		if err != nil {
+			clientDisconnected = true
+			logger.CtxPrintf(ctx, "service.gateway", "[Anthropic passthrough] Client disconnected during streaming, continue draining upstream for usage: account=%d", account.ID)
+			return
+		}
+		flusher.Flush()
+		lastDataAt = time.Now()
+		resetKeepaliveTimer()
+	}
+	processEvent := func(event anthropicPassthroughSSEEvent) (*anthropicPassthroughStreamRuleMatch, error) {
+		statusCode, errType, errMessage, isError := anthropicPassthroughSSEError(event)
+		if isError {
+			// Do not synthesize a second EOF error after any upstream error event.
+			// Unmatched events intentionally retain the legacy fallback contract;
+			// matched events end this attempt immediately with one rule decision.
+			sawAnyErrorEvent = true
+			// Once the downstream is gone, keep draining only to collect usage. A rule
+			// retry/failover would discard that partial result and can create extra
+			// upstream spend for a request that no longer has a receiver (#5148).
+			if !clientDisconnected && ctx.Err() == nil {
+				decision := s.decideErrorHandlingRule(ctx, ruleTracker, account, statusCode, event.data, model, errorHandlingRuleDecisionOptions{
+					Attempt: attempt, IgnoreRetryElapsed: true, SemanticEventForwarded: semanticEventForwarded, IndependentRetryBudget: true,
+				})
+				if decision.Matched {
+					return &anthropicPassthroughStreamRuleMatch{
+						decision: decision, statusCode: statusCode, body: append([]byte(nil), event.data...),
+						errType: errType, errMessage: errMessage, rawEvent: append([]byte(nil), event.raw...),
+						semanticEventForwarded: semanticEventForwarded,
+					}, nil
+				}
+			}
+		}
+
+		semantic := anthropicPassthroughSSEEventIsSemantic(event)
+		data := strings.TrimSpace(string(event.data))
+		if data != "" {
+			observer.ObserveAnthropic([]byte(data))
+			if anthropicStreamEventIsTerminal(event.eventName, data) {
+				sawTerminalEvent = true
+			}
+			if semantic && firstTokenMs == nil && data != "[DONE]" {
+				ms := int(time.Since(startTime).Milliseconds())
+				firstTokenMs = &ms
+			}
+			s.parseSSEUsagePassthrough(data, usage)
+		} else if anthropicStreamEventIsTerminal(event.eventName, "") {
+			sawTerminalEvent = true
+		}
+		writeEvent(event, semantic)
+		return nil, nil
+	}
+	processPendingEvent := func(terminated bool) (*anthropicPassthroughStreamRuleMatch, error) {
+		if len(pendingEventLines) == 0 {
+			if terminated {
+				writeEvent(anthropicPassthroughSSEEvent{raw: []byte("\n")}, false)
+			}
+			return nil, nil
+		}
+		event := buildAnthropicPassthroughSSEEvent(pendingEventLines, terminated)
+		pendingEventLines = pendingEventLines[:0]
+		pendingEventSize = 0
+		return processEvent(event)
+	}
 
 	for {
 		select {
 		case ev, ok := <-events:
 			if !ok {
-				if !clientDisconnected {
-					// 兜底补刷，确保最后一个未以空行结尾的事件也能及时送达客户端。
-					flusher.Flush()
+				if match, err := processPendingEvent(false); match != nil || err != nil {
+					return resultWithUsage(), match, err
 				}
 				if !sawTerminalEvent {
 					if clientDisconnected && streamInterval > 0 {
 						lastRead := time.Unix(0, atomic.LoadInt64(&lastReadAt))
 						if time.Since(lastRead) >= streamInterval {
-							return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: true}, fmt.Errorf("stream usage incomplete after timeout")
+							return resultWithUsage(), nil, fmt.Errorf("stream usage incomplete after timeout")
 						}
 					}
-					return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected}, fmt.Errorf("stream usage incomplete: missing terminal event")
+					if !semanticEventForwarded && !sawAnyErrorEvent && !clientDisconnected && ctx.Err() == nil {
+						body := []byte(`{"type":"error","error":{"type":"stream_error","message":"stream usage incomplete: missing terminal event"}}`)
+						decision := s.decideErrorHandlingRule(ctx, ruleTracker, account, http.StatusBadGateway, body, model, errorHandlingRuleDecisionOptions{
+							Attempt: attempt, IgnoreRetryElapsed: true, IndependentRetryBudget: true,
+						})
+						if decision.Matched {
+							return resultWithUsage(), &anthropicPassthroughStreamRuleMatch{
+								decision: decision, statusCode: http.StatusBadGateway, body: body,
+								errType: "stream_error", errMessage: "stream usage incomplete: missing terminal event",
+								synthetic: true,
+							}, nil
+						}
+					}
+					return resultWithUsage(), nil, fmt.Errorf("stream usage incomplete: missing terminal event")
 				}
-				return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected}, nil
+				return resultWithUsage(), nil, nil
 			}
 			if ev.err != nil {
 				if sawTerminalEvent {
-					return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected}, nil
+					return resultWithUsage(), nil, nil
 				}
 				if clientDisconnected {
-					return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: true}, fmt.Errorf("stream usage incomplete after disconnect: %w", ev.err)
+					return resultWithUsage(), nil, fmt.Errorf("stream usage incomplete after disconnect: %w", ev.err)
 				}
 				if errors.Is(ev.err, context.Canceled) || errors.Is(ev.err, context.DeadlineExceeded) {
-					return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: true}, fmt.Errorf("stream usage incomplete: %w", ev.err)
+					clientDisconnected = true
+					return resultWithUsage(), nil, fmt.Errorf("stream usage incomplete: %w", ev.err)
 				}
 				if errors.Is(ev.err, bufio.ErrTooLong) {
 					logger.CtxPrintf(ctx, "service.gateway", "[Anthropic passthrough] SSE line too long: account=%d max_size=%d error=%v", account.ID, maxLineSize, ev.err)
-					return &streamingResult{usage: usage, firstTokenMs: firstTokenMs}, ev.err
+					return resultWithUsage(), nil, ev.err
 				}
-				return &streamingResult{usage: usage, firstTokenMs: firstTokenMs}, fmt.Errorf("stream read error: %w", ev.err)
+				return resultWithUsage(), nil, fmt.Errorf("stream read error: %w", ev.err)
 			}
 
 			line := ev.line
-			if data, ok := extractAnthropicSSEDataLine(line); ok {
-				trimmed := strings.TrimSpace(data)
-				observer.ObserveAnthropic([]byte(trimmed))
-				if anthropicStreamEventIsTerminal("", trimmed) {
-					sawTerminalEvent = true
+			if line == "" {
+				if match, err := processPendingEvent(true); match != nil || err != nil {
+					return resultWithUsage(), match, err
 				}
-				if firstTokenMs == nil && trimmed != "" && trimmed != "[DONE]" {
-					ms := int(time.Since(startTime).Milliseconds())
-					firstTokenMs = &ms
-				}
-				s.parseSSEUsagePassthrough(data, usage)
-			} else {
-				trimmed := strings.TrimSpace(line)
-				if strings.HasPrefix(trimmed, "event:") && anthropicStreamEventIsTerminal(strings.TrimSpace(strings.TrimPrefix(trimmed, "event:")), "") {
-					sawTerminalEvent = true
-				}
+				continue
 			}
-
-			if !clientDisconnected {
-				restored := string(reverseToolNamesIfPresent(c, []byte(line)))
-				if _, err := io.WriteString(w, restored); err != nil {
-					clientDisconnected = true
-					logger.CtxPrintf(ctx, "service.gateway", "[Anthropic passthrough] Client disconnected during streaming, continue draining upstream for usage: account=%d", account.ID)
-				} else if _, err := io.WriteString(w, "\n"); err != nil {
-					clientDisconnected = true
-					logger.CtxPrintf(ctx, "service.gateway", "[Anthropic passthrough] Client disconnected during streaming, continue draining upstream for usage: account=%d", account.ID)
-				} else if line == "" {
-					// 按 SSE 事件边界刷出，减少每行 flush 带来的 syscall 开销。
-					flusher.Flush()
-					lastDataAt = time.Now()
-					resetKeepaliveTimer()
-					inPartialEvent = false
-				} else {
-					inPartialEvent = true
-				}
+			pendingEventSize += len(line) + 1
+			if pendingEventSize > maxEventSize {
+				logger.CtxPrintf(ctx, "service.gateway", "[Anthropic passthrough] SSE event too long: account=%d max_size=%d", account.ID, maxEventSize)
+				return resultWithUsage(), nil, bufio.ErrTooLong
 			}
+			pendingEventLines = append(pendingEventLines, line)
 
 		case <-intervalCh:
 			lastRead := time.Unix(0, atomic.LoadInt64(&lastReadAt))
@@ -639,19 +882,19 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 				continue
 			}
 			if clientDisconnected {
-				return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: true}, fmt.Errorf("stream usage incomplete after timeout")
+				return resultWithUsage(), nil, fmt.Errorf("stream usage incomplete after timeout")
 			}
 			logger.CtxPrintf(ctx, "service.gateway", "[Anthropic passthrough] Stream data interval timeout: account=%d model=%s interval=%s", account.ID, model, streamInterval)
 			if s.rateLimitService != nil {
 				s.rateLimitService.HandleStreamTimeout(ctx, account, model)
 			}
-			return &streamingResult{usage: usage, firstTokenMs: firstTokenMs}, fmt.Errorf("stream data interval timeout")
+			return resultWithUsage(), nil, fmt.Errorf("stream data interval timeout")
 
 		case <-keepaliveCh:
 			if clientDisconnected {
 				continue
 			}
-			if inPartialEvent {
+			if len(pendingEventLines) > 0 {
 				resetKeepaliveTimer()
 				continue
 			}
@@ -669,6 +912,48 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 			resetKeepaliveTimer()
 		}
 	}
+}
+
+func (s *GatewayService) writeAnthropicPassthroughStreamRuleError(
+	ctx context.Context,
+	c *gin.Context,
+	resp *http.Response,
+	account *Account,
+	model string,
+	match *anthropicPassthroughStreamRuleMatch,
+) error {
+	if match == nil {
+		return errors.New("missing Anthropic stream rule match")
+	}
+	scheduleOllamaCloudUsageActivity(s.deferredService, account)
+	if s.rateLimitService != nil {
+		_ = s.rateLimitService.HandleUpstreamError(ctx, account, match.statusCode, resp.Header, match.body, model)
+	}
+	setOpsUpstreamError(c, match.statusCode, match.errMessage, "")
+	MarkOpsStreamError(c, match.errType, match.errMessage, match.statusCode)
+
+	if !c.Writer.Written() {
+		writeAnthropicPassthroughResponseHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
+		c.Header("Content-Type", "text/event-stream")
+		c.Header("Cache-Control", "no-cache")
+		c.Header("Connection", "keep-alive")
+		c.Header("X-Accel-Buffering", "no")
+	}
+	event := match.rawEvent
+	if match.synthetic {
+		event = []byte("event: error\ndata: " + string(match.body) + "\n\n")
+	}
+	if len(event) > 0 {
+		if _, err := c.Writer.Write(event); err != nil {
+			MarkResponseCommitted(c)
+			return err
+		}
+		if flusher, ok := c.Writer.(http.Flusher); ok {
+			flusher.Flush()
+		}
+	}
+	MarkResponseCommitted(c)
+	return fmt.Errorf("upstream SSE error: %d (error handling rule passthrough) message=%s", match.statusCode, match.errMessage)
 }
 
 func extractAnthropicSSEDataLine(line string) (string, bool) {

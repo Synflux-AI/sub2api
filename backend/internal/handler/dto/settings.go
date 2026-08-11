@@ -486,12 +486,13 @@ type RectifierSettings struct {
 }
 
 type ErrorHandlingRule struct {
-	ID          string   `json:"id"`
-	Name        string   `json:"name"`
-	StatusCodes []int    `json:"status_codes"`
-	Keywords    []string `json:"keywords"`
-	Action      string   `json:"action"`
-	RetryCount  *int     `json:"retry_count"`
+	ID              string   `json:"id"`
+	Name            string   `json:"name"`
+	StatusCodes     []int    `json:"status_codes"`
+	Keywords        []string `json:"keywords"`
+	Action          string   `json:"action"`
+	RetryCount      *int     `json:"retry_count"`
+	ExhaustedAction string   `json:"exhausted_action"`
 }
 
 type ErrorHandlingRuleSettings struct {

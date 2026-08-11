@@ -114,6 +114,12 @@ func TestNormalizeErrorHandlingRulesClearsRetryCountForNonRetryActions(t *testin
 	require.Nil(t, rules[1].RetryCount)
 }
 
+func TestNormalizeErrorHandlingRulesDefaultsExhaustedAction(t *testing.T) {
+	rules := []ErrorHandlingRule{{ID: "a", StatusCodes: []int{429}, Action: ErrorHandlingActionRetry}}
+	normalizeErrorHandlingRules(rules)
+	require.Equal(t, ErrorHandlingExhaustedActionDefault, rules[0].ExhaustedAction)
+}
+
 func TestValidateErrorHandlingRuleSettings(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -123,8 +129,10 @@ func TestValidateErrorHandlingRuleSettings(t *testing.T) {
 		{"合法：只有状态码", &ErrorHandlingRuleSettings{Rules: []ErrorHandlingRule{{ID: "a", StatusCodes: []int{429}, Action: ErrorHandlingActionRetry}}}, false},
 		{"合法：只有关键字", &ErrorHandlingRuleSettings{Rules: []ErrorHandlingRule{{ID: "a", Keywords: []string{"x"}, Action: ErrorHandlingActionPassthrough}}}, false},
 		{"合法：0 次重试（命中即换号）", &ErrorHandlingRuleSettings{Rules: []ErrorHandlingRule{{ID: "a", Keywords: []string{"x"}, Action: ErrorHandlingActionRetry, RetryCount: errorHandlingIntPtr(0)}}}, false},
+		{"合法：耗尽后安全透传", &ErrorHandlingRuleSettings{Rules: []ErrorHandlingRule{{ID: "a", Keywords: []string{"x"}, Action: ErrorHandlingActionRetry, ExhaustedAction: ErrorHandlingExhaustedActionPassthrough}}}, false},
 		{"非法：状态码和关键字都为空", &ErrorHandlingRuleSettings{Rules: []ErrorHandlingRule{{ID: "a", Action: ErrorHandlingActionRetry}}}, true},
 		{"非法：未知 action", &ErrorHandlingRuleSettings{Rules: []ErrorHandlingRule{{ID: "a", Keywords: []string{"x"}, Action: "explode"}}}, true},
+		{"非法：未知 exhausted_action", &ErrorHandlingRuleSettings{Rules: []ErrorHandlingRule{{ID: "a", Keywords: []string{"x"}, Action: ErrorHandlingActionRetry, ExhaustedAction: "raw"}}}, true},
 		{"非法：负数重试次数", &ErrorHandlingRuleSettings{Rules: []ErrorHandlingRule{{ID: "a", Keywords: []string{"x"}, Action: ErrorHandlingActionRetry, RetryCount: errorHandlingIntPtr(-1)}}}, true},
 		{"非法：重试次数超上限", &ErrorHandlingRuleSettings{Rules: []ErrorHandlingRule{{ID: "a", Keywords: []string{"x"}, Action: ErrorHandlingActionRetry, RetryCount: errorHandlingIntPtr(5)}}}, true},
 		{"非法：状态码越界", &ErrorHandlingRuleSettings{Rules: []ErrorHandlingRule{{ID: "a", StatusCodes: []int{99}, Action: ErrorHandlingActionRetry}}}, true},

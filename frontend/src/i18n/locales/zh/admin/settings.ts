@@ -1147,7 +1147,7 @@ export default {
       errorHandlingRule: {
         title: '错误处理规则',
         description:
-          '按状态码和/或关键字匹配上游错误响应，命中后按配置的动作处理。仅对 API Key 账号生效。换任何账号都会复现的确定性错误（如 prompt is too long、max_tokens 超限），建议配成「直接返回客户端」，避免空耗重试预算直至账号池耗尽。',
+          '按状态码和/或关键字匹配上游错误响应，命中后按配置的动作处理。仅对 Anthropic 平台的 Claude Console API Key 账号生效。换任何账号都会复现的确定性错误（如 prompt is too long、max_tokens 超限），建议配成「直接返回客户端」，避免空耗重试预算直至账号池耗尽。',
         enabled: '启用错误处理规则',
         enabledHint: '独立开关，不受「启用请求整流器」总开关影响',
         defaultRetryCount: '默认原地重试次数',
@@ -1165,6 +1165,11 @@ export default {
         retryCount: '本规则重试次数',
         retryCountPlaceholder: '留空则用默认值',
         noRetryForAction: '该动作不做同账号重试，无需配置重试次数',
+        exhaustedAction: '全部账号失败后',
+        exhaustedActionDefault: '使用默认安全错误映射',
+        exhaustedActionPassthrough: '返回命中的错误类型和消息',
+        exhaustedActionWarning:
+          '仅返回解析出的错误类型和消息，不会暴露上游响应中的其他字段。',
         moveUp: '上移规则',
         moveDown: '下移规则',
         addRule: '添加规则',

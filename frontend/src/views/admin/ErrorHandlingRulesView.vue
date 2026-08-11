@@ -201,6 +201,44 @@
                 <p v-else class="text-xs text-gray-400 dark:text-gray-500">
                   {{ t("admin.settings.errorHandlingRule.noRetryForAction") }}
                 </p>
+
+                <div v-if="rule.action !== 'passthrough'">
+                  <label
+                    class="mb-1 block text-xs text-gray-500 dark:text-gray-400"
+                  >
+                    {{ t("admin.settings.errorHandlingRule.exhaustedAction") }}
+                  </label>
+                  <select
+                    v-model="rule.exhausted_action"
+                    class="input input-sm w-full sm:w-72"
+                    data-testid="error-handling-rule-exhausted-action"
+                  >
+                    <option value="default">
+                      {{
+                        t(
+                          "admin.settings.errorHandlingRule.exhaustedActionDefault",
+                        )
+                      }}
+                    </option>
+                    <option value="passthrough">
+                      {{
+                        t(
+                          "admin.settings.errorHandlingRule.exhaustedActionPassthrough",
+                        )
+                      }}
+                    </option>
+                  </select>
+                  <p
+                    v-if="rule.exhausted_action === 'passthrough'"
+                    class="mt-1 text-xs text-amber-600 dark:text-amber-400"
+                  >
+                    {{
+                      t(
+                        "admin.settings.errorHandlingRule.exhaustedActionWarning",
+                      )
+                    }}
+                  </p>
+                </div>
               </div>
 
               <button
@@ -253,6 +291,7 @@ import { adminAPI } from "@/api";
 import type {
   ErrorHandlingRule,
   ErrorHandlingRuleAction,
+  ErrorHandlingRuleExhaustedAction,
   ErrorHandlingRuleSettings,
 } from "@/api/admin/settings";
 import { useAppStore } from "@/stores";
@@ -277,6 +316,7 @@ type ErrorHandlingRuleFormItem = {
   keywords_text: string;
   action: ErrorHandlingRuleAction;
   retry_count: number | null;
+  exhausted_action: ErrorHandlingRuleExhaustedAction;
 };
 
 let errorHandlingRuleFormKeySequence = 0;
@@ -366,6 +406,7 @@ function addErrorHandlingRule() {
     keywords_text: "",
     action: "retry",
     retry_count: null,
+    exhausted_action: "default",
   });
 }
 
@@ -387,6 +428,7 @@ function toErrorHandlingRuleFormItems(
     keywords_text: (rule.keywords || []).join("\n"),
     action: rule.action || "retry",
     retry_count: rule.retry_count ?? null,
+    exhausted_action: rule.exhausted_action || "default",
   }));
 }
 
@@ -426,6 +468,8 @@ function buildErrorHandlingRulePayload(): ErrorHandlingRuleSettings | null {
         rule.retry_count === null
           ? null
           : clampErrorHandlingRetryCount(rule.retry_count),
+      exhausted_action:
+        rule.action === "passthrough" ? "default" : rule.exhausted_action,
     });
   }
 

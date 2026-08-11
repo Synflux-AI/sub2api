@@ -14,15 +14,19 @@ const (
 	ErrorHandlingActionRetry       = "retry"
 	ErrorHandlingActionFailover    = "failover"
 	ErrorHandlingActionPassthrough = "passthrough"
+
+	ErrorHandlingExhaustedActionDefault     = "default"
+	ErrorHandlingExhaustedActionPassthrough = "passthrough"
 )
 
 type ErrorHandlingRule struct {
-	ID          string   `json:"id"`
-	Name        string   `json:"name"`
-	StatusCodes []int    `json:"status_codes"`
-	Keywords    []string `json:"keywords"`
-	Action      string   `json:"action"`
-	RetryCount  *int     `json:"retry_count"`
+	ID              string   `json:"id"`
+	Name            string   `json:"name"`
+	StatusCodes     []int    `json:"status_codes"`
+	Keywords        []string `json:"keywords"`
+	Action          string   `json:"action"`
+	RetryCount      *int     `json:"retry_count"`
+	ExhaustedAction string   `json:"exhausted_action"`
 }
 
 type ErrorHandlingRuleSettings struct {
@@ -136,6 +140,10 @@ func normalizeErrorHandlingRules(rules []ErrorHandlingRule) {
 		if rule.Action != ErrorHandlingActionRetry {
 			rule.RetryCount = nil
 		}
+		rule.ExhaustedAction = strings.TrimSpace(rule.ExhaustedAction)
+		if rule.ExhaustedAction == "" {
+			rule.ExhaustedAction = ErrorHandlingExhaustedActionDefault
+		}
 		// 空 ID 会让 errorHandlingRuleTracker 把不同规则当成同一条（都是 ""），
 		// 重试计数被共用。补一个确定性的占位 ID：不用随机值，否则每次读配置
 		// 都变一次，日志里同一条规则的 rule_id 对不上。
@@ -172,6 +180,9 @@ func validateErrorHandlingRuleSettings(settings *ErrorHandlingRuleSettings) erro
 		if !isKnownErrorHandlingAction(rule.Action) {
 			return invalid("rule %d: unknown action %q", i+1, rule.Action)
 		}
+		if !isKnownErrorHandlingExhaustedAction(rule.ExhaustedAction) {
+			return invalid("rule %d: unknown exhausted_action %q", i+1, rule.ExhaustedAction)
+		}
 		if len(rule.StatusCodes) > errorHandlingRuleMaxStatusCodesPerRule {
 			return invalid("rule %d: too many status codes (max %d)", i+1, errorHandlingRuleMaxStatusCodesPerRule)
 		}
@@ -193,6 +204,15 @@ func validateErrorHandlingRuleSettings(settings *ErrorHandlingRuleSettings) erro
 		}
 	}
 	return nil
+}
+
+func isKnownErrorHandlingExhaustedAction(action string) bool {
+	switch action {
+	case "", ErrorHandlingExhaustedActionDefault, ErrorHandlingExhaustedActionPassthrough:
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *SettingService) GetErrorHandlingRuleSettings(ctx context.Context) (*ErrorHandlingRuleSettings, error) {
