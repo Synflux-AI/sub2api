@@ -124,8 +124,12 @@ type errorHandlingRuleDecisionOptions struct {
 	IndependentRetryBudget bool
 }
 
+func isErrorHandlingRuleAccount(account *Account) bool {
+	return account != nil && account.Platform == PlatformAnthropic && account.Type == AccountTypeAPIKey
+}
+
 func (s *GatewayService) errorHandlingRulesActive(ctx context.Context, account *Account) bool {
-	if account == nil || account.Type != AccountTypeAPIKey || s == nil || s.settingService == nil {
+	if !isErrorHandlingRuleAccount(account) || s == nil || s.settingService == nil {
 		return false
 	}
 	settings := s.settingService.GetErrorHandlingRuleSettingsCached(ctx)
@@ -133,7 +137,7 @@ func (s *GatewayService) errorHandlingRulesActive(ctx context.Context, account *
 }
 
 func (s *GatewayService) matchErrorHandlingRuleForAccount(ctx context.Context, account *Account, statusCode int, respBody []byte) (*ErrorHandlingRule, int) {
-	if account == nil || account.Type != AccountTypeAPIKey || s == nil || s.settingService == nil {
+	if !isErrorHandlingRuleAccount(account) || s == nil || s.settingService == nil {
 		return nil, 0
 	}
 	settings := s.settingService.GetErrorHandlingRuleSettingsCached(ctx)
@@ -263,7 +267,7 @@ func (s *GatewayService) applyErrorHandlingRule(
 	case ErrorHandlingActionPassthrough:
 		return errorHandlingRuleOutcomeDone, nil, s.writeErrorHandlingRulePassthrough(ctx, c, resp, respBody, account, reqModel)
 	case ErrorHandlingActionFailover:
-		return errorHandlingRuleOutcomeDone, nil, s.errorHandlingRuleFailover(ctx, resp, respBody, account, reqModel, decision)
+		return errorHandlingRuleOutcomeDone, nil, s.errorHandlingRuleFailover(ctx, resp, respBody, account, reqModel, decision, false)
 	case ErrorHandlingActionRetry:
 		if decision.RetryDelay > 0 {
 			if err := sleepWithContext(ctx, decision.RetryDelay); err != nil {
@@ -377,16 +381,32 @@ func (s *GatewayService) writeErrorHandlingRulePassthrough(ctx context.Context, 
 	return fmt.Errorf("upstream error: %d (error handling rule passthrough) message=%s", resp.StatusCode, message)
 }
 
-func (s *GatewayService) errorHandlingRuleFailover(ctx context.Context, resp *http.Response, respBody []byte, account *Account, reqModel string, decision errorHandlingRuleDecision) error {
+func (s *GatewayService) errorHandlingRuleFailover(
+	ctx context.Context,
+	resp *http.Response,
+	respBody []byte,
+	account *Account,
+	reqModel string,
+	decision errorHandlingRuleDecision,
+	streamRule bool,
+) error {
 	restoreErrorHandlingRuleBody(resp, respBody)
 	s.handleFailoverSideEffects(ctx, resp, account, reqModel)
 	errType, errMessage := safeAnthropicError(respBody)
+	retryableOnSameAccount := account.IsPoolMode() && account.IsPoolModeRetryableStatus(resp.StatusCode)
+	nextAccountAction := NextAccountLegacyRetry
+	if streamRule {
+		// SSE rule retries are fully owned by retry_count inside the service attempt
+		// loop. Pool-mode retries must not stack when the rule switches account.
+		retryableOnSameAccount = false
+		nextAccountAction = NextAccountRetry
+	}
 	return &UpstreamFailoverError{
 		StatusCode:             resp.StatusCode,
 		ResponseBody:           respBody,
 		ResponseHeaders:        resp.Header.Clone(),
-		RetryableOnSameAccount: false,
-		NextAccountAction:      NextAccountRetry,
+		RetryableOnSameAccount: retryableOnSameAccount,
+		NextAccountAction:      nextAccountAction,
 		ErrorRuleID:            decision.RuleID,
 		ExhaustedAction:        decision.ExhaustedAction,
 		SafeErrorType:          errType,

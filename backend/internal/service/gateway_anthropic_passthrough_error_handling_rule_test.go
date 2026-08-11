@@ -218,6 +218,11 @@ func TestPassthroughStreamStandardErrorEventWithInvalidJSONIsHeldAndReturnedOnce
 	require.Equal(t, 1, strings.Count(recorder.Body.String(), "event: error"))
 }
 
+func TestAnthropicPassthroughSSECommentIsNotSemantic(t *testing.T) {
+	event := buildAnthropicPassthroughSSEEvent([]string{" : upstream comment"}, true)
+	require.False(t, anthropicPassthroughSSEEventIsSemantic(event))
+}
+
 func TestPassthroughStreamUnmatchedErrorPreservesLegacyFallbackContract(t *testing.T) {
 	rawEvent := "event: error\ndata: " + streamRuleConcurrencyError + "\n\n"
 	upstream := &sequencedHTTPUpstream{responses: []sequencedUpstreamResponse{{status: 200, body: rawEvent}}}
@@ -249,6 +254,42 @@ func TestPassthroughStreamRuleDowngradesFailoverAfterSemanticOutput(t *testing.T
 	require.Equal(t, 1, upstream.calls)
 	require.Contains(t, recorder.Body.String(), "event: message_start")
 	require.Equal(t, 1, strings.Count(recorder.Body.String(), "event: error"))
+}
+
+func TestPassthroughStreamSemanticStateIsStickyAcrossAttempts(t *testing.T) {
+	svc := newErrorHandlingRulePassthroughService(t, &sequencedHTTPUpstream{responses: []sequencedUpstreamResponse{{status: 200}}}, &ErrorHandlingRuleSettings{
+		Enabled: true, Rules: []ErrorHandlingRule{streamErrorRule(ErrorHandlingActionRetry, 1, ErrorHandlingExhaustedActionDefault)},
+	})
+	c, _ := newErrorHandlingRuleTestContextWithRecorder()
+	account := newErrorHandlingRulePassthroughAccount()
+	var tracker errorHandlingRuleTracker
+	var streamState anthropicPassthroughStreamState
+
+	firstResp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader(streamRuleSuccess)),
+	}
+	_, match, err := svc.handleStreamingResponseAnthropicAPIKeyPassthroughWithRules(
+		context.Background(), firstResp, c, account, time.Now(), "claude-sonnet-4-5", &tracker, &streamState, 1,
+	)
+	require.NoError(t, err)
+	require.Nil(t, match)
+	require.True(t, streamState.semanticEventForwarded)
+
+	secondResp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader("event: error\ndata: " + streamRuleConcurrencyError + "\n\n")),
+	}
+	_, match, err = svc.handleStreamingResponseAnthropicAPIKeyPassthroughWithRules(
+		context.Background(), secondResp, c, account, time.Now(), "claude-sonnet-4-5", &tracker, &streamState, 2,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, match)
+	require.True(t, match.semanticEventForwarded)
+	require.Equal(t, ErrorHandlingActionPassthrough, match.decision.EffectiveAction)
+	require.Equal(t, "semantic_output_started", match.decision.DowngradeReason)
 }
 
 func TestPassthroughStreamRuleAllowsFailoverAfterUpstreamPing(t *testing.T) {
@@ -315,7 +356,7 @@ func TestPassthroughStreamCleanEOFAfterLocalKeepaliveCanFailOver(t *testing.T) {
 	}
 	var tracker errorHandlingRuleTracker
 	result, match, err := svc.handleStreamingResponseAnthropicAPIKeyPassthroughWithRules(
-		context.Background(), resp, c, newErrorHandlingRulePassthroughAccount(), time.Now(), "claude-sonnet-4-5", &tracker, 1,
+		context.Background(), resp, c, newErrorHandlingRulePassthroughAccount(), time.Now(), "claude-sonnet-4-5", &tracker, nil, 1,
 	)
 	_ = reader.Close()
 	<-done

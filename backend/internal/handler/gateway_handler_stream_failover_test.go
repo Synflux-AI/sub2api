@@ -173,6 +173,49 @@ func TestHandleFailoverExhaustedUsesRuleSafePassthroughSSEAfterPing(t *testing.T
 	require.Contains(t, recorder.Body.String(), `"type":"stream_error"`)
 }
 
+func TestHandleFailoverExhaustedUsesResponsesFailedEventForResponsesRequest(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	_, err := c.Writer.Write([]byte(": keepalive\n\n"))
+	require.NoError(t, err)
+
+	(&GatewayHandler{}).handleFailoverExhausted(c, &service.UpstreamFailoverError{
+		StatusCode:       http.StatusTooManyRequests,
+		ExhaustedAction:  service.ErrorHandlingExhaustedActionPassthrough,
+		SafeErrorType:    "rate_limit_error",
+		SafeErrorMessage: "Concurrency limit exceeded",
+	}, service.PlatformAnthropic, true)
+
+	body := recorder.Body.String()
+	require.Contains(t, body, "event: response.failed")
+	require.Contains(t, body, `"type":"response.failed"`)
+	require.NotContains(t, body, `data: {"type":"error"`)
+}
+
+func TestStreamRuleSingleAccountExhaustionUsesSafeError(t *testing.T) {
+	state := NewFailoverState(0, false)
+	failoverErr := &service.UpstreamFailoverError{
+		StatusCode:             http.StatusTooManyRequests,
+		RetryableOnSameAccount: false,
+		NextAccountAction:      service.NextAccountRetry,
+		ExhaustedAction:        service.ErrorHandlingExhaustedActionPassthrough,
+		SafeErrorType:          "rate_limit_error",
+		SafeErrorMessage:       "Concurrency limit exceeded for account, please retry later",
+	}
+	action := state.HandleFailoverError(context.Background(), &mockTempUnscheduler{}, 101, service.PlatformAnthropic, 5, failoverErr)
+	require.Equal(t, FailoverExhausted, action)
+	require.Same(t, failoverErr, state.LastFailoverErr)
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	(&GatewayHandler{}).handleFailoverExhausted(c, state.LastFailoverErr, service.PlatformAnthropic, false)
+	require.Equal(t, http.StatusTooManyRequests, recorder.Code)
+	require.Contains(t, recorder.Body.String(), "Concurrency limit exceeded")
+	require.NotContains(t, recorder.Body.String(), "No available accounts")
+}
+
 func TestStreamRuleFailoverSwitchesAccountsWithoutPoolModeRetryAndUsesLastSafeError(t *testing.T) {
 	state := NewFailoverState(1, false)
 	first := &service.UpstreamFailoverError{

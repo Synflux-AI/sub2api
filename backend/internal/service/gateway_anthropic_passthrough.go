@@ -93,6 +93,7 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 	var resp *http.Response
 	retryStart := time.Now()
 	var errorRuleTracker errorHandlingRuleTracker
+	var streamState anthropicPassthroughStreamState
 	for attempt := 1; attempt <= maxRetryAttempts; attempt++ {
 		upstreamCtx, releaseUpstreamCtx := detachStreamUpstreamContext(ctx, input.RequestStream)
 		upstreamReq, wireBody, err := s.buildUpstreamRequestAnthropicAPIKeyPassthrough(upstreamCtx, c, account, input.Body, token)
@@ -208,7 +209,7 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 
 		if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices && input.RequestStream {
 			streamResult, ruleMatch, streamErr := s.handleStreamingResponseAnthropicAPIKeyPassthroughWithRules(
-				ctx, resp, c, account, input.StartTime, input.RequestModel, &errorRuleTracker, attempt,
+				ctx, resp, c, account, input.StartTime, input.RequestModel, &errorRuleTracker, &streamState, attempt,
 			)
 			_ = resp.Body.Close()
 			if ruleMatch != nil {
@@ -223,7 +224,7 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 					continue
 				case ErrorHandlingActionFailover:
 					virtualResp := &http.Response{StatusCode: ruleMatch.statusCode, Header: resp.Header.Clone(), Body: http.NoBody}
-					err := s.errorHandlingRuleFailover(ctx, virtualResp, ruleMatch.body, account, input.RequestModel, ruleMatch.decision)
+					err := s.errorHandlingRuleFailover(ctx, virtualResp, ruleMatch.body, account, input.RequestModel, ruleMatch.decision, true)
 					if failoverErr, ok := err.(*UpstreamFailoverError); ok {
 						failoverErr.SafeToFailoverAfterWrite = !ruleMatch.semanticEventForwarded
 					}
@@ -490,13 +491,17 @@ type anthropicPassthroughStreamRuleMatch struct {
 	synthetic              bool
 }
 
+type anthropicPassthroughStreamState struct {
+	semanticEventForwarded bool
+}
+
 func buildAnthropicPassthroughSSEEvent(lines []string, terminated bool) anthropicPassthroughSSEEvent {
 	var raw strings.Builder
 	dataLines := make([]string, 0, 1)
 	eventName := ""
 	for _, line := range lines {
-		raw.WriteString(line)
-		raw.WriteByte('\n')
+		_, _ = raw.WriteString(line)
+		_ = raw.WriteByte('\n')
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "event:") {
 			eventName = strings.TrimSpace(strings.TrimPrefix(trimmed, "event:"))
@@ -506,7 +511,7 @@ func buildAnthropicPassthroughSSEEvent(lines []string, terminated bool) anthropi
 		}
 	}
 	if terminated {
-		raw.WriteByte('\n')
+		_ = raw.WriteByte('\n')
 	}
 	return anthropicPassthroughSSEEvent{
 		raw:       []byte(raw.String()),
@@ -580,7 +585,7 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
 	model string,
 ) (*streamingResult, error) {
 	result, match, err := s.handleStreamingResponseAnthropicAPIKeyPassthroughWithRules(
-		ctx, resp, c, account, startTime, model, nil, 0,
+		ctx, resp, c, account, startTime, model, nil, nil, 0,
 	)
 	if match != nil {
 		return result, fmt.Errorf("stream matched error handling rule %s", match.decision.RuleID)
@@ -596,8 +601,12 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthroughWithRu
 	startTime time.Time,
 	model string,
 	ruleTracker *errorHandlingRuleTracker,
+	streamState *anthropicPassthroughStreamState,
 	attempt int,
 ) (*streamingResult, *anthropicPassthroughStreamRuleMatch, error) {
+	if streamState == nil {
+		streamState = &anthropicPassthroughStreamState{}
+	}
 	observer := upstreamResponseModelObserverFromContext(c)
 	if observer == nil {
 		observer = beginUpstreamResponseModelObservation(c)
@@ -637,8 +646,10 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthroughWithRu
 	var firstTokenMs *int
 	clientDisconnected := false
 	sawTerminalEvent := false
-	sawErrorEvent := false
-	semanticEventForwarded := false
+	// Keep semantic output sticky across rule retries. This remains a safety net
+	// even though a matched retry/failover is already downgraded after semantics.
+	semanticEventForwarded := streamState.semanticEventForwarded
+	sawAnyErrorEvent := false
 
 	scanner := bufio.NewScanner(resp.Body)
 	maxLineSize := defaultMaxLineSize
@@ -736,14 +747,12 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthroughWithRu
 		n, err := w.Write(restored)
 		if semantic && n > 0 {
 			semanticEventForwarded = true
+			streamState.semanticEventForwarded = true
 		}
 		if err != nil {
 			clientDisconnected = true
 			logger.CtxPrintf(ctx, "service.gateway", "[Anthropic passthrough] Client disconnected during streaming, continue draining upstream for usage: account=%d", account.ID)
 			return
-		}
-		if semantic {
-			semanticEventForwarded = true
 		}
 		flusher.Flush()
 		lastDataAt = time.Now()
@@ -752,7 +761,10 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthroughWithRu
 	processEvent := func(event anthropicPassthroughSSEEvent) (*anthropicPassthroughStreamRuleMatch, error) {
 		statusCode, errType, errMessage, isError := anthropicPassthroughSSEError(event)
 		if isError {
-			sawErrorEvent = true
+			// Do not synthesize a second EOF error after any upstream error event.
+			// Unmatched events intentionally retain the legacy fallback contract;
+			// matched events end this attempt immediately with one rule decision.
+			sawAnyErrorEvent = true
 			decision := s.decideErrorHandlingRule(ctx, ruleTracker, account, statusCode, event.data, model, errorHandlingRuleDecisionOptions{
 				Attempt: attempt, IgnoreRetryElapsed: true, SemanticEventForwarded: semanticEventForwarded, IndependentRetryBudget: true,
 			})
@@ -810,7 +822,7 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthroughWithRu
 							return resultWithUsage(), nil, fmt.Errorf("stream usage incomplete after timeout")
 						}
 					}
-					if !semanticEventForwarded && !sawErrorEvent {
+					if !semanticEventForwarded && !sawAnyErrorEvent {
 						body := []byte(`{"type":"error","error":{"type":"stream_error","message":"stream usage incomplete: missing terminal event"}}`)
 						decision := s.decideErrorHandlingRule(ctx, ruleTracker, account, http.StatusBadGateway, body, model, errorHandlingRuleDecisionOptions{
 							Attempt: attempt, IgnoreRetryElapsed: true, IndependentRetryBudget: true,

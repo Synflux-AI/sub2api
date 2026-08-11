@@ -113,7 +113,7 @@ func TestGetAndUpdateErrorHandlingRuleSettingsRoundTrip(t *testing.T) {
 	rec := doErrorHandlingRulePut(t, h, UpdateErrorHandlingRuleSettingsRequest{
 		Enabled: true, DefaultRetryCount: 1,
 		Rules: []dto.ErrorHandlingRule{
-			{ID: "r1", Name: "限流重试", StatusCodes: []int{429}, Action: service.ErrorHandlingActionRetry, RetryCount: &retryCount},
+			{ID: "r1", Name: "限流重试", StatusCodes: []int{429}, Action: service.ErrorHandlingActionRetry, RetryCount: &retryCount, ExhaustedAction: service.ErrorHandlingExhaustedActionPassthrough},
 			{ID: "r2", Name: "超长直接透传", Keywords: []string{"prompt is too long"}, Action: service.ErrorHandlingActionPassthrough},
 		},
 	})

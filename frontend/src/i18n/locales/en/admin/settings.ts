@@ -1153,7 +1153,7 @@ export default {
       errorHandlingRule: {
         title: 'Error Handling Rules',
         description:
-          'Match upstream error responses by status code and/or keyword, then apply the configured action. API Key accounts only. For deterministic errors that reproduce on any account (prompt is too long, max_tokens over limit), prefer "Return to client" so they do not burn the retry budget and drain the account pool.',
+          'Match upstream error responses by status code and/or keyword, then apply the configured action. Applies only to Anthropic Claude Console API Key accounts. For deterministic errors that reproduce on any account (prompt is too long, max_tokens over limit), prefer "Return to client" so they do not burn the retry budget and drain the account pool.',
         enabled: 'Enable Error Handling Rules',
         enabledHint: 'Independent switch, not affected by the "Enable Request Rectifier" master switch',
         defaultRetryCount: 'Default In-Place Retry Count',
