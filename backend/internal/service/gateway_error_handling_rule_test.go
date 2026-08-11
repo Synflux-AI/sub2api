@@ -24,6 +24,14 @@ func TestErrorHandlingRuleTrackerZeroBudget(t *testing.T) {
 	require.False(t, tracker.consume("r1", 0))
 }
 
+func TestErrorHandlingRuleTrackerKeepsIndependentStreamBudgetsByRule(t *testing.T) {
+	var tracker errorHandlingRuleTracker
+	require.True(t, tracker.consumeForRule("r1", 1))
+	require.True(t, tracker.consumeForRule("r2", 1))
+	require.False(t, tracker.consumeForRule("r1", 1))
+	require.False(t, tracker.consumeForRule("r2", 1))
+}
+
 func newErrorHandlingRuleService(t *testing.T, settings *ErrorHandlingRuleSettings) *GatewayService {
 	t.Helper()
 	repo := &gatewayTTLSettingRepo{data: map[string]string{}}

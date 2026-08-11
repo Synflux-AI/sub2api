@@ -87,7 +87,7 @@ func TestUpdateErrorHandlingRuleSettingsRepoWriteFailureReturns500(t *testing.T)
 	rec := doErrorHandlingRulePut(t, h, UpdateErrorHandlingRuleSettingsRequest{
 		Enabled: true, DefaultRetryCount: 1,
 		Rules: []dto.ErrorHandlingRule{
-			{ID: "r1", Name: "限流重试", StatusCodes: []int{429}, Action: service.ErrorHandlingActionRetry, RetryCount: &retryCount},
+			{ID: "r1", Name: "限流重试", StatusCodes: []int{429}, Action: service.ErrorHandlingActionRetry, RetryCount: &retryCount, ExhaustedAction: service.ErrorHandlingExhaustedActionPassthrough},
 		},
 	})
 	require.GreaterOrEqual(t, rec.Code, http.StatusInternalServerError, "repo write failure must not be reported as a client error")
@@ -129,8 +129,10 @@ func TestGetAndUpdateErrorHandlingRuleSettingsRoundTrip(t *testing.T) {
 	require.Equal(t, []int{429}, updateResp.Data.Rules[0].StatusCodes)
 	require.NotNil(t, updateResp.Data.Rules[0].RetryCount)
 	require.Equal(t, 2, *updateResp.Data.Rules[0].RetryCount)
+	require.Equal(t, service.ErrorHandlingExhaustedActionPassthrough, updateResp.Data.Rules[0].ExhaustedAction)
 	require.Equal(t, service.ErrorHandlingActionPassthrough, updateResp.Data.Rules[1].Action)
 	require.Nil(t, updateResp.Data.Rules[1].RetryCount)
+	require.Equal(t, service.ErrorHandlingExhaustedActionDefault, updateResp.Data.Rules[1].ExhaustedAction)
 
 	getRec := httptest.NewRecorder()
 	getC, _ := gin.CreateTestContext(getRec)

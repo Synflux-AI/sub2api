@@ -1171,6 +1171,11 @@ export default {
         retryCount: 'This Rule\'s Retry Count',
         retryCountPlaceholder: 'Leave empty to use the default',
         noRetryForAction: 'This action does not retry on the same account',
+        exhaustedAction: 'After All Accounts Fail',
+        exhaustedActionDefault: 'Use the default safe error mapping',
+        exhaustedActionPassthrough: 'Return the matched error type and message',
+        exhaustedActionWarning:
+          'Only the parsed error type and message are returned; other upstream fields are never exposed.',
         moveUp: 'Move rule up',
         moveDown: 'Move rule down',
         addRule: 'Add Rule',

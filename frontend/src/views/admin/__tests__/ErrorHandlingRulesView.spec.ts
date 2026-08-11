@@ -116,6 +116,7 @@ describe("admin ErrorHandlingRulesView", () => {
           keywords: ["first"],
           action: "retry",
           retry_count: null,
+          exhausted_action: "default",
         },
         {
           id: "rule-b",
@@ -204,6 +205,7 @@ describe("admin ErrorHandlingRulesView", () => {
           keywords: ["first"],
           action: "retry",
           retry_count: null,
+          exhausted_action: "default",
         },
       ],
     });
@@ -232,6 +234,7 @@ describe("admin ErrorHandlingRulesView", () => {
           keywords: ["overloaded", "rate limit"],
           action: "retry",
           retry_count: null,
+          exhausted_action: "default",
         },
       ],
     });
@@ -375,5 +378,42 @@ describe("admin ErrorHandlingRulesView", () => {
     expect(card.text()).toContain(
       "admin.settings.errorHandlingRule.passthroughWarning",
     );
+  });
+
+  it("defaults and saves the exhausted account action for retry and failover rules", async () => {
+    getErrorHandlingRuleSettings.mockResolvedValue({
+      enabled: true,
+      default_retry_count: 1,
+      rules: [
+        {
+          id: "rule-a",
+          name: "Rule A",
+          status_codes: [429],
+          keywords: [],
+          action: "retry",
+          retry_count: 1,
+        },
+      ],
+    });
+
+    const wrapper = mountView();
+    await flushPromises();
+    const card = wrapper.get('[data-testid="error-handling-rule-card"]');
+    const exhaustedAction = card.get(
+      '[data-testid="error-handling-rule-exhausted-action"]',
+    );
+    expect((exhaustedAction.element as HTMLSelectElement).value).toBe("default");
+
+    await exhaustedAction.setValue("passthrough");
+    expect(card.text()).toContain(
+      "admin.settings.errorHandlingRule.exhaustedActionWarning",
+    );
+    await card.get('[data-testid="error-handling-rule-save"]').trigger("click");
+    await flushPromises();
+
+    expect(updateErrorHandlingRuleSettings.mock.calls[0][0].rules[0]).toMatchObject({
+      id: "rule-a",
+      exhausted_action: "passthrough",
+    });
   });
 });

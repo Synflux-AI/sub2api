@@ -1165,6 +1165,11 @@ export default {
         retryCount: '本规则重试次数',
         retryCountPlaceholder: '留空则用默认值',
         noRetryForAction: '该动作不做同账号重试，无需配置重试次数',
+        exhaustedAction: '全部账号失败后',
+        exhaustedActionDefault: '使用默认安全错误映射',
+        exhaustedActionPassthrough: '返回命中的错误类型和消息',
+        exhaustedActionWarning:
+          '仅返回解析出的错误类型和消息，不会暴露上游响应中的其他字段。',
         moveUp: '上移规则',
         moveDown: '下移规则',
         addRule: '添加规则',

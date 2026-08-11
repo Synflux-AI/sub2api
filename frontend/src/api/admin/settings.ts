@@ -1458,6 +1458,7 @@ export async function updateRectifierSettings(
  * - passthrough: return the upstream error to the client as-is
  */
 export type ErrorHandlingRuleAction = "retry" | "failover" | "passthrough";
+export type ErrorHandlingRuleExhaustedAction = "default" | "passthrough";
 
 /**
  * Error handling rule interface.
@@ -1471,6 +1472,8 @@ export interface ErrorHandlingRule {
   action: ErrorHandlingRuleAction;
   /** null means "use default_retry_count"; only meaningful for retry */
   retry_count: number | null;
+  /** Missing on legacy settings and treated as default by the backend. */
+  exhausted_action?: ErrorHandlingRuleExhaustedAction;
 }
 
 /**

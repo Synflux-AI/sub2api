@@ -670,6 +670,10 @@ type UpstreamFailoverError struct {
 	NextAccountAction        NextAccountAction
 	ClientStatusCode         int
 	ClientMessage            string
+	ErrorRuleID              string // 触发 failover 的错误处理规则 ID
+	ExhaustedAction          string // 账号池耗尽后的规则终态策略
+	SafeErrorType            string // 可安全返回给 Anthropic 客户端的错误类型
+	SafeErrorMessage         string // 可安全返回给 Anthropic 客户端的错误消息
 }
 
 func (e *UpstreamFailoverError) Error() string {

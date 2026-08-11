@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -119,4 +120,86 @@ func TestStreamWrittenGuard_NoByteWritten_GuardNotTriggered(t *testing.T) {
 	guardTriggered := c.Writer.Size() != sizeBeforeForward
 	require.False(t, guardTriggered,
 		"未写入任何字节时，守卫条件必须为 false，应允许正常 failover 继续")
+}
+
+func TestGatewayForwardMayFailoverAfterKeepaliveOnly(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	before := c.Writer.Size()
+	_, err := c.Writer.Write([]byte("event: ping\ndata: {\"type\":\"ping\"}\n\n"))
+	require.NoError(t, err)
+
+	require.True(t, gatewayForwardMayFailover(c, before, &service.UpstreamFailoverError{SafeToFailoverAfterWrite: true}))
+	require.False(t, gatewayForwardMayFailover(c, before, &service.UpstreamFailoverError{}))
+}
+
+func TestHandleFailoverExhaustedUsesRuleSafePassthroughJSON(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+
+	(&GatewayHandler{}).handleFailoverExhausted(c, &service.UpstreamFailoverError{
+		StatusCode:       http.StatusTooManyRequests,
+		ResponseBody:     []byte(`{"error":{"type":"rate_limit_error","message":"raw","secret":"must-not-leak"}}`),
+		ExhaustedAction:  service.ErrorHandlingExhaustedActionPassthrough,
+		SafeErrorType:    "rate_limit_error",
+		SafeErrorMessage: "Concurrency limit exceeded for account, please retry later",
+	}, service.PlatformAnthropic, false)
+
+	require.Equal(t, http.StatusTooManyRequests, recorder.Code)
+	require.Contains(t, recorder.Body.String(), `"type":"rate_limit_error"`)
+	require.Contains(t, recorder.Body.String(), "Concurrency limit exceeded")
+	require.NotContains(t, recorder.Body.String(), "must-not-leak")
+}
+
+func TestHandleFailoverExhaustedUsesRuleSafePassthroughSSEAfterPing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	_, err := c.Writer.Write([]byte("event: ping\ndata: {\"type\":\"ping\"}\n\n"))
+	require.NoError(t, err)
+
+	(&GatewayHandler{}).handleFailoverExhausted(c, &service.UpstreamFailoverError{
+		StatusCode:       http.StatusBadGateway,
+		ExhaustedAction:  service.ErrorHandlingExhaustedActionPassthrough,
+		SafeErrorType:    "stream_error",
+		SafeErrorMessage: "stream usage incomplete: missing terminal event",
+	}, service.PlatformAnthropic, true)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Contains(t, recorder.Body.String(), "event: ping")
+	require.Equal(t, 1, strings.Count(recorder.Body.String(), `"type":"error"`))
+	require.Contains(t, recorder.Body.String(), `"type":"stream_error"`)
+}
+
+func TestStreamRuleFailoverSwitchesAccountsWithoutPoolModeRetryAndUsesLastSafeError(t *testing.T) {
+	state := NewFailoverState(1, false)
+	first := &service.UpstreamFailoverError{
+		StatusCode:               http.StatusTooManyRequests,
+		RetryableOnSameAccount:   false,
+		NextAccountAction:        service.NextAccountRetry,
+		SafeToFailoverAfterWrite: true,
+	}
+	action := state.HandleFailoverError(context.Background(), &mockTempUnscheduler{}, 101, service.PlatformAnthropic, 5, first)
+	require.Equal(t, FailoverContinue, action)
+	require.Zero(t, state.SameAccountRetryCount[101], "rule retry_count must not stack with pool_mode_retry_count")
+	require.Contains(t, state.FailedAccountIDs, int64(101))
+
+	last := &service.UpstreamFailoverError{
+		StatusCode:             http.StatusTooManyRequests,
+		RetryableOnSameAccount: false,
+		NextAccountAction:      service.NextAccountRetry,
+		ExhaustedAction:        service.ErrorHandlingExhaustedActionPassthrough,
+		SafeErrorType:          "rate_limit_error",
+		SafeErrorMessage:       "Concurrency limit exceeded for account, please retry later",
+	}
+	action = state.HandleFailoverError(context.Background(), &mockTempUnscheduler{}, 202, service.PlatformAnthropic, 5, last)
+	require.Equal(t, FailoverExhausted, action)
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	(&GatewayHandler{}).handleFailoverExhausted(c, state.LastFailoverErr, service.PlatformAnthropic, false)
+	require.Equal(t, http.StatusTooManyRequests, recorder.Code)
+	require.Contains(t, recorder.Body.String(), "Concurrency limit exceeded")
 }
