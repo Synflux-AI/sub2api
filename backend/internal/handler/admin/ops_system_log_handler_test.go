@@ -159,6 +159,23 @@ func TestOpsSystemLogHandler_ListAcceptsHost(t *testing.T) {
 	}
 }
 
+func TestOpsSystemLogHandler_ListAcceptsTrimmedTraceID(t *testing.T) {
+	repo := &opsSystemLogCaptureRepo{}
+	svc := service.NewOpsService(repo, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	h := NewOpsHandler(svc)
+	r := newOpsSystemLogTestRouter(h, false)
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/logs?trace_id=%20trace-exact-1%20", nil)
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d, want 200", w.Code)
+	}
+	if repo.listFilter == nil || repo.listFilter.TraceID != "trace-exact-1" {
+		t.Fatalf("trace_id filter = %+v, want trace-exact-1", repo.listFilter)
+	}
+}
+
 func TestOpsSystemLogHandler_CleanupUnauthorized(t *testing.T) {
 	svc := service.NewOpsService(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	h := NewOpsHandler(svc)
@@ -258,6 +275,24 @@ func TestOpsSystemLogHandler_CleanupAcceptsHost(t *testing.T) {
 	}
 	if repo.cleanupFilter == nil || repo.cleanupFilter.Host != "api-node-1" {
 		t.Fatalf("host filter = %+v, want api-node-1", repo.cleanupFilter)
+	}
+}
+
+func TestOpsSystemLogHandler_CleanupAcceptsTrimmedTraceID(t *testing.T) {
+	repo := &opsSystemLogCaptureRepo{}
+	svc := service.NewOpsService(repo, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	h := NewOpsHandler(svc)
+	r := newOpsSystemLogTestRouter(h, true)
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/logs/cleanup", bytes.NewBufferString(`{"trace_id":"  trace-exact-1  "}`))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d, want 200", w.Code)
+	}
+	if repo.cleanupFilter == nil || repo.cleanupFilter.TraceID != "trace-exact-1" {
+		t.Fatalf("trace_id cleanup filter = %+v, want trace-exact-1", repo.cleanupFilter)
 	}
 }
 

@@ -242,6 +242,7 @@ type OpsSystemLogFilter struct {
 
 	RequestID       string
 	ClientRequestID string
+	TraceID         string
 	UserID          *int64
 	APIKeyID        *int64
 	AccountID       *int64
@@ -263,6 +264,7 @@ type OpsSystemLogCleanupFilter struct {
 
 	RequestID       string
 	ClientRequestID string
+	TraceID         string
 	UserID          *int64
 	APIKeyID        *int64
 	AccountID       *int64

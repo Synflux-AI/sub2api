@@ -1120,6 +1120,11 @@ func buildOpsSystemLogsWhere(filter *service.OpsSystemLogFilter) (string, []any,
 			clauses = append(clauses, "COALESCE(l.client_request_id,'') = $"+itoa(len(args)))
 			hasConstraint = true
 		}
+		if v := strings.TrimSpace(filter.TraceID); v != "" {
+			args = append(args, v)
+			clauses = append(clauses, "l.extra ->> 'trace_id' = $"+itoa(len(args)))
+			hasConstraint = true
+		}
 		if filter.UserID != nil && *filter.UserID > 0 {
 			args = append(args, *filter.UserID)
 			clauses = append(clauses, "l.user_id = $"+itoa(len(args)))
@@ -1169,6 +1174,7 @@ func buildOpsSystemLogsCleanupWhere(filter *service.OpsSystemLogCleanupFilter) (
 		Component:       filter.Component,
 		RequestID:       filter.RequestID,
 		ClientRequestID: filter.ClientRequestID,
+		TraceID:         filter.TraceID,
 		UserID:          filter.UserID,
 		APIKeyID:        filter.APIKeyID,
 		AccountID:       filter.AccountID,

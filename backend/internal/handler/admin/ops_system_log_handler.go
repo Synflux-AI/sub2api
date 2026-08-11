@@ -21,6 +21,7 @@ type opsSystemLogCleanupRequest struct {
 	Component       string `json:"component"`
 	RequestID       string `json:"request_id"`
 	ClientRequestID string `json:"client_request_id"`
+	TraceID         string `json:"trace_id"`
 	UserID          *int64 `json:"user_id"`
 	APIKeyID        *int64 `json:"api_key_id"`
 	AccountID       *int64 `json:"account_id"`
@@ -62,6 +63,7 @@ func (h *OpsHandler) ListSystemLogs(c *gin.Context) {
 		Component:       strings.TrimSpace(c.Query("component")),
 		RequestID:       strings.TrimSpace(c.Query("request_id")),
 		ClientRequestID: strings.TrimSpace(c.Query("client_request_id")),
+		TraceID:         strings.TrimSpace(c.Query("trace_id")),
 		Platform:        strings.TrimSpace(c.Query("platform")),
 		Model:           strings.TrimSpace(c.Query("model")),
 		Query:           strings.TrimSpace(c.Query("q")),
@@ -160,6 +162,7 @@ func (h *OpsHandler) CleanupSystemLogs(c *gin.Context) {
 		Component:       strings.TrimSpace(req.Component),
 		RequestID:       strings.TrimSpace(req.RequestID),
 		ClientRequestID: strings.TrimSpace(req.ClientRequestID),
+		TraceID:         strings.TrimSpace(req.TraceID),
 		UserID:          req.UserID,
 		APIKeyID:        req.APIKeyID,
 		AccountID:       req.AccountID,

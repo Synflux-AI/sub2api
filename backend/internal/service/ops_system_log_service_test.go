@@ -106,6 +106,7 @@ func TestOpsServiceCleanupSystemLogs_SuccessAndAudit(t *testing.T) {
 		Level:           "warn",
 		RequestID:       "req-1",
 		ClientRequestID: "creq-1",
+		TraceID:         "trace-exact-1",
 		UserID:          &userID,
 		APIKeyID:        &apiKeyID,
 		Query:           "timeout",
@@ -127,6 +128,9 @@ func TestOpsServiceCleanupSystemLogs_SuccessAndAudit(t *testing.T) {
 	}
 	if !strings.Contains(audit.Conditions, `"client_request_id":"creq-1"`) {
 		t.Fatalf("audit conditions should include client_request_id: %s", audit.Conditions)
+	}
+	if !strings.Contains(audit.Conditions, `"trace_id":"trace-exact-1"`) {
+		t.Fatalf("audit conditions should include trace_id: %s", audit.Conditions)
 	}
 	if !strings.Contains(audit.Conditions, `"user_id":7`) {
 		t.Fatalf("audit conditions should include user_id: %s", audit.Conditions)

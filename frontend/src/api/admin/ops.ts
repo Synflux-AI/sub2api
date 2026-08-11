@@ -870,6 +870,7 @@ export interface OpsSystemLogQuery {
   component?: string
   request_id?: string
   client_request_id?: string
+  trace_id?: string
   user_id?: number | null
   api_key_id?: number | null
   account_id?: number | null
@@ -886,6 +887,7 @@ export interface OpsSystemLogCleanupRequest {
   component?: string
   request_id?: string
   client_request_id?: string
+  trace_id?: string
   user_id?: number | null
   api_key_id?: number | null
   account_id?: number | null
