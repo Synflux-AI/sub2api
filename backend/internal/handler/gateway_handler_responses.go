@@ -361,25 +361,39 @@ func (h *GatewayHandler) responsesErrorResponse(c *gin.Context, status int, code
 
 // handleResponsesFailoverExhausted writes a failover-exhausted error in Responses format.
 func (h *GatewayHandler) handleResponsesFailoverExhausted(c *gin.Context, lastErr *service.UpstreamFailoverError, streamStarted bool) {
-	if streamStarted {
-		return // Can't write error after stream started
-	}
 	if lastErr != nil {
 		copyFailoverRetryAfter(c, lastErr.ResponseHeaders)
 	}
-	if lastErr != nil && lastErr.IsCredentialFailure() {
-		status, message := credentialFailoverClientResponse(lastErr)
-		h.responsesErrorResponse(c, status, "server_error", message)
-		return
-	}
 	statusCode := http.StatusBadGateway
+	errType := "server_error"
+	message := "All available accounts exhausted"
 	if lastErr != nil && lastErr.StatusCode > 0 {
 		statusCode = lastErr.StatusCode
 	}
-	if lastErr != nil && service.IsOpenAISilentRefusalErrorBody(lastErr.ResponseBody) {
-		service.SetOpsUpstreamError(c, statusCode, service.OpenAISilentRefusalClientMessage(), "")
-		h.responsesErrorResponse(c, http.StatusBadGateway, "upstream_error", service.OpenAISilentRefusalClientMessage())
+	if lastErr != nil &&
+		lastErr.ExhaustedAction == service.ErrorHandlingExhaustedActionPassthrough &&
+		lastErr.SafeErrorType != "" && lastErr.SafeErrorMessage != "" {
+		errType = lastErr.SafeErrorType
+		message = lastErr.SafeErrorMessage
+		service.SetOpsUpstreamError(c, statusCode, message, "")
+		if streamStarted {
+			h.handleStreamingAwareError(c, statusCode, errType, message, true)
+			return
+		}
+		h.responsesErrorResponse(c, statusCode, errType, message)
 		return
 	}
-	h.responsesErrorResponse(c, statusCode, "server_error", "All available accounts exhausted")
+	if lastErr != nil && lastErr.IsCredentialFailure() {
+		statusCode, message = credentialFailoverClientResponse(lastErr)
+	} else if lastErr != nil && service.IsOpenAISilentRefusalErrorBody(lastErr.ResponseBody) {
+		statusCode = http.StatusBadGateway
+		errType = "upstream_error"
+		message = service.OpenAISilentRefusalClientMessage()
+		service.SetOpsUpstreamError(c, statusCode, message, "")
+	}
+	if streamStarted {
+		h.handleStreamingAwareError(c, statusCode, errType, message, true)
+		return
+	}
+	h.responsesErrorResponse(c, statusCode, errType, message)
 }

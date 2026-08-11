@@ -194,6 +194,29 @@ func TestHandleFailoverExhaustedUsesResponsesFailedEventForResponsesRequest(t *t
 	require.NotContains(t, body, `data: {"type":"error"`)
 }
 
+func TestHandleResponsesFailoverExhaustedUsesRuleSafeResponseFailedAfterStreamStart(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	_, err := c.Writer.Write([]byte(": keepalive\n\n"))
+	require.NoError(t, err)
+
+	(&GatewayHandler{}).handleResponsesFailoverExhausted(c, &service.UpstreamFailoverError{
+		StatusCode:       http.StatusTooManyRequests,
+		ExhaustedAction:  service.ErrorHandlingExhaustedActionPassthrough,
+		SafeErrorType:    "rate_limit_error",
+		SafeErrorMessage: "Concurrency limit exceeded",
+	}, true)
+
+	body := recorder.Body.String()
+	failedAt := strings.Index(body, "event: response.failed")
+	require.NotEqual(t, -1, failedAt, "stream must end with a Responses-compatible failure event")
+	_, errObj := parseResponsesFailedSSE(t, body[failedAt:])
+	require.Equal(t, "rate_limit_exceeded", errObj["code"])
+	require.Equal(t, "Concurrency limit exceeded", errObj["message"])
+}
+
 func TestStreamRuleSingleAccountExhaustionUsesSafeError(t *testing.T) {
 	state := NewFailoverState(0, false)
 	failoverErr := &service.UpstreamFailoverError{

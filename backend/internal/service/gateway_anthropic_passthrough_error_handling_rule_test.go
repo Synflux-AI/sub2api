@@ -238,6 +238,32 @@ func TestPassthroughStreamUnmatchedErrorPreservesLegacyFallbackContract(t *testi
 	require.Equal(t, rawEvent, recorder.Body.String())
 }
 
+func TestPassthroughStreamErrorRetryDoesNotSuppressNextAttemptEOFRule(t *testing.T) {
+	upstream := &sequencedHTTPUpstream{responses: []sequencedUpstreamResponse{
+		{status: 200, body: "event: error\ndata: " + streamRuleConcurrencyError + "\n\n"},
+		{status: 200, body: ""},
+		{status: 200, body: streamRuleSuccess},
+	}}
+	svc := newErrorHandlingRulePassthroughService(t, upstream, &ErrorHandlingRuleSettings{
+		Enabled: true,
+		Rules: []ErrorHandlingRule{
+			streamErrorRule(ErrorHandlingActionRetry, 1, ErrorHandlingExhaustedActionDefault),
+			{
+				ID: "early-eof", StatusCodes: []int{http.StatusBadGateway}, Keywords: []string{"missing terminal event"},
+				Action: ErrorHandlingActionRetry, RetryCount: errorHandlingIntPtr(1), ExhaustedAction: ErrorHandlingExhaustedActionDefault,
+			},
+		},
+	})
+	c, recorder := newErrorHandlingRuleTestContextWithRecorder()
+	result, err := svc.Forward(context.Background(), c, newErrorHandlingRulePassthroughAccount(), newErrorHandlingRuleStreamParsed(t))
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, 3, upstream.calls)
+	require.NotContains(t, recorder.Body.String(), streamRuleConcurrencyError)
+	require.Contains(t, recorder.Body.String(), "event: message_stop")
+}
+
 func TestPassthroughStreamRuleDowngradesFailoverAfterSemanticOutput(t *testing.T) {
 	body := strings.TrimSuffix(streamRuleSuccess, "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n") +
 		"event: error\ndata: " + streamRuleConcurrencyError + "\n\n"
