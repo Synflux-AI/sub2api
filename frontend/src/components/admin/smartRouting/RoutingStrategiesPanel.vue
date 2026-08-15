@@ -1,29 +1,26 @@
 <template>
-  <AppLayout>
-    <TablePageLayout>
-      <template #filters>
-        <div class="flex flex-wrap items-center gap-3">
-          <div class="min-w-0 flex-1">
-            <h2 class="text-sm text-gray-500 dark:text-dark-400">
-              {{ t('admin.routingStrategies.description') }}
-            </h2>
-          </div>
-          <div class="flex flex-wrap items-center justify-end gap-2">
-            <button @click="loadStrategies" :disabled="loading" class="btn btn-secondary" :title="t('common.refresh')">
-              <Icon name="refresh" size="md" :class="loading ? 'animate-spin' : ''" />
-            </button>
-            <button @click="openTester" class="btn btn-secondary">
-              {{ t('admin.routingStrategies.tester') }}
-            </button>
-            <button @click="openCreateDialog" class="btn btn-primary">
-              <Icon name="plus" size="md" class="mr-1" />
-              {{ t('admin.routingStrategies.create') }}
-            </button>
-          </div>
-        </div>
-      </template>
+  <div class="space-y-4">
+    <div class="flex flex-wrap items-center gap-3">
+      <div class="min-w-0 flex-1">
+        <h2 class="text-sm text-gray-500 dark:text-dark-400">
+          {{ t('admin.routingStrategies.description') }}
+        </h2>
+      </div>
+      <div class="flex flex-wrap items-center justify-end gap-2">
+        <button @click="loadStrategies" :disabled="loading" class="btn btn-secondary" :title="t('common.refresh')">
+          <Icon name="refresh" size="md" :class="loading ? 'animate-spin' : ''" />
+        </button>
+        <button @click="openTester" class="btn btn-secondary">
+          {{ t('admin.routingStrategies.tester') }}
+        </button>
+        <button @click="openCreateDialog" class="btn btn-primary">
+          <Icon name="plus" size="md" class="mr-1" />
+          {{ t('admin.routingStrategies.create') }}
+        </button>
+      </div>
+    </div>
 
-      <template #table>
+    <div class="card overflow-hidden">
         <DataTable :columns="columns" :data="strategies" :loading="loading">
           <template #cell-name="{ row }">
             <div class="min-w-0">
@@ -89,8 +86,7 @@
             />
           </template>
         </DataTable>
-      </template>
-    </TablePageLayout>
+    </div>
 
     <!-- Create/Edit Dialog -->
     <BaseDialog
@@ -320,7 +316,7 @@
       @confirm="confirmDelete"
       @cancel="showDeleteDialog = false"
     />
-  </AppLayout>
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -339,8 +335,6 @@ import type {
 } from '@/types'
 import type { Column } from '@/components/common/types'
 
-import AppLayout from '@/components/layout/AppLayout.vue'
-import TablePageLayout from '@/components/layout/TablePageLayout.vue'
 import DataTable from '@/components/common/DataTable.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'

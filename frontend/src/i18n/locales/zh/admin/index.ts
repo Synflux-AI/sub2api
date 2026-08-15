@@ -4,6 +4,7 @@ import accounts from './accounts'
 import resources from './resources'
 import ops from './ops'
 import settings from './settings'
+import smartRouting from './smartRouting'
 import audit from './audit'
 import promptAudit from './promptAudit'
 
@@ -14,6 +15,7 @@ export default {
   ...resources,
   ...ops,
   ...settings,
+  ...smartRouting,
   ...audit,
   ...promptAudit,
 }
