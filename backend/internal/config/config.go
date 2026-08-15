@@ -2507,8 +2507,8 @@ func setDefaults() {
 	viper.SetDefault("gateway.scheduling.health_ttl_seconds", 1800)
 	viper.SetDefault("gateway.scheduling.health_sticky_break_enabled", true)
 	viper.SetDefault("gateway.scheduling.health_record_pool_mode", true)
-	// TTFT 巡检默认开启（纯观测，不影响调度）；扣分默认关闭，需显式打开。
-	viper.SetDefault("gateway.scheduling.ttft_monitor_enabled", true)
+	// TTFT 是新增质量信号：巡检与扣分均默认关闭，保持升级后的数据库负载和选号行为不变。
+	viper.SetDefault("gateway.scheduling.ttft_monitor_enabled", false)
 	viper.SetDefault("gateway.scheduling.ttft_degrade_enabled", false)
 	viper.SetDefault("gateway.scheduling.ttft_degrade_ratio", 2.0)
 	viper.SetDefault("gateway.scheduling.ttft_min_samples", 20)

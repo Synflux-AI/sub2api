@@ -17,11 +17,18 @@ func ttftTestConfig() AccountTTFTEvalConfig {
 func row(accountID int64, model string, p50 float64, samples int64) OpsAccountModelTTFTRow {
 	return OpsAccountModelTTFTRow{
 		AccountID: accountID,
+		GroupID:   1,
 		Model:     model,
 		TTFTP50Ms: p50,
 		TTFTP95Ms: p50 * 2,
 		Samples:   samples,
 	}
+}
+
+func rowInGroup(accountID, groupID int64, model string, p50 float64, samples int64) OpsAccountModelTTFTRow {
+	result := row(accountID, model, p50, samples)
+	result.GroupID = groupID
+	return result
 }
 
 func TestAssessAccountTTFT_FlagsAccountSlowerThanPeers(t *testing.T) {
@@ -96,6 +103,29 @@ func TestAssessAccountTTFT_NoBaselineWhenTooFewAccounts(t *testing.T) {
 	}
 }
 
+func TestAssessAccountTTFT_DoesNotMixBaselinesAcrossGroups(t *testing.T) {
+	now := time.Now()
+	rows := []OpsAccountModelTTFTRow{
+		rowInGroup(1, 10, "sonnet", 800, 100),
+		rowInGroup(2, 10, "sonnet", 850, 100),
+		rowInGroup(3, 10, "sonnet", 900, 100),
+		// 另一个分组的网络基线天然更慢，不应与 group 10 比较。
+		rowInGroup(4, 20, "sonnet", 2400, 100),
+		rowInGroup(5, 20, "sonnet", 2500, 100),
+		rowInGroup(6, 20, "sonnet", 2600, 100),
+	}
+
+	got := AssessAccountTTFT(rows, ttftTestConfig(), now)
+	for _, accountID := range []int64{1, 2, 3, 4, 5, 6} {
+		if got[accountID].Degraded {
+			t.Fatalf("account %d should be compared only with peers in its group: %+v", accountID, got[accountID])
+		}
+	}
+	if got[4].Models[0].GroupID != 20 {
+		t.Fatalf("snapshot should preserve group context, got %+v", got[4].Models[0])
+	}
+}
+
 func TestAssessAccountTTFT_SmallSamplesExcludedFromBaseline(t *testing.T) {
 	now := time.Now()
 	// 样本不足的行不参与基线构建：否则一个只跑了 2 次的慢账号会污染基线。
@@ -141,6 +171,9 @@ func TestAssessAccountTTFT_WeightsRatioBySampleCount(t *testing.T) {
 	}
 	if got[4].WorstModel != "haiku" {
 		t.Fatalf("worst model should surface the slow low-traffic model, got %q", got[4].WorstModel)
+	}
+	if got[4].WorstGroupID != 1 {
+		t.Fatalf("worst scope should preserve its group, got %d", got[4].WorstGroupID)
 	}
 	if got[4].WorstRatio < 9 {
 		t.Fatalf("worst ratio should be ~10x, got %v", got[4].WorstRatio)

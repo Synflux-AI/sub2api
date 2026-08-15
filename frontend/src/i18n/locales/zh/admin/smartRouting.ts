@@ -131,7 +131,7 @@ export default {
       sessions: '会话',
 
       ttftRatioTip: '相对同模型基线 {ratio}×',
-      ttftWorstTip: '最慢模型：{model}（{ratio}×）',
+      ttftWorstTip: '最慢作用域：分组 #{group} · {model}（{ratio}×）',
       ttftNoBaseline: '同模型账号太少，无基线',
 
       empty: '没有符合条件的账号',

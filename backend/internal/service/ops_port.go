@@ -67,7 +67,7 @@ type OpsRepository interface {
 	GetAccountErrorRates(ctx context.Context, start, end time.Time) ([]OpsAccountErrorRateRow, error)
 
 	// GetAccountModelTTFT 在 [start,end) 内按「账号 × 模型」聚合首 Token 时延分位数，
-	// 供 AccountTTFTMonitorService 判定账号是否相对同模型的同行明显变慢。
+	// 供 AccountTTFTMonitorService 判定账号是否相对同分组、同上游模型的同行明显变慢。
 	// minSamples 在 SQL 侧过滤掉小样本组合。
 	GetAccountModelTTFT(ctx context.Context, start, end time.Time, minSamples int) ([]OpsAccountModelTTFTRow, error)
 

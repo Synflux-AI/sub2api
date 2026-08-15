@@ -15,9 +15,10 @@ import (
 // 绝对阈值会系统性误杀它们（OpenAI 侧既有的 sticky_escape_ttft_ms 正是绝对阈值，
 // 默认值为 0 即从未启用，多半就是因为这个）。
 
-// OpsAccountModelTTFTRow 是「账号 × 模型」维度的 TTFT 聚合结果。
+// OpsAccountModelTTFTRow 是「账号 × 分组 × 实际上游模型」维度的 TTFT 聚合结果。
 type OpsAccountModelTTFTRow struct {
 	AccountID   int64
+	GroupID     int64
 	AccountName string
 	Platform    string
 	Model       string
@@ -28,6 +29,7 @@ type OpsAccountModelTTFTRow struct {
 
 // AccountModelTTFT 是快照里的单模型明细，供 UI 展示「慢在哪个模型上」。
 type AccountModelTTFT struct {
+	GroupID  int64   `json:"group_id"`
 	Model    string  `json:"model"`
 	P50Ms    float64 `json:"p50_ms"`
 	P95Ms    float64 `json:"p95_ms"`
@@ -48,8 +50,9 @@ type AccountTTFTSnapshot struct {
 	Ratio float64 `json:"ratio"`
 	// WorstModel / WorstRatio 记录倍率最高的模型，让「整体看着还行但某个模型很慢」
 	// 也能在 UI 上暴露出来，而不是被加权平均抹平。
-	WorstModel string  `json:"worst_model,omitempty"`
-	WorstRatio float64 `json:"worst_ratio"`
+	WorstGroupID int64   `json:"worst_group_id,omitempty"`
+	WorstModel   string  `json:"worst_model,omitempty"`
+	WorstRatio   float64 `json:"worst_ratio"`
 	// Degraded 表示本轮判定为相对退化（会触发健康分扣分，前提是扣分已启用）。
 	Degraded  bool               `json:"degraded"`
 	Models    []AccountModelTTFT `json:"models,omitempty"`
@@ -69,9 +72,9 @@ type AccountTTFTEvalConfig struct {
 	MaxModelsPerAccount int
 }
 
-// AssessAccountTTFT 把「账号 × 模型」聚合行换算成每账号的 TTFT 快照。
+// AssessAccountTTFT 把「账号 × 分组 × 模型」聚合行换算成每账号的 TTFT 快照。
 //
-// 基线取「同模型下各账号 P50 的中位数」而非均值：中位数不会被一两个极慢账号拉高，
+// 基线取「同分组 + 同模型下各账号 P50 的中位数」而非均值：中位数不会被一两个极慢账号拉高，
 // 否则出现「大家都被一个坏账号抬高了基线，于是谁都不算退化」的自我掩盖。
 //
 // 返回值包含所有有样本的账号（哪怕无法判定退化），因为 UI 需要展示 TTFT 本身；
@@ -106,13 +109,14 @@ func AssessAccountTTFT(rows []OpsAccountModelTTFTRow, cfg AccountTTFTEvalConfig,
 		}
 		a := acc[row.AccountID]
 
-		baseline := baselines[row.Model]
+		baseline := baselines[ttftBaselineKey{groupID: row.GroupID, model: row.Model}]
 		ratio := 0.0
 		if baseline > 0 && row.TTFTP50Ms > 0 {
 			ratio = row.TTFTP50Ms / baseline
 		}
 
 		snapshot.Models = append(snapshot.Models, AccountModelTTFT{
+			GroupID:  row.GroupID,
 			Model:    row.Model,
 			P50Ms:    row.TTFTP50Ms,
 			P95Ms:    row.TTFTP95Ms,
@@ -130,6 +134,7 @@ func AssessAccountTTFT(rows []OpsAccountModelTTFTRow, cfg AccountTTFTEvalConfig,
 			a.ratioSamples += row.Samples
 			if ratio > snapshot.WorstRatio {
 				snapshot.WorstRatio = ratio
+				snapshot.WorstGroupID = row.GroupID
 				snapshot.WorstModel = row.Model
 			}
 		}
@@ -152,7 +157,10 @@ func AssessAccountTTFT(rows []OpsAccountModelTTFTRow, cfg AccountTTFTEvalConfig,
 			if snapshot.Models[i].Samples != snapshot.Models[j].Samples {
 				return snapshot.Models[i].Samples > snapshot.Models[j].Samples
 			}
-			return snapshot.Models[i].Model < snapshot.Models[j].Model
+			if snapshot.Models[i].Model != snapshot.Models[j].Model {
+				return snapshot.Models[i].Model < snapshot.Models[j].Model
+			}
+			return snapshot.Models[i].GroupID < snapshot.Models[j].GroupID
 		})
 		if len(snapshot.Models) > cfg.MaxModelsPerAccount {
 			snapshot.Models = snapshot.Models[:cfg.MaxModelsPerAccount]
@@ -162,24 +170,30 @@ func AssessAccountTTFT(rows []OpsAccountModelTTFTRow, cfg AccountTTFTEvalConfig,
 	return out
 }
 
-// buildTTFTBaselines 为每个模型算出基线（各账号 P50 的中位数）。
+// buildTTFTBaselines 为每个「分组 + 模型」算出基线（各账号 P50 的中位数）。
 // 参与账号数不足 MinBaselineAccounts 的模型不产出基线 —— 样本太少时
 // 「中位数」本身就是噪声，宁可不判定也不要误伤。
-func buildTTFTBaselines(rows []OpsAccountModelTTFTRow, cfg AccountTTFTEvalConfig) map[string]float64 {
-	perModel := make(map[string][]float64)
+type ttftBaselineKey struct {
+	groupID int64
+	model   string
+}
+
+func buildTTFTBaselines(rows []OpsAccountModelTTFTRow, cfg AccountTTFTEvalConfig) map[ttftBaselineKey]float64 {
+	perCohort := make(map[ttftBaselineKey][]float64)
 	for _, row := range rows {
 		if row.Model == "" || row.TTFTP50Ms <= 0 || row.Samples < int64(cfg.MinSamples) {
 			continue
 		}
-		perModel[row.Model] = append(perModel[row.Model], row.TTFTP50Ms)
+		key := ttftBaselineKey{groupID: row.GroupID, model: row.Model}
+		perCohort[key] = append(perCohort[key], row.TTFTP50Ms)
 	}
 
-	baselines := make(map[string]float64, len(perModel))
-	for model, values := range perModel {
+	baselines := make(map[ttftBaselineKey]float64, len(perCohort))
+	for key, values := range perCohort {
 		if len(values) < cfg.MinBaselineAccounts {
 			continue
 		}
-		baselines[model] = medianFloat64(values)
+		baselines[key] = medianFloat64(values)
 	}
 	return baselines
 }

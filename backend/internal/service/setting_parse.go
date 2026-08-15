@@ -904,6 +904,8 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	result.SchedulingHealthShadowMode = schedulingHealthDefaults.ShadowMode
 	result.SchedulingHealthStickyBreakEnabled = schedulingHealthDefaults.StickyBreakEnabled
 	result.SchedulingPriceAwareEnabled = schedulingHealthDefaults.PriceAwareEnabled
+	result.SchedulingTTFTMonitorEnabled = schedulingHealthDefaults.TTFTMonitorEnabled
+	result.SchedulingTTFTDegradeEnabled = schedulingHealthDefaults.TTFTDegradeEnabled
 	if v, ok := settings[SettingKeySchedulingHealthScoringEnabled]; ok && v != "" {
 		result.SchedulingHealthScoringEnabled = v == "true"
 	}
@@ -915,6 +917,12 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	}
 	if v, ok := settings[SettingKeySchedulingPriceAwareEnabled]; ok && v != "" {
 		result.SchedulingPriceAwareEnabled = v == "true"
+	}
+	if v, ok := settings[SettingKeySchedulingTTFTMonitorEnabled]; ok && v != "" {
+		result.SchedulingTTFTMonitorEnabled = v == "true"
+	}
+	if v, ok := settings[SettingKeySchedulingTTFTDegradeEnabled]; ok && v != "" {
+		result.SchedulingTTFTDegradeEnabled = v == "true"
 	}
 	result.OpenAILowUpstreamRatePriorityEnabled = settings[SettingKeyOpenAILowUpstreamRatePriorityEnabled] == "true"
 	result.OpenAIOAuthSchedulingRateMultiplier = parseOpenAIOAuthSchedulingRateMultiplier(settings[SettingKeyOpenAIOAuthSchedulingRateMultiplier])

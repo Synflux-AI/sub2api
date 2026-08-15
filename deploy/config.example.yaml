@@ -566,6 +566,26 @@ gateway:
     # Tiny in-process TTL for batch load reads in milliseconds (0 disables)
     # 调度批量负载读取的进程内短缓存 TTL（毫秒，0 表示禁用）
     load_batch_cache_ttl_ms: 200
+    # TTFT quality monitoring is opt-in. The monitor aggregates recent streaming
+    # requests by group + actual upstream model and publishes Redis snapshots.
+    # TTFT 质量巡检默认关闭；开启后按「分组 + 实际上游模型」
+    # 聚合近期流式请求，并将快照写入 Redis 供管理页展示。
+    ttft_monitor_enabled: false
+    # Whether confirmed relative degradation deducts account health score.
+    # 是否将确认的相对变慢换算为账号健康分扣分（默认关闭）。
+    ttft_degrade_enabled: false
+    # P50 / peer baseline threshold, minimum samples and minimum peer accounts.
+    # P50 / 同行基线的退化倍率、最小样本数与最小同行账号数。
+    ttft_degrade_ratio: 2.0
+    ttft_min_samples: 20
+    ttft_min_baseline_accounts: 3
+    # Rolling window and evaluation cadence.
+    # 滚动聚合窗口与评估周期。
+    ttft_window_minutes: 15
+    ttft_eval_interval_seconds: 300
+    # Health-score points deducted per degraded evaluation when enabled.
+    # 开启扣分时，每轮退化评估扣除的健康分。
+    ttft_penalty: 8
     # Slot cleanup interval (duration)
     # 并发槽位清理周期（时间段）
     slot_cleanup_interval: 30s

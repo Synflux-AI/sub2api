@@ -13,14 +13,14 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// AccountTTFTMonitorService 周期性按「账号 × 模型」聚合首 Token 时延，
+// AccountTTFTMonitorService 周期性按「账号 × 分组 × 实际上游模型」聚合首 Token 时延，
 // 与同模型其余账号的基线比较，把「相对明显变慢」换算成健康分扣分。
 //
 // 设计要点：
 //   - **完全不碰请求热路径**。聚合走 usage_logs 的离线查询，扣分走健康分既有的
 //     异步 ApplyDelta 管道，因此不会给网关转发增加任何同步开销。
 //   - 观测与扣分是两个开关。TTFTMonitorEnabled 只写快照供面板展示（无调度风险），
-//     TTFTDegradeEnabled 才真正扣分。默认只开前者。
+//     TTFTDegradeEnabled 才真正扣分。两者均默认关闭，按阶段显式开启。
 //   - 运行骨架对标 AccountErrorRateMonitorService：ticker + 分布式 leader lock +
 //     job heartbeat。leader lock 保证多实例下只有一个实例扣分，
 //     否则同一账号会被扣 N 倍（健康分是共享的 Redis 状态）。

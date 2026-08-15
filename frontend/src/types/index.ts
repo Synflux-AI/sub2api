@@ -1113,6 +1113,7 @@ export interface OllamaCloudUsageSettings {
 
 /** 单模型的 TTFT 明细，用于解释账号「慢在哪个模型上」。 */
 export interface AccountModelTTFT {
+  group_id: number
   model: string
   p50_ms: number
   p95_ms: number
@@ -1135,6 +1136,7 @@ export interface AccountTTFTSnapshot {
   /** 样本加权的相对基线倍率；0 表示本轮没有任何模型能建立基线。 */
   ratio: number
   /** 倍率最高的模型，避免「整体尚可但某个模型很慢」被加权平均抹平。 */
+  worst_group_id?: number
   worst_model?: string
   worst_ratio: number
   /** 是否判定为相对退化（扣分开启时会降低健康分）。 */

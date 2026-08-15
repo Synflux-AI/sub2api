@@ -136,7 +136,7 @@ export default {
       sessions: 'Sessions',
 
       ttftRatioTip: '{ratio}× the same-model baseline',
-      ttftWorstTip: 'Slowest model: {model} ({ratio}×)',
+      ttftWorstTip: 'Slowest scope: group #{group} · {model} ({ratio}×)',
       ttftNoBaseline: 'too few accounts on this model for a baseline',
 
       empty: 'No accounts match the current filters',

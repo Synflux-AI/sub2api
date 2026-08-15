@@ -322,6 +322,7 @@ function ttftTooltip(snapshot: AccountTTFTSnapshot): string {
   if (snapshot.worst_model && snapshot.worst_ratio > 0) {
     parts.push(
       t('admin.smartRouting.accounts.ttftWorstTip', {
+        group: snapshot.worst_group_id ?? 0,
         model: snapshot.worst_model,
         ratio: snapshot.worst_ratio.toFixed(2)
       })
@@ -330,10 +331,12 @@ function ttftTooltip(snapshot: AccountTTFTSnapshot): string {
   for (const model of snapshot.models ?? []) {
     if (model.baseline_ms > 0) {
       parts.push(
-        `${model.model}: ${formatMs(model.p50_ms)} / ${formatMs(model.baseline_ms)} = ${model.ratio.toFixed(2)}×`
+        `#${model.group_id} · ${model.model}: ${formatMs(model.p50_ms)} / ${formatMs(model.baseline_ms)} = ${model.ratio.toFixed(2)}×`
       )
     } else {
-      parts.push(`${model.model}: ${formatMs(model.p50_ms)} (${t('admin.smartRouting.accounts.ttftNoBaseline')})`)
+      parts.push(
+        `#${model.group_id} · ${model.model}: ${formatMs(model.p50_ms)} (${t('admin.smartRouting.accounts.ttftNoBaseline')})`
+      )
     }
   }
   return parts.join('\n')

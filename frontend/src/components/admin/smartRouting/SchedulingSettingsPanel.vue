@@ -283,7 +283,7 @@ const form = reactive<
   scheduling_health_shadow_mode: true,
   scheduling_health_sticky_break_enabled: true,
   scheduling_price_aware_enabled: false,
-  scheduling_ttft_monitor_enabled: true,
+  scheduling_ttft_monitor_enabled: false,
   scheduling_ttft_degrade_enabled: false,
   allow_ungrouped_key_scheduling: false,
   openai_advanced_scheduler_enabled: false,
