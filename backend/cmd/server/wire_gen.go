@@ -338,7 +338,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	opsAggregationService := service.ProvideOpsAggregationService(opsRepository, settingRepository, db, redisClient, configConfig)
 	opsAlertEvaluatorService := service.ProvideOpsAlertEvaluatorService(opsService, opsRepository, emailService, larkService, redisClient, configConfig, proxyRepository)
 	accountErrorRateMonitorService := service.ProvideAccountErrorRateMonitorService(opsService, opsRepository, accountRepository, emailService, larkService, redisClient, configConfig)
-	accountTTFTMonitorService := service.ProvideAccountTTFTMonitorService(opsRepository, accountTTFTCache, accountHealthService, settingService, redisClient, configConfig)
+	accountTTFTMonitorService := service.ProvideAccountTTFTMonitorService(opsRepository, accountTTFTCache, accountHealthService, settingService, leaderLockCache, configConfig)
 	opsCleanupService := service.ProvideOpsCleanupService(opsRepository, db, redisClient, configConfig, channelMonitorService, settingRepository, opsService)
 	opsScheduledReportService := service.ProvideOpsScheduledReportService(opsService, userService, emailService, redisClient, configConfig)
 	opsIngressRejectAggregator := service.ProvideOpsIngressRejectAggregator(opsRepository, opsService)

@@ -491,17 +491,17 @@ func ProvideAccountErrorRateMonitorService(
 }
 
 // ProvideAccountTTFTMonitorService creates and starts AccountTTFTMonitorService.
-// 巡检按「账号 × 模型」聚合 TTFT 并把相对退化换算成健康分扣分；
+// 巡检按「账号 × 分组 × 实际上游模型」聚合 TTFT 并把相对退化换算成健康分扣分；
 // 全程离线，不参与请求热路径。
 func ProvideAccountTTFTMonitorService(
 	opsRepo OpsRepository,
 	ttftCache AccountTTFTCache,
 	healthService *AccountHealthService,
 	settingService *SettingService,
-	redisClient *redis.Client,
+	lockCache LeaderLockCache,
 	cfg *config.Config,
 ) *AccountTTFTMonitorService {
-	svc := NewAccountTTFTMonitorService(opsRepo, ttftCache, healthService, settingService, opsRepo, redisClient, cfg)
+	svc := NewAccountTTFTMonitorService(opsRepo, ttftCache, healthService, settingService, opsRepo, lockCache, cfg)
 	svc.Start()
 	return svc
 }

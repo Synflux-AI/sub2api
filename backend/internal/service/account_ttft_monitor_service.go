@@ -10,7 +10,6 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/google/uuid"
-	"github.com/redis/go-redis/v9"
 )
 
 // AccountTTFTMonitorService 周期性按「账号 × 分组 × 实际上游模型」聚合首 Token 时延，
@@ -41,13 +40,6 @@ const (
 	accountTTFTSnapshotTTLFactor = 3
 )
 
-var accountTTFTMonitorReleaseScript = redis.NewScript(`
-if redis.call("GET", KEYS[1]) == ARGV[1] then
-  return redis.call("DEL", KEYS[1])
-end
-return 0
-`)
-
 // AccountTTFTCache 是 TTFT 快照存储。实现见 repository.NewAccountTTFTCache。
 type AccountTTFTCache interface {
 	SaveSnapshots(ctx context.Context, snapshots map[int64]*AccountTTFTSnapshot, ttlSeconds int) error
@@ -67,9 +59,9 @@ type AccountTTFTMonitorService struct {
 	settingService *SettingService
 	opsRepo        OpsRepository
 
-	redisClient *redis.Client
-	cfg         *config.Config
-	instanceID  string
+	lockCache  LeaderLockCache
+	cfg        *config.Config
+	instanceID string
 
 	stopCh    chan struct{}
 	startOnce sync.Once
@@ -79,7 +71,7 @@ type AccountTTFTMonitorService struct {
 	skipLogMu sync.Mutex
 	skipLogAt time.Time
 
-	warnNoRedisOnce sync.Once
+	warnNoLockOnce sync.Once
 }
 
 func NewAccountTTFTMonitorService(
@@ -88,7 +80,7 @@ func NewAccountTTFTMonitorService(
 	healthService *AccountHealthService,
 	settingService *SettingService,
 	opsRepo OpsRepository,
-	redisClient *redis.Client,
+	lockCache LeaderLockCache,
 	cfg *config.Config,
 ) *AccountTTFTMonitorService {
 	return &AccountTTFTMonitorService{
@@ -97,7 +89,7 @@ func NewAccountTTFTMonitorService(
 		healthService:  healthService,
 		settingService: settingService,
 		opsRepo:        opsRepo,
-		redisClient:    redisClient,
+		lockCache:      lockCache,
 		cfg:            cfg,
 		instanceID:     uuid.NewString(),
 	}
@@ -261,12 +253,12 @@ func (s *AccountTTFTMonitorService) EvaluateOnce(parent context.Context) {
 	}
 }
 
-// tryAcquireLeaderLock 获取分布式 leader 锁。未配置 Redis 时直接放行
+// tryAcquireLeaderLock 获取分布式 leader 锁。未配置锁缓存时直接放行
 // （单实例部署没有重复扣分的问题）。
 func (s *AccountTTFTMonitorService) tryAcquireLeaderLock(ctx context.Context) (func(), bool) {
-	if s.redisClient == nil {
-		s.warnNoRedisOnce.Do(func() {
-			logger.LegacyPrintf("service.account_ttft_monitor", "[AccountTTFTMonitor] redis not configured; running without distributed lock")
+	if s.lockCache == nil {
+		s.warnNoLockOnce.Do(func() {
+			logger.LegacyPrintf("service.account_ttft_monitor", "[AccountTTFTMonitor] leader lock cache not configured; running without distributed lock")
 		})
 		return nil, true
 	}
@@ -278,10 +270,10 @@ func (s *AccountTTFTMonitorService) tryAcquireLeaderLock(ctx context.Context) (f
 		ttl = accountTTFTMonitorLeaderLockTTL
 	}
 
-	ok, err := s.redisClient.SetNX(ctx, key, s.instanceID, ttl).Result()
+	ok, err := s.lockCache.TryAcquireLeaderLock(ctx, key, s.instanceID, ttl)
 	if err != nil {
-		s.warnNoRedisOnce.Do(func() {
-			logger.LegacyPrintf("service.account_ttft_monitor", "[AccountTTFTMonitor] leader lock SetNX failed; skipping this cycle: %v", err)
+		s.warnNoLockOnce.Do(func() {
+			logger.LegacyPrintf("service.account_ttft_monitor", "[AccountTTFTMonitor] leader lock acquire failed; skipping this cycle: %v", err)
 		})
 		return nil, false
 	}
@@ -292,7 +284,7 @@ func (s *AccountTTFTMonitorService) tryAcquireLeaderLock(ctx context.Context) (f
 	return func() {
 		releaseCtx, releaseCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer releaseCancel()
-		_, _ = accountTTFTMonitorReleaseScript.Run(releaseCtx, s.redisClient, []string{key}, s.instanceID).Result()
+		_ = s.lockCache.ReleaseLeaderLock(releaseCtx, key, s.instanceID)
 	}, true
 }
 
