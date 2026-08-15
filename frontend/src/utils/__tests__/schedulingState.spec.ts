@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest'
 
-import type { Account } from '@/types'
-import { resolveSchedulingGate, resolveScopedRateLimits } from '../schedulingState'
+import type { Account, AccountTTFTSnapshot } from '@/types'
+import {
+  formatMs,
+  resolveSchedulingGate,
+  resolveScopedRateLimits,
+  ttftRatioBadgeClass
+} from '../schedulingState'
 
 const NOW = Date.UTC(2026, 7, 15, 12, 0, 0)
 
@@ -158,5 +163,54 @@ describe('resolveSchedulingGate', () => {
       'sooner',
       'later'
     ])
+  })
+})
+
+function ttft(overrides: Partial<AccountTTFTSnapshot> = {}): AccountTTFTSnapshot {
+  return {
+    account_id: 1,
+    p50_ms: 800,
+    p95_ms: 1600,
+    samples: 100,
+    ratio: 1,
+    worst_ratio: 1,
+    degraded: false,
+    updated_at: new Date(NOW).toISOString(),
+    ...overrides
+  }
+}
+
+describe('ttftRatioBadgeClass', () => {
+  it('flags backend-confirmed degradation as danger', () => {
+    expect(ttftRatioBadgeClass(ttft({ ratio: 2.4, degraded: true }))).toBe('badge-danger')
+  })
+
+  it('warns on noticeably slow accounts that have not hit the degrade threshold', () => {
+    // 后端阈值可能配到 2.0，但 1.5–2.0 之间的账号同样值得注意；
+    // 只有两档会让它们和完全正常的账号看起来一样。
+    expect(ttftRatioBadgeClass(ttft({ ratio: 1.7, degraded: false }))).toBe('badge-warning')
+  })
+
+  it('stays neutral for normal variation', () => {
+    expect(ttftRatioBadgeClass(ttft({ ratio: 1.2 }))).toBe('badge-gray')
+  })
+})
+
+describe('formatMs', () => {
+  it('keeps sub-second values in milliseconds', () => {
+    expect(formatMs(820)).toBe('820ms')
+    expect(formatMs(999.6)).toBe('1000ms')
+  })
+
+  it('switches to seconds at and above one second', () => {
+    expect(formatMs(1000)).toBe('1.0s')
+    expect(formatMs(3420)).toBe('3.4s')
+  })
+
+  it('renders a dash for missing or non-positive values', () => {
+    expect(formatMs(null)).toBe('—')
+    expect(formatMs(undefined)).toBe('—')
+    expect(formatMs(0)).toBe('—')
+    expect(formatMs(Number.NaN)).toBe('—')
   })
 })

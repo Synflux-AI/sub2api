@@ -156,6 +156,73 @@
       </div>
     </section>
 
+    <!-- 变慢但没报错的账号 -->
+    <section v-if="slowAccounts.length > 0 || ttftMonitored">
+      <div class="mb-2 flex flex-wrap items-baseline gap-2">
+        <h3 class="text-sm font-semibold text-gray-900 dark:text-white">
+          {{ t('admin.smartRouting.overview.slowTitle') }}
+        </h3>
+        <p class="text-xs text-gray-500 dark:text-dark-400">
+          {{ t('admin.smartRouting.overview.slowHint') }}
+        </p>
+      </div>
+
+      <div class="card overflow-hidden">
+        <table class="w-full text-sm">
+          <thead class="bg-gray-50 text-xs text-gray-500 dark:bg-dark-800 dark:text-dark-400">
+            <tr>
+              <th class="px-4 py-2 text-left font-medium">{{ t('admin.smartRouting.overview.account') }}</th>
+              <th class="px-4 py-2 text-left font-medium">{{ t('admin.smartRouting.overview.platform') }}</th>
+              <th class="px-4 py-2 text-right font-medium">{{ t('admin.smartRouting.overview.ttftP50') }}</th>
+              <th class="px-4 py-2 text-right font-medium">{{ t('admin.smartRouting.overview.ttftBaseline') }}</th>
+              <th class="px-4 py-2 text-left font-medium">{{ t('admin.smartRouting.overview.ttftRatio') }}</th>
+              <th class="px-4 py-2 text-left font-medium">{{ t('admin.smartRouting.overview.ttftWorstModel') }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr
+              v-for="row in slowAccounts"
+              :key="row.account.id"
+              class="border-t border-gray-100 dark:border-dark-700/50"
+            >
+              <td class="px-4 py-2">
+                <div class="font-medium text-gray-900 dark:text-white">{{ row.account.name }}</div>
+                <div class="text-xs text-gray-400">#{{ row.account.id }}</div>
+              </td>
+              <td class="px-4 py-2 text-gray-600 dark:text-gray-300">{{ row.account.platform }}</td>
+              <td class="px-4 py-2 text-right font-mono text-gray-700 dark:text-gray-300">
+                {{ formatMs(row.ttft.p50_ms) }}
+              </td>
+              <td class="px-4 py-2 text-right font-mono text-gray-500 dark:text-dark-400">
+                {{ formatMs(row.baselineMs) }}
+              </td>
+              <td class="px-4 py-2">
+                <span :class="['badge text-xs', ttftRatioBadgeClass(row.ttft)]">
+                  {{ row.ttft.ratio.toFixed(1) }}×
+                </span>
+                <span v-if="row.ttft.degraded" class="ml-1.5 text-xs text-red-600 dark:text-red-400">
+                  {{ ttftDegradeEnabled
+                    ? t('admin.smartRouting.overview.ttftPenalized')
+                    : t('admin.smartRouting.overview.ttftWouldPenalize') }}
+                </span>
+              </td>
+              <td class="px-4 py-2 text-xs text-gray-500 dark:text-dark-400">
+                <template v-if="row.ttft.worst_model">
+                  {{ row.ttft.worst_model }} · {{ row.ttft.worst_ratio.toFixed(1) }}×
+                </template>
+                <template v-else>—</template>
+              </td>
+            </tr>
+            <tr v-if="slowAccounts.length === 0">
+              <td colspan="6" class="px-4 py-8 text-center text-gray-400">
+                {{ t('admin.smartRouting.overview.slowEmpty') }}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
     <!-- 当前不可调度的账号 -->
     <section>
       <div class="mb-2 flex flex-wrap items-baseline gap-2">
@@ -230,6 +297,9 @@ import {
   resolveSchedulingGate,
   GATE_REASON_KEY,
   GATE_BADGE_CLASS,
+  ttftRatioBadgeClass,
+  formatMs,
+  TTFT_WARN_RATIO,
   type SchedulingGate
 } from '@/utils/schedulingState'
 
@@ -405,6 +475,25 @@ const byGroup = computed(() =>
     return names.length > 0 ? names : [t('admin.smartRouting.overview.ungrouped')]
   })
 )
+
+// ---------- 变慢但没报错的账号 ----------
+// 这类账号硬闸门全绿、健康分（在 TTFT 扣分未开启时）也是满分，
+// 传统的「可用性」视角完全看不到它们，但用户体感最差。
+
+const ttftMonitored = computed(() => props.accounts.some((a) => a.ttft))
+const ttftDegradeEnabled = computed(() => !!props.settings?.scheduling_ttft_degrade_enabled)
+
+const slowAccounts = computed(() => {
+  return props.accounts
+    .filter((account) => account.ttft && account.ttft.ratio >= TTFT_WARN_RATIO)
+    .map((account) => {
+      const ttft = account.ttft!
+      // 从明细里反推基线：样本最多的那个模型的基线最有代表性。
+      const primary = (ttft.models ?? []).find((m) => m.baseline_ms > 0)
+      return { account, ttft, baselineMs: primary?.baseline_ms ?? 0 }
+    })
+    .sort((a, b) => b.ttft.ratio - a.ttft.ratio)
+})
 
 // ---------- 不可调度账号 ----------
 const blockedAccounts = computed(() => {

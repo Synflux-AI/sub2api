@@ -1111,6 +1111,38 @@ export interface OllamaCloudUsageSettings {
   debounce_minutes: number
 }
 
+/** 单模型的 TTFT 明细，用于解释账号「慢在哪个模型上」。 */
+export interface AccountModelTTFT {
+  model: string
+  p50_ms: number
+  p95_ms: number
+  samples: number
+  /** 同模型下各账号 P50 的中位数；0 表示参与账号太少、建不起基线。 */
+  baseline_ms: number
+  /** p50_ms / baseline_ms；0 表示无基线可比。 */
+  ratio: number
+}
+
+/**
+ * 账号 TTFT 快照，由后端巡检任务按「账号 × 模型」聚合后写入 Redis。
+ * p50/p95/ratio 均为跨模型的样本加权值。
+ */
+export interface AccountTTFTSnapshot {
+  account_id: number
+  p50_ms: number
+  p95_ms: number
+  samples: number
+  /** 样本加权的相对基线倍率；0 表示本轮没有任何模型能建立基线。 */
+  ratio: number
+  /** 倍率最高的模型，避免「整体尚可但某个模型很慢」被加权平均抹平。 */
+  worst_model?: string
+  worst_ratio: number
+  /** 是否判定为相对退化（扣分开启时会降低健康分）。 */
+  degraded: boolean
+  models?: AccountModelTTFT[]
+  updated_at: string
+}
+
 export interface Account {
   id: number
   name: string
@@ -1237,6 +1269,7 @@ export interface Account {
   // 账号健康度调度（仅 health_scoring_enabled 开启时返回，只读）
   health_score?: number | null // 健康分 0-100
   health_tier?: number | null // 0 主池 / 1 候选池 / 2 隔离观察
+  ttft?: AccountTTFTSnapshot | null // 首 Token 时延快照；巡检未开启/无流式样本/快照过期时缺省
 
   // 影子账号关系（spark 维度影子）
   parent_account_id?: number | null

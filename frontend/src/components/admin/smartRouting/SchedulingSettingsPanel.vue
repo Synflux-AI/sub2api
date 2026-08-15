@@ -60,6 +60,49 @@
       </div>
     </section>
 
+    <!-- 首 Token 时延 -->
+    <section class="card p-5">
+      <h3 class="text-sm font-semibold text-gray-900 dark:text-white">
+        {{ t('admin.smartRouting.settings.ttftTitle') }}
+      </h3>
+      <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">
+        {{ t('admin.smartRouting.settings.ttftHint') }}
+      </p>
+
+      <div class="mt-4 space-y-4">
+        <div class="flex items-start justify-between gap-4">
+          <div class="min-w-0">
+            <div class="text-sm font-medium text-gray-700 dark:text-gray-300">
+              {{ t('admin.smartRouting.settings.ttftMonitorEnabled') }}
+            </div>
+            <p class="mt-0.5 text-xs text-gray-500 dark:text-dark-400">
+              {{ t('admin.smartRouting.settings.ttftMonitorEnabledHint') }}
+            </p>
+          </div>
+          <Toggle v-model="form.scheduling_ttft_monitor_enabled" />
+        </div>
+
+        <div v-if="form.scheduling_ttft_monitor_enabled" class="flex items-start justify-between gap-4">
+          <div class="min-w-0">
+            <div class="text-sm font-medium text-gray-700 dark:text-gray-300">
+              {{ t('admin.smartRouting.settings.ttftDegradeEnabled') }}
+            </div>
+            <p class="mt-0.5 text-xs text-gray-500 dark:text-dark-400">
+              {{ t('admin.smartRouting.settings.ttftDegradeEnabledHint') }}
+            </p>
+          </div>
+          <Toggle v-model="form.scheduling_ttft_degrade_enabled" />
+        </div>
+
+        <p
+          v-if="form.scheduling_ttft_monitor_enabled && !form.scheduling_health_scoring_enabled && form.scheduling_ttft_degrade_enabled"
+          class="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:bg-amber-900/20 dark:text-amber-400"
+        >
+          {{ t('admin.smartRouting.settings.ttftNeedsHealthScoring') }}
+        </p>
+      </div>
+    </section>
+
     <!-- 价格感知 -->
     <section class="card p-5">
       <h3 class="text-sm font-semibold text-gray-900 dark:text-white">
@@ -228,6 +271,8 @@ const form = reactive<
     scheduling_health_shadow_mode: boolean
     scheduling_health_sticky_break_enabled: boolean
     scheduling_price_aware_enabled: boolean
+    scheduling_ttft_monitor_enabled: boolean
+    scheduling_ttft_degrade_enabled: boolean
     allow_ungrouped_key_scheduling: boolean
     openai_advanced_scheduler_enabled: boolean
     openai_advanced_scheduler_sticky_weighted_enabled: boolean
@@ -238,6 +283,8 @@ const form = reactive<
   scheduling_health_shadow_mode: true,
   scheduling_health_sticky_break_enabled: true,
   scheduling_price_aware_enabled: false,
+  scheduling_ttft_monitor_enabled: true,
+  scheduling_ttft_degrade_enabled: false,
   allow_ungrouped_key_scheduling: false,
   openai_advanced_scheduler_enabled: false,
   openai_advanced_scheduler_sticky_weighted_enabled: false,
@@ -353,6 +400,8 @@ function applySettings(settings: SystemSettings) {
   form.scheduling_health_shadow_mode = !!settings.scheduling_health_shadow_mode
   form.scheduling_health_sticky_break_enabled = !!settings.scheduling_health_sticky_break_enabled
   form.scheduling_price_aware_enabled = !!settings.scheduling_price_aware_enabled
+  form.scheduling_ttft_monitor_enabled = !!settings.scheduling_ttft_monitor_enabled
+  form.scheduling_ttft_degrade_enabled = !!settings.scheduling_ttft_degrade_enabled
   form.allow_ungrouped_key_scheduling = !!settings.allow_ungrouped_key_scheduling
   form.openai_advanced_scheduler_enabled = !!settings.openai_advanced_scheduler_enabled
   form.openai_advanced_scheduler_sticky_weighted_enabled =
@@ -384,6 +433,8 @@ async function save() {
       scheduling_health_shadow_mode: form.scheduling_health_shadow_mode,
       scheduling_health_sticky_break_enabled: form.scheduling_health_sticky_break_enabled,
       scheduling_price_aware_enabled: form.scheduling_price_aware_enabled,
+      scheduling_ttft_monitor_enabled: form.scheduling_ttft_monitor_enabled,
+      scheduling_ttft_degrade_enabled: form.scheduling_ttft_degrade_enabled,
       allow_ungrouped_key_scheduling: form.allow_ungrouped_key_scheduling,
       openai_advanced_scheduler_enabled: form.openai_advanced_scheduler_enabled,
       openai_advanced_scheduler_sticky_weighted_enabled:

@@ -1462,6 +1462,33 @@ type GatewaySchedulingConfig struct {
 	// HealthRecordPoolMode 池模式账号是否也采集健康分（只写 Redis 软信号，不写 DB 状态）
 	HealthRecordPoolMode bool `mapstructure:"health_record_pool_mode"`
 
+	// ===== 首 Token 时延（TTFT）质量信号 =====
+	// 健康分原有的扣分触发器全是「失败」类事件，账号慢但不报错时分数永远是 100。
+	// 这组参数补上「慢」这一维：后台任务按「账号 × 模型」聚合 TTFT，与同模型其余账号
+	// 的基线（各账号 P50 的中位数）比较，明显变慢的账号扣健康分、自然降到候选池。
+	//
+	// 判据是相对倍率而非绝对阈值 —— thinking / 长上下文模型的 TTFT 天然就高，
+	// 绝对阈值会系统性误杀（OpenAI 侧既有的 sticky_escape_ttft_ms 就是绝对阈值，默认 0 即从未启用）。
+	//
+	// TTFTMonitorEnabled 巡检开关：聚合并写快照供管理端展示，不影响调度
+	TTFTMonitorEnabled bool `mapstructure:"ttft_monitor_enabled"`
+	// TTFTDegradeEnabled 退化账号是否扣健康分。与巡检开关分开：
+	// 观测无风险可以先开，扣分会改变选号顺序，需要独立决策。默认关闭。
+	TTFTDegradeEnabled bool `mapstructure:"ttft_degrade_enabled"`
+	// TTFTDegradeRatio 相对基线的退化倍率阈值（如 2.0 表示慢一倍即判退化）
+	TTFTDegradeRatio float64 `mapstructure:"ttft_degrade_ratio"`
+	// TTFTMinSamples 单个「账号 × 模型」参与判定所需的最小样本数；样本不足不判定（fail-open）
+	TTFTMinSamples int `mapstructure:"ttft_min_samples"`
+	// TTFTMinBaselineAccounts 建立某模型基线所需的最少账号数；只有一两个账号在跑的模型没有同行可比
+	TTFTMinBaselineAccounts int `mapstructure:"ttft_min_baseline_accounts"`
+	// TTFTWindowMinutes 每轮聚合回看的时间窗（分钟）
+	TTFTWindowMinutes int `mapstructure:"ttft_window_minutes"`
+	// TTFTEvalIntervalSeconds 巡检周期（秒）
+	TTFTEvalIntervalSeconds int `mapstructure:"ttft_eval_interval_seconds"`
+	// TTFTPenalty 判定退化时每轮扣的健康分。扣分与半衰期恢复形成平衡：
+	// 持续变慢会越扣越低，恢复正常后按 HealthRecoveryHalflifeSeconds 回升。
+	TTFTPenalty float64 `mapstructure:"ttft_penalty"`
+
 	// ===== 价格感知调度 =====
 	// PriceAwareEnabled 开启后，同 (健康层, 优先级) 组内按 价格×负载 综合分选择账号
 	PriceAwareEnabled bool `mapstructure:"price_aware_enabled"`
@@ -2480,6 +2507,15 @@ func setDefaults() {
 	viper.SetDefault("gateway.scheduling.health_ttl_seconds", 1800)
 	viper.SetDefault("gateway.scheduling.health_sticky_break_enabled", true)
 	viper.SetDefault("gateway.scheduling.health_record_pool_mode", true)
+	// TTFT 巡检默认开启（纯观测，不影响调度）；扣分默认关闭，需显式打开。
+	viper.SetDefault("gateway.scheduling.ttft_monitor_enabled", true)
+	viper.SetDefault("gateway.scheduling.ttft_degrade_enabled", false)
+	viper.SetDefault("gateway.scheduling.ttft_degrade_ratio", 2.0)
+	viper.SetDefault("gateway.scheduling.ttft_min_samples", 20)
+	viper.SetDefault("gateway.scheduling.ttft_min_baseline_accounts", 3)
+	viper.SetDefault("gateway.scheduling.ttft_window_minutes", 15)
+	viper.SetDefault("gateway.scheduling.ttft_eval_interval_seconds", 300)
+	viper.SetDefault("gateway.scheduling.ttft_penalty", 8)
 	viper.SetDefault("gateway.scheduling.price_aware_enabled", false)
 	viper.SetDefault("gateway.scheduling.price_weight", 0.3)
 	viper.SetDefault("gateway.scheduling.price_load_guard_percent", 80)
@@ -3638,6 +3674,27 @@ func (c *Config) Validate() error {
 		}
 		if c.Gateway.Scheduling.HealthTTLSeconds <= 0 {
 			return fmt.Errorf("gateway.scheduling.health_ttl_seconds must be positive")
+		}
+	}
+	if c.Gateway.Scheduling.TTFTMonitorEnabled {
+		if c.Gateway.Scheduling.TTFTDegradeRatio <= 1 {
+			return fmt.Errorf("gateway.scheduling.ttft_degrade_ratio must be greater than 1")
+		}
+		if c.Gateway.Scheduling.TTFTMinSamples <= 0 {
+			return fmt.Errorf("gateway.scheduling.ttft_min_samples must be positive")
+		}
+		// 至少两个账号才谈得上「相对同行」，中位数也才有意义。
+		if c.Gateway.Scheduling.TTFTMinBaselineAccounts < 2 {
+			return fmt.Errorf("gateway.scheduling.ttft_min_baseline_accounts must be at least 2")
+		}
+		if c.Gateway.Scheduling.TTFTWindowMinutes <= 0 {
+			return fmt.Errorf("gateway.scheduling.ttft_window_minutes must be positive")
+		}
+		if c.Gateway.Scheduling.TTFTEvalIntervalSeconds <= 0 {
+			return fmt.Errorf("gateway.scheduling.ttft_eval_interval_seconds must be positive")
+		}
+		if c.Gateway.Scheduling.TTFTDegradeEnabled && c.Gateway.Scheduling.TTFTPenalty <= 0 {
+			return fmt.Errorf("gateway.scheduling.ttft_penalty must be positive when ttft_degrade_enabled is true")
 		}
 	}
 	if c.Gateway.Scheduling.PriceAwareEnabled {

@@ -194,6 +194,27 @@ func (s *AccountHealthService) recordStreamFailure(accountID int64, event string
 	s.applyDeltaAsync(accountID, -cfg.HealthPenaltyTimeout, event, 0)
 }
 
+// RecordTTFTDegradation 记录一次「相对同模型基线明显变慢」的判定（异步写）。
+//
+// 由 AccountTTFTMonitorService 每轮巡检调用，不在请求热路径上。
+// 与失败类扣分共用同一套分数与半衰期：持续变慢会被反复扣分而越降越低，
+// 恢复正常后停止扣分、按半衰期自然回升，无需额外的恢复逻辑。
+//
+// ratio 只进日志，不参与计算 —— 扣分幅度保持恒定，避免一次极端的倍率
+// 把账号一轮打到熔断层；持续性由「每轮都扣」体现。
+func (s *AccountHealthService) RecordTTFTDegradation(accountID int64, ratio float64) {
+	if s == nil || accountID <= 0 || !s.Enabled() {
+		return
+	}
+	cfg := s.schedulingConfig()
+	if cfg == nil || cfg.TTFTPenalty <= 0 {
+		return
+	}
+	s.markUnhealthy(accountID)
+	s.applyDeltaAsync(accountID, -cfg.TTFTPenalty, "ttft_degraded", 0)
+	slog.Debug("account_ttft_degraded", "account_id", accountID, "ratio", ratio, "penalty", cfg.TTFTPenalty)
+}
+
 // RecordSuccess 记录一次成功请求（仅带伤账号才写 Redis，健康账号零开销）。
 func (s *AccountHealthService) RecordSuccess(accountID int64) {
 	if s == nil || accountID <= 0 || !s.Enabled() {

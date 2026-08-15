@@ -207,6 +207,7 @@ func ProvideAccountHandler(
 	crsSyncService *service.CRSSyncService,
 	sessionLimitCache service.SessionLimitCache,
 	rpmCache service.RPMCache,
+	ttftCache service.AccountTTFTCache,
 	tokenCacheInvalidator service.TokenCacheInvalidator,
 	grokQuotaService *service.GrokQuotaService,
 ) *AccountHandler {
@@ -224,6 +225,7 @@ func ProvideAccountHandler(
 		crsSyncService,
 		sessionLimitCache,
 		rpmCache,
+		ttftCache,
 		tokenCacheInvalidator,
 	)
 	handler.grokImportProber = grokQuotaService

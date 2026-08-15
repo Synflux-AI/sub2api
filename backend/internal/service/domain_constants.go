@@ -512,6 +512,10 @@ const (
 	SettingKeySchedulingHealthStickyBreakEnabled = "scheduling_health_sticky_break_enabled"
 	// SettingKeySchedulingPriceAwareEnabled 价格感知调度：同层同优先级组内按价格×负载综合分选择
 	SettingKeySchedulingPriceAwareEnabled = "scheduling_price_aware_enabled"
+	// SettingKeySchedulingTTFTMonitorEnabled 首 Token 时延巡检：按账号×模型聚合 TTFT 并写快照供面板展示，不影响调度
+	SettingKeySchedulingTTFTMonitorEnabled = "scheduling_ttft_monitor_enabled"
+	// SettingKeySchedulingTTFTDegradeEnabled 相对同模型基线明显变慢的账号是否扣健康分（进而降到候选池）
+	SettingKeySchedulingTTFTDegradeEnabled = "scheduling_ttft_degrade_enabled"
 
 	// =========================
 	// Request Rectifier (请求整流器)

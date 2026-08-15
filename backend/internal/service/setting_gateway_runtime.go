@@ -1036,6 +1036,11 @@ type SchedulingHealthRuntime struct {
 	StickyBreakEnabled bool
 	// PriceAwareEnabled 价格感知调度开关
 	PriceAwareEnabled bool
+	// TTFTMonitorEnabled 首 Token 时延巡检开关（只聚合并写快照供 UI 展示，不影响调度）
+	TTFTMonitorEnabled bool
+	// TTFTDegradeEnabled 相对退化的账号是否扣健康分。
+	// 与 TTFTMonitorEnabled 分开：观测无风险可以先开，扣分会改变选号顺序需要单独决策。
+	TTFTDegradeEnabled bool
 }
 
 type cachedSchedulingHealthRuntime struct {
@@ -1060,6 +1065,8 @@ func (s *SettingService) configSchedulingHealthRuntime() SchedulingHealthRuntime
 		ShadowMode:         sched.HealthShadowMode,
 		StickyBreakEnabled: sched.HealthStickyBreakEnabled,
 		PriceAwareEnabled:  sched.PriceAwareEnabled,
+		TTFTMonitorEnabled: sched.TTFTMonitorEnabled,
+		TTFTDegradeEnabled: sched.TTFTDegradeEnabled,
 	}
 }
 
@@ -1110,6 +1117,8 @@ func (s *SettingService) refreshSchedulingHealthRuntime(ctx context.Context) {
 		SettingKeySchedulingHealthShadowMode,
 		SettingKeySchedulingHealthStickyBreakEnabled,
 		SettingKeySchedulingPriceAwareEnabled,
+		SettingKeySchedulingTTFTMonitorEnabled,
+		SettingKeySchedulingTTFTDegradeEnabled,
 	}
 	values, err := s.settingRepo.GetMultiple(dbCtx, keys)
 	if err != nil {
@@ -1135,6 +1144,8 @@ func (s *SettingService) refreshSchedulingHealthRuntime(ctx context.Context) {
 	overlayBool(&runtime.ShadowMode, SettingKeySchedulingHealthShadowMode)
 	overlayBool(&runtime.StickyBreakEnabled, SettingKeySchedulingHealthStickyBreakEnabled)
 	overlayBool(&runtime.PriceAwareEnabled, SettingKeySchedulingPriceAwareEnabled)
+	overlayBool(&runtime.TTFTMonitorEnabled, SettingKeySchedulingTTFTMonitorEnabled)
+	overlayBool(&runtime.TTFTDegradeEnabled, SettingKeySchedulingTTFTDegradeEnabled)
 
 	s.schedulingHealthRuntimeCache.Store(&cachedSchedulingHealthRuntime{
 		runtime:   runtime,

@@ -66,6 +66,11 @@ type OpsRepository interface {
 	// 返回窗口 [start,end) 内每个有上游错误的账号的请求总数与上游错误数,口径与 upstream_error_rate 一致。
 	GetAccountErrorRates(ctx context.Context, start, end time.Time) ([]OpsAccountErrorRateRow, error)
 
+	// GetAccountModelTTFT 在 [start,end) 内按「账号 × 模型」聚合首 Token 时延分位数，
+	// 供 AccountTTFTMonitorService 判定账号是否相对同模型的同行明显变慢。
+	// minSamples 在 SQL 侧过滤掉小样本组合。
+	GetAccountModelTTFT(ctx context.Context, start, end time.Time, minSamples int) ([]OpsAccountModelTTFTRow, error)
+
 	// GetWindowCacheTokenSums 聚合 usage_logs 在 [start,end) 窗口内的输入/缓存 token，
 	// 供「缓存命中率」告警按 account/platform/group 维度计算命中率。
 	GetWindowCacheTokenSums(ctx context.Context, scope OpsCacheTokenScope, start, end time.Time) (OpsCacheTokenSums, error)

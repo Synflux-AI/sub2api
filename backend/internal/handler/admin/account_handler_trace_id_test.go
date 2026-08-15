@@ -30,6 +30,7 @@ func TestAccountHandler_Create_TraceIDPassthroughExtraForwarded(t *testing.T) {
 		nil,
 		nil,
 		nil,
+		nil,
 	)
 
 	router := gin.New()

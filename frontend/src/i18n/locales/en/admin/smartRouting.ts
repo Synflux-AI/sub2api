@@ -83,6 +83,17 @@ export default {
       reasonRateLimit: 'Rate limited (429)',
       reasonOverload: 'Overloaded (529)',
       reasonTempUnsched: 'Temporarily unschedulable',
+
+      slowTitle: 'Slow but Error-Free Accounts',
+      slowHint:
+        'These accounts pass every hard gate and return no errors, so an availability-only view misses them entirely — yet they hurt perceived latency the most. Ratio = this account\'s TTFT P50 ÷ the median P50 across accounts serving the same model.',
+      slowEmpty: 'No accounts are noticeably slow right now',
+      ttftP50: 'TTFT P50',
+      ttftBaseline: 'Model baseline',
+      ttftRatio: 'Ratio',
+      ttftWorstModel: 'Slowest model',
+      ttftPenalized: 'Health penalty applied',
+      ttftWouldPenalize: 'Above threshold (penalty off)',
     },
 
     // ---------- Tab 2 Channel Accounts ----------
@@ -100,6 +111,7 @@ export default {
       colGroups: 'Groups',
       colGate: 'Gate Status',
       colHealth: 'Health',
+      colTtft: 'TTFT',
       colPriority: 'Priority',
       colLoad: 'Load',
       colRuntime: 'Runtime',
@@ -122,6 +134,10 @@ export default {
       rpm: 'RPM',
       windowCost: 'Window cost',
       sessions: 'Sessions',
+
+      ttftRatioTip: '{ratio}× the same-model baseline',
+      ttftWorstTip: 'Slowest model: {model} ({ratio}×)',
+      ttftNoBaseline: 'too few accounts on this model for a baseline',
 
       empty: 'No accounts match the current filters',
       editAccount: 'Edit account',
@@ -147,6 +163,18 @@ export default {
       healthStickyBreak: 'Break stickiness on probation tier',
       healthStickyBreakHint:
         'Breaking stickiness loses the prompt cache, so it only triggers when an account is near circuit-break',
+
+      ttftTitle: 'Time to First Token (TTFT)',
+      ttftHint:
+        "Health scoring only ever penalised failures, so an account that is slow but never errors stays at 100. When enabled, a background job aggregates TTFT per account and model, compares it against the same-model baseline (the median P50 across accounts), and penalises the health score of clearly degraded accounts so they drop to the candidate pool. The test is a relative ratio rather than an absolute threshold, so naturally slow models (thinking, long context) are not systematically punished. Thresholds, sample sizes and the sweep interval are configured in config.yaml.",
+      ttftMonitorEnabled: 'Enable TTFT monitoring',
+      ttftMonitorEnabledHint:
+        'Aggregate and display per-account TTFT without affecting scheduling. Runs entirely offline — no added request latency.',
+      ttftDegradeEnabled: 'Penalise degraded accounts',
+      ttftDegradeEnabledHint:
+        'Changes account selection order. Recommended: run monitoring alone for a week or two first and confirm the baseline is stable.',
+      ttftNeedsHealthScoring:
+        'Penalties ride on the health-score system: with health scoring off, TTFT penalties have no effect.',
 
       priceTitle: 'Price-Aware Scheduling',
       priceHint:

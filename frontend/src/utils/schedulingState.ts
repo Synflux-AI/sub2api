@@ -10,7 +10,7 @@
  * 避免同一账号在运维大盘与智能调度页显示出互相矛盾的状态。
  */
 
-import type { Account } from '@/types'
+import type { Account, AccountTTFTSnapshot } from '@/types'
 
 /** 硬闸门类型。`available` 表示未被任何闸门拦截。 */
 export type SchedulingGate =
@@ -168,4 +168,27 @@ export function healthTierBadgeClass(tier: number | null | undefined): string {
     default:
       return 'badge-success'
   }
+}
+
+/** 相对基线倍率的预警门槛。低于此值不着色 —— 正常波动不该被渲染成问题。 */
+export const TTFT_WARN_RATIO = 1.5
+
+/**
+ * TTFT 倍率徽章配色。
+ *
+ * 分三档而不是「退化/正常」两档：`degraded` 由后端按配置的阈值判定，
+ * 但介于「明显偏慢」与「已达退化阈值」之间的账号同样值得运维注意，
+ * 只用两档会让它们和完全正常的账号看起来一样。
+ */
+export function ttftRatioBadgeClass(snapshot: AccountTTFTSnapshot): string {
+  if (snapshot.degraded) return 'badge-danger'
+  if (snapshot.ratio >= TTFT_WARN_RATIO) return 'badge-warning'
+  return 'badge-gray'
+}
+
+/** 把毫秒渲染成 "820ms" / "3.4s"，避免四位数毫秒在表格里难读。 */
+export function formatMs(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value) || value <= 0) return '—'
+  if (value < 1000) return `${Math.round(value)}ms`
+  return `${(value / 1000).toFixed(1)}s`
 }
