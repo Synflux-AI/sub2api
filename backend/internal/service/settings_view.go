@@ -261,6 +261,8 @@ type SystemSettings struct {
 	SchedulingHealthShadowMode         bool
 	SchedulingHealthStickyBreakEnabled bool
 	SchedulingPriceAwareEnabled        bool
+	SchedulingTTFTMonitorEnabled       bool
+	SchedulingTTFTDegradeEnabled       bool
 
 	// OpenAI 账号调度
 	OpenAILowUpstreamRatePriorityEnabled                   bool

@@ -79,6 +79,17 @@ export default {
       reasonRateLimit: '限流中 (429)',
       reasonOverload: '过载中 (529)',
       reasonTempUnsched: '临时停调度',
+
+      slowTitle: '变慢但没报错的账号',
+      slowHint:
+        '这些账号硬闸门全绿、也不报错，传统的可用性视角完全看不到它们，但用户体感最差。倍率 = 该账号 TTFT P50 ÷ 同模型各账号 P50 的中位数。',
+      slowEmpty: '当前没有明显变慢的账号',
+      ttftP50: 'TTFT P50',
+      ttftBaseline: '同模型基线',
+      ttftRatio: '相对倍率',
+      ttftWorstModel: '最慢模型',
+      ttftPenalized: '已扣健康分',
+      ttftWouldPenalize: '达退化阈值（扣分未开启）',
     },
 
     // ---------- Tab 2 渠道账号 ----------
@@ -96,6 +107,7 @@ export default {
       colGroups: '分组',
       colGate: '闸门状态',
       colHealth: '健康分',
+      colTtft: '首 Token',
       colPriority: '优先级',
       colLoad: '负载',
       colRuntime: '运行时',
@@ -117,6 +129,10 @@ export default {
       rpm: 'RPM',
       windowCost: '窗口费用',
       sessions: '会话',
+
+      ttftRatioTip: '相对同模型基线 {ratio}×',
+      ttftWorstTip: '最慢作用域：分组 #{group} · {model}（{ratio}×）',
+      ttftNoBaseline: '同模型账号太少，无基线',
 
       empty: '没有符合条件的账号',
       editAccount: '编辑账号',
@@ -140,6 +156,15 @@ export default {
       healthShadowModeHint: '只采集并记录分数，不影响选号排序。上线前建议先观察一段时间。',
       healthStickyBreak: '跌入隔离观察层时打破粘性',
       healthStickyBreakHint: '打破粘性会丢失上下文缓存，只在账号接近熔断时才触发',
+
+      ttftTitle: '首 Token 时延（TTFT）',
+      ttftHint:
+        '健康分原有的扣分触发器全是失败类事件，账号「慢但不报错」时分数永远是 100。开启后，后台任务按「账号 × 模型」聚合 TTFT，与同模型其余账号的基线（各账号 P50 的中位数）比较，明显变慢的账号扣健康分、自然降到候选池。判据是相对倍率而非绝对阈值，避免误杀 thinking / 长上下文这类天然慢的模型。阈值、样本量、巡检周期等数值参数在 config.yaml 中配置。',
+      ttftMonitorEnabled: '启用 TTFT 巡检',
+      ttftMonitorEnabledHint: '聚合并展示各账号的 TTFT，不影响调度。全程离线，不增加请求耗时。',
+      ttftDegradeEnabled: '退化账号扣健康分',
+      ttftDegradeEnabledHint: '开启后会改变选号顺序。建议先只开巡检观察一到两周，确认基线稳定再打开。',
+      ttftNeedsHealthScoring: '扣分依赖健康分体系：健康分总开关未开启时，TTFT 扣分不会生效。',
 
       priceTitle: '价格感知调度',
       priceHint: '开启后，同一健康层与优先级内按「价格 × 负载」综合分选择账号。权重与负载守卫阈值在 config.yaml 中配置。',

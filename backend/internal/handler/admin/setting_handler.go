@@ -317,6 +317,8 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		SchedulingHealthShadowMode:                             settings.SchedulingHealthShadowMode,
 		SchedulingHealthStickyBreakEnabled:                     settings.SchedulingHealthStickyBreakEnabled,
 		SchedulingPriceAwareEnabled:                            settings.SchedulingPriceAwareEnabled,
+		SchedulingTTFTMonitorEnabled:                           settings.SchedulingTTFTMonitorEnabled,
+		SchedulingTTFTDegradeEnabled:                           settings.SchedulingTTFTDegradeEnabled,
 		OpenAILowUpstreamRatePriorityEnabled:                   settings.OpenAILowUpstreamRatePriorityEnabled,
 		OpenAIOAuthSchedulingRateMultiplier:                    settings.OpenAIOAuthSchedulingRateMultiplier,
 		OpenAIAdvancedSchedulerEnabled:                         settings.OpenAIAdvancedSchedulerEnabled,

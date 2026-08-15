@@ -210,6 +210,10 @@ func (m *opsRepoMock) GetAccountErrorRates(ctx context.Context, start, end time.
 	return nil, nil
 }
 
+func (m *opsRepoMock) GetAccountModelTTFT(ctx context.Context, start, end time.Time, minSamples int) ([]OpsAccountModelTTFTRow, error) {
+	return nil, nil
+}
+
 func (m *opsRepoMock) LookupDeletedKeyAudit(ctx context.Context, key string) (*DeletedKeyAuditResult, error) {
 	if m.LookupDeletedKeyAuditFn != nil {
 		return m.LookupDeletedKeyAuditFn(ctx, key)

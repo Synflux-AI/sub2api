@@ -101,6 +101,28 @@
           </span>
         </template>
 
+        <template #cell-ttft="{ row }">
+          <div v-if="(row as AccountRow).account.ttft" class="space-y-0.5">
+            <div class="flex items-center gap-1.5">
+              <span class="font-mono text-sm text-gray-700 dark:text-gray-300">
+                {{ formatMs((row as AccountRow).account.ttft!.p50_ms) }}
+              </span>
+              <span
+                v-if="(row as AccountRow).account.ttft!.ratio > 0"
+                :class="['badge text-xs', ttftRatioBadgeClass((row as AccountRow).account.ttft!)]"
+                :title="ttftTooltip((row as AccountRow).account.ttft!)"
+              >
+                {{ (row as AccountRow).account.ttft!.ratio.toFixed(1) }}×
+              </span>
+            </div>
+            <div class="text-xs text-gray-400">
+              P95 {{ formatMs((row as AccountRow).account.ttft!.p95_ms) }} ·
+              {{ (row as AccountRow).account.ttft!.samples }}
+            </div>
+          </div>
+          <span v-else class="text-xs text-gray-400">—</span>
+        </template>
+
         <template #cell-priority="{ row }">
           <span class="font-mono text-sm text-gray-600 dark:text-gray-300">
             {{ (row as AccountRow).account.priority }}
@@ -170,7 +192,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RouterLink } from 'vue-router'
 import { adminAPI } from '@/api/admin'
-import type { Account, AdminGroup } from '@/types'
+import type { Account, AccountTTFTSnapshot, AdminGroup } from '@/types'
 import type { Column } from '@/components/common/types'
 import { formatCountdown, formatRelativeTime } from '@/utils/format'
 import {
@@ -179,6 +201,8 @@ import {
   GATE_BADGE_CLASS,
   healthTierKey,
   healthTierBadgeClass,
+  ttftRatioBadgeClass,
+  formatMs,
   type SchedulingGate,
   type SchedulingGateState
 } from '@/utils/schedulingState'
@@ -243,6 +267,7 @@ const columns = computed<Column[]>(() => [
   { key: 'groups', label: t('admin.smartRouting.accounts.colGroups') },
   { key: 'gate', label: t('admin.smartRouting.accounts.colGate') },
   { key: 'health', label: t('admin.smartRouting.accounts.colHealth') },
+  { key: 'ttft', label: t('admin.smartRouting.accounts.colTtft') },
   { key: 'priority', label: t('admin.smartRouting.accounts.colPriority') },
   { key: 'load', label: t('admin.smartRouting.accounts.colLoad') },
   { key: 'runtime', label: t('admin.smartRouting.accounts.colRuntime') },
@@ -287,6 +312,34 @@ function healthTierLabel(tier: number | null | undefined): string {
 
 function healthTierHint(tier: number | null | undefined): string {
   return t(`admin.smartRouting.accounts.${healthTierKey(tier)}Hint`)
+}
+
+/** 倍率徽章的悬浮说明：给出基线、最慢模型，让「为什么是这个倍率」可自证。 */
+function ttftTooltip(snapshot: AccountTTFTSnapshot): string {
+  const parts = [
+    t('admin.smartRouting.accounts.ttftRatioTip', { ratio: snapshot.ratio.toFixed(2) })
+  ]
+  if (snapshot.worst_model && snapshot.worst_ratio > 0) {
+    parts.push(
+      t('admin.smartRouting.accounts.ttftWorstTip', {
+        group: snapshot.worst_group_id ?? 0,
+        model: snapshot.worst_model,
+        ratio: snapshot.worst_ratio.toFixed(2)
+      })
+    )
+  }
+  for (const model of snapshot.models ?? []) {
+    if (model.baseline_ms > 0) {
+      parts.push(
+        `#${model.group_id} · ${model.model}: ${formatMs(model.p50_ms)} / ${formatMs(model.baseline_ms)} = ${model.ratio.toFixed(2)}×`
+      )
+    } else {
+      parts.push(
+        `#${model.group_id} · ${model.model}: ${formatMs(model.p50_ms)} (${t('admin.smartRouting.accounts.ttftNoBaseline')})`
+      )
+    }
+  }
+  return parts.join('\n')
 }
 
 async function loadAccounts() {

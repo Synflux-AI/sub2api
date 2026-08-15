@@ -9786,6 +9786,10 @@ const form = reactive<SettingsForm>({
   scheduling_health_shadow_mode: true,
   scheduling_health_sticky_break_enabled: true,
   scheduling_price_aware_enabled: false,
+  // TTFT 两个开关的编辑入口在「智能调度 → 调度设置」页；
+  // 此处仅为满足 SystemSettings 类型完整性，本页不渲染也不提交它们。
+  scheduling_ttft_monitor_enabled: false,
+  scheduling_ttft_degrade_enabled: false,
   openai_low_upstream_rate_priority_enabled: false,
   openai_oauth_scheduling_rate_multiplier: 1,
   openai_advanced_scheduler_enabled: false,

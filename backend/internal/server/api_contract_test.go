@@ -703,6 +703,8 @@ func TestAPIContracts(t *testing.T) {
 					service.SettingKeySchedulingHealthShadowMode:                         "false",
 					service.SettingKeySchedulingHealthStickyBreakEnabled:                 "true",
 					service.SettingKeySchedulingPriceAwareEnabled:                        "true",
+					service.SettingKeySchedulingTTFTMonitorEnabled:                       "true",
+					service.SettingKeySchedulingTTFTDegradeEnabled:                       "false",
 					service.SettingKeyOpenAILowUpstreamRatePriorityEnabled:               "true",
 					service.SettingKeyOpenAIOAuthSchedulingRateMultiplier:                "0.05",
 					"openai_advanced_scheduler_enabled":                                  "true",
@@ -928,6 +930,8 @@ func TestAPIContracts(t *testing.T) {
 					"scheduling_health_shadow_mode": false,
 					"scheduling_health_sticky_break_enabled": true,
 					"scheduling_price_aware_enabled": true,
+					"scheduling_ttft_monitor_enabled": true,
+					"scheduling_ttft_degrade_enabled": false,
 					"openai_low_upstream_rate_priority_enabled": true,
 					"openai_oauth_scheduling_rate_multiplier": 0.05,
 					"openai_advanced_scheduler_enabled": true,
@@ -1244,6 +1248,8 @@ func TestAPIContracts(t *testing.T) {
 					"scheduling_health_shadow_mode": false,
 					"scheduling_health_sticky_break_enabled": false,
 					"scheduling_price_aware_enabled": false,
+					"scheduling_ttft_monitor_enabled": false,
+					"scheduling_ttft_degrade_enabled": false,
 					"openai_low_upstream_rate_priority_enabled": false,
 					"openai_oauth_scheduling_rate_multiplier": 1,
 					"openai_advanced_scheduler_enabled": false,
@@ -1486,7 +1492,7 @@ func newContractDeps(t *testing.T) *contractDeps {
 	apiKeyHandler := handler.NewAPIKeyHandler(apiKeyService)
 	usageHandler := handler.NewUsageHandler(usageService, apiKeyService, nil, nil)
 	adminSettingHandler := adminhandler.NewSettingHandler(settingService, nil, nil, nil, nil, nil, nil)
-	adminAccountHandler := adminhandler.NewAccountHandler(adminService, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	adminAccountHandler := adminhandler.NewAccountHandler(adminService, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	jwtAuth := func(c *gin.Context) {
 		c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{

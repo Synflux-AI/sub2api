@@ -490,6 +490,22 @@ func ProvideAccountErrorRateMonitorService(
 	return svc
 }
 
+// ProvideAccountTTFTMonitorService creates and starts AccountTTFTMonitorService.
+// 巡检按「账号 × 分组 × 实际上游模型」聚合 TTFT 并把相对退化换算成健康分扣分；
+// 全程离线，不参与请求热路径。
+func ProvideAccountTTFTMonitorService(
+	opsRepo OpsRepository,
+	ttftCache AccountTTFTCache,
+	healthService *AccountHealthService,
+	settingService *SettingService,
+	lockCache LeaderLockCache,
+	cfg *config.Config,
+) *AccountTTFTMonitorService {
+	svc := NewAccountTTFTMonitorService(opsRepo, ttftCache, healthService, settingService, opsRepo, lockCache, cfg)
+	svc.Start()
+	return svc
+}
+
 // ProvideOpsCleanupService creates and starts OpsCleanupService (cron scheduled).
 // channelMonitorSvc 让维护任务（聚合 + 历史/聚合软删）跟随 ops 清理 cron 一起跑，
 // 共享 leader lock + heartbeat。
@@ -837,6 +853,7 @@ var ProviderSet = wire.NewSet(
 	ProvideOpsAggregationService,
 	ProvideOpsAlertEvaluatorService,
 	ProvideAccountErrorRateMonitorService,
+	ProvideAccountTTFTMonitorService,
 	ProvideOpsCleanupService,
 	ProvideOpsScheduledReportService,
 	NewEmailService,

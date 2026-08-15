@@ -618,6 +618,8 @@ export interface SystemSettings {
   scheduling_health_shadow_mode: boolean;
   scheduling_health_sticky_break_enabled: boolean;
   scheduling_price_aware_enabled: boolean;
+  scheduling_ttft_monitor_enabled: boolean;
+  scheduling_ttft_degrade_enabled: boolean;
 
   // Gateway forwarding behavior
   enable_fingerprint_unification: boolean;
@@ -937,6 +939,8 @@ export interface UpdateSettingsRequest {
   scheduling_health_shadow_mode?: boolean;
   scheduling_health_sticky_break_enabled?: boolean;
   scheduling_price_aware_enabled?: boolean;
+  scheduling_ttft_monitor_enabled?: boolean;
+  scheduling_ttft_degrade_enabled?: boolean;
   enable_fingerprint_unification?: boolean;
   enable_metadata_passthrough?: boolean;
   enable_cch_signing?: boolean;

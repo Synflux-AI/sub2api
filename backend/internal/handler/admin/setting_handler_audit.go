@@ -512,6 +512,12 @@ func diffSettings(before *service.SystemSettings, after *service.SystemSettings,
 	if before.SchedulingPriceAwareEnabled != after.SchedulingPriceAwareEnabled {
 		changed = append(changed, "scheduling_price_aware_enabled")
 	}
+	if before.SchedulingTTFTMonitorEnabled != after.SchedulingTTFTMonitorEnabled {
+		changed = append(changed, "scheduling_ttft_monitor_enabled")
+	}
+	if before.SchedulingTTFTDegradeEnabled != after.SchedulingTTFTDegradeEnabled {
+		changed = append(changed, "scheduling_ttft_degrade_enabled")
+	}
 	if before.OpenAILowUpstreamRatePriorityEnabled != after.OpenAILowUpstreamRatePriorityEnabled {
 		changed = append(changed, "openai_low_upstream_rate_priority_enabled")
 	}

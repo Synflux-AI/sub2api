@@ -79,6 +79,7 @@ func provideCleanup(
 	opsAggregation *service.OpsAggregationService,
 	opsAlertEvaluator *service.OpsAlertEvaluatorService,
 	accountErrorRateMonitor *service.AccountErrorRateMonitorService,
+	accountTTFTMonitor *service.AccountTTFTMonitorService,
 	opsCleanup *service.OpsCleanupService,
 	opsScheduledReport *service.OpsScheduledReportService,
 	opsSystemLogSink *service.OpsSystemLogSink,
@@ -192,6 +193,12 @@ func provideCleanup(
 			{"AccountErrorRateMonitorService", func() error {
 				if accountErrorRateMonitor != nil {
 					accountErrorRateMonitor.Stop()
+				}
+				return nil
+			}},
+			{"AccountTTFTMonitorService", func() error {
+				if accountTTFTMonitor != nil {
+					accountTTFTMonitor.Stop()
 				}
 				return nil
 			}},

@@ -491,6 +491,8 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	updates[SettingKeySchedulingHealthShadowMode] = strconv.FormatBool(settings.SchedulingHealthShadowMode)
 	updates[SettingKeySchedulingHealthStickyBreakEnabled] = strconv.FormatBool(settings.SchedulingHealthStickyBreakEnabled)
 	updates[SettingKeySchedulingPriceAwareEnabled] = strconv.FormatBool(settings.SchedulingPriceAwareEnabled)
+	updates[SettingKeySchedulingTTFTMonitorEnabled] = strconv.FormatBool(settings.SchedulingTTFTMonitorEnabled)
+	updates[SettingKeySchedulingTTFTDegradeEnabled] = strconv.FormatBool(settings.SchedulingTTFTDegradeEnabled)
 	updates[SettingKeyOpenAILowUpstreamRatePriorityEnabled] = strconv.FormatBool(settings.OpenAILowUpstreamRatePriorityEnabled)
 	updates[SettingKeyOpenAIOAuthSchedulingRateMultiplier] = strconv.FormatFloat(settings.OpenAIOAuthSchedulingRateMultiplier, 'f', -1, 64)
 	updates[openAIAdvancedSchedulerSettingKey] = strconv.FormatBool(settings.OpenAIAdvancedSchedulerEnabled)
@@ -759,6 +761,8 @@ func (s *SettingService) refreshCachedSettings(settings *SystemSettings) {
 		ShadowMode:         settings.SchedulingHealthShadowMode,
 		StickyBreakEnabled: settings.SchedulingHealthStickyBreakEnabled,
 		PriceAwareEnabled:  settings.SchedulingPriceAwareEnabled,
+		TTFTMonitorEnabled: settings.SchedulingTTFTMonitorEnabled,
+		TTFTDegradeEnabled: settings.SchedulingTTFTDegradeEnabled,
 	})
 	// Invalidate the quota auto-pause cache and let the next read trigger a fresh load.
 	// We can't know from here whether ops_advanced_settings was also touched, so be

@@ -78,6 +78,21 @@ func TestUpdateSettingsGrokDefaultBaseURLModeIsWritable(t *testing.T) {
 	require.Equal(t, service.GrokDefaultBaseURLModeEUWest1, repo.values[service.SettingKeyGrokDefaultBaseURLMode])
 }
 
+func TestUpdateSettingsTTFTTogglesAreWritableAndPreserveUnsentValue(t *testing.T) {
+	h, repo := newStepUpSwitchTestHandler(t, map[string]string{
+		service.SettingKeySchedulingTTFTMonitorEnabled: "false",
+		service.SettingKeySchedulingTTFTDegradeEnabled: "true",
+	})
+
+	rec := doUpdateSettings(t, h, map[string]any{
+		"scheduling_ttft_monitor_enabled": true,
+	}, nil)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "true", repo.values[service.SettingKeySchedulingTTFTMonitorEnabled])
+	require.Equal(t, "true", repo.values[service.SettingKeySchedulingTTFTDegradeEnabled],
+		"an omitted TTFT toggle must retain its stored value")
+}
+
 func TestUpdateSettingsRejectsTwoCaptchaProviders(t *testing.T) {
 	h, _ := newStepUpSwitchTestHandler(t, map[string]string{
 		service.SettingKeyTurnstileEnabled:   "true",

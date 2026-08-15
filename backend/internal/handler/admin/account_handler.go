@@ -60,6 +60,7 @@ type AccountHandler struct {
 	crsSyncService          *service.CRSSyncService
 	sessionLimitCache       service.SessionLimitCache
 	rpmCache                service.RPMCache
+	ttftCache               service.AccountTTFTCache
 	tokenCacheInvalidator   service.TokenCacheInvalidator
 	grokImportProber        grokImportProber
 	upstreamBillingProbe    *service.UpstreamBillingProbeService
@@ -90,6 +91,7 @@ func NewAccountHandler(
 	crsSyncService *service.CRSSyncService,
 	sessionLimitCache service.SessionLimitCache,
 	rpmCache service.RPMCache,
+	ttftCache service.AccountTTFTCache,
 	tokenCacheInvalidator service.TokenCacheInvalidator,
 ) *AccountHandler {
 	return &AccountHandler{
@@ -106,6 +108,7 @@ func NewAccountHandler(
 		crsSyncService:          crsSyncService,
 		sessionLimitCache:       sessionLimitCache,
 		rpmCache:                rpmCache,
+		ttftCache:               ttftCache,
 		tokenCacheInvalidator:   tokenCacheInvalidator,
 	}
 }
@@ -205,6 +208,9 @@ type AccountWithConcurrency struct {
 	// 仅在 health_scoring_enabled 开启时返回；只读，由上游错误/成功事件驱动
 	HealthScore *float64 `json:"health_score,omitempty"`
 	HealthTier  *int     `json:"health_tier,omitempty"`
+	// 首 Token 时延快照，由 AccountTTFTMonitorService 每轮巡检写入 Redis；
+	// 巡检未开启、无流式样本或快照已过期时为 nil。只读。
+	TTFT *service.AccountTTFTSnapshot `json:"ttft,omitempty"`
 }
 
 type AccountSchedulerScore struct {
@@ -597,6 +603,15 @@ func (h *AccountHandler) List(c *gin.Context) {
 		healthScores = healthSvc.GetScoresBatch(c.Request.Context(), accountIDs)
 	}
 
+	// TTFT 快照（Redis pipeline 批量读）。巡检未跑或已过期时为空 map，
+	// 前端据此隐藏 TTFT 列，而不是显示一个会误导人的 0。
+	var ttftSnapshots map[int64]*service.AccountTTFTSnapshot
+	if h.ttftCache != nil {
+		if snaps, err := h.ttftCache.GetSnapshotsBatch(c.Request.Context(), accountIDs); err == nil {
+			ttftSnapshots = snaps
+		}
+	}
+
 	// 识别需要查询窗口费用、会话数和 RPM 的账号（Anthropic OAuth/SetupToken 且启用了相应功能）
 	windowCostAccountIDs := make([]int64, 0)
 	sessionLimitAccountIDs := make([]int64, 0)
@@ -703,6 +718,10 @@ func (h *AccountHandler) List(c *gin.Context) {
 			tier := healthSvc.TierForScore(score)
 			item.HealthScore = &score
 			item.HealthTier = &tier
+		}
+
+		if snapshot, ok := ttftSnapshots[acc.ID]; ok {
+			item.TTFT = snapshot
 		}
 
 		result[i] = item
