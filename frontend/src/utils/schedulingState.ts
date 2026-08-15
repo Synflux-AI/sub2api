@@ -30,12 +30,37 @@ export interface SchedulingGateState {
   available: boolean
   /** 闸门自动解除的时间；null 表示需要人工处理（如手动停用、状态异常）。 */
   recoversAt: string | null
+  /** 当前生效的模型级 429 冷却；只影响对应 scope，不代表整个账号不可调度。 */
+  scopedRateLimits: ScopedRateLimit[]
+}
+
+export interface ScopedRateLimit {
+  scope: string
+  recoversAt: string
 }
 
 function isFuture(value: string | null | undefined, now: number): boolean {
   if (!value) return false
   const ts = new Date(value).getTime()
   return !Number.isNaN(ts) && ts > now
+}
+
+/** 提取仍在生效的模型级 429 冷却。 */
+export function resolveScopedRateLimits(
+  account: Account,
+  nowMs: number = Date.now()
+): ScopedRateLimit[] {
+  const limits = account.extra?.model_rate_limits
+  if (!limits || typeof limits !== 'object') return []
+
+  return Object.entries(limits)
+    .flatMap(([scope, value]) => {
+      if (!value || typeof value !== 'object') return []
+      const recoversAt = value.rate_limit_reset_at
+      if (!isFuture(recoversAt, nowMs)) return []
+      return [{ scope, recoversAt }]
+    })
+    .sort((a, b) => new Date(a.recoversAt).getTime() - new Date(b.recoversAt).getTime())
 }
 
 /**
@@ -49,6 +74,7 @@ export function resolveSchedulingGate(
   nowMs: number = Date.now()
 ): SchedulingGateState {
   const hasError = account.status === 'error'
+  const scopedRateLimits = resolveScopedRateLimits(account, nowMs)
 
   let rateLimited = isFuture(account.rate_limit_reset_at, nowMs)
   let overloaded = isFuture(account.overload_until, nowMs)
@@ -96,7 +122,8 @@ export function resolveSchedulingGate(
     gate: available ? 'available' : gates[0] ?? 'inactive',
     gates,
     available,
-    recoversAt
+    recoversAt,
+    scopedRateLimits
   }
 }
 

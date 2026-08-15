@@ -77,7 +77,7 @@
         </p>
       </div>
 
-      <div class="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
+      <div class="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-7">
         <div v-for="stat in gateStats" :key="stat.key" class="card p-4">
           <div class="text-xs text-gray-500 dark:text-dark-400">{{ stat.label }}</div>
           <div :class="['mt-1 text-2xl font-bold', stat.class]">{{ stat.value }}</div>
@@ -309,6 +309,9 @@ const breakdown = computed<GateBreakdown>(() => {
   for (const account of props.accounts) {
     acc.total++
     const state = resolveSchedulingGate(account, props.nowMs)
+    if (state.gates.includes('rate_limited') || state.scopedRateLimits.length > 0) {
+      acc.rateLimited++
+    }
     if (state.available) {
       acc.available++
       continue
@@ -317,7 +320,6 @@ const breakdown = computed<GateBreakdown>(() => {
     // 这几个计数是「有多少账号受此闸门影响」，不是互斥分区，故不要求求和等于 total。
     if (state.gates.includes('inactive')) acc.inactive++
     if (state.gates.includes('manual')) acc.manual++
-    if (state.gates.includes('rate_limited')) acc.rateLimited++
     if (state.gates.includes('overloaded')) acc.overloaded++
     if (state.gates.includes('temp_unschedulable')) acc.tempUnschedulable++
   }
@@ -354,6 +356,12 @@ const gateStats = computed(() => [
     label: t('admin.smartRouting.overview.rateLimited'),
     value: breakdown.value.rateLimited,
     class: breakdown.value.rateLimited > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-gray-400'
+  },
+  {
+    key: 'overloaded',
+    label: t('admin.smartRouting.overview.overloaded'),
+    value: breakdown.value.overloaded,
+    class: breakdown.value.overloaded > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-gray-400'
   },
   {
     key: 'blocked',

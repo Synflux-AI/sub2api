@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import type { Account } from '@/types'
-import { resolveSchedulingGate } from '../schedulingState'
+import { resolveSchedulingGate, resolveScopedRateLimits } from '../schedulingState'
 
 const NOW = Date.UTC(2026, 7, 15, 12, 0, 0)
 
@@ -110,5 +110,53 @@ describe('resolveSchedulingGate', () => {
 
     expect(state.available).toBe(false)
     expect(state.gate).toBe('manual')
+  })
+
+  it('exposes active model-scoped 429 cooldowns without blocking the whole account', () => {
+    const state = resolveSchedulingGate(
+      makeAccount({
+        extra: {
+          model_rate_limits: {
+            opus: {
+              rate_limited_at: iso(-60_000),
+              rate_limit_reset_at: iso(10 * 60_000)
+            },
+            expired: {
+              rate_limited_at: iso(-120_000),
+              rate_limit_reset_at: iso(-60_000)
+            }
+          }
+        }
+      }),
+      NOW
+    )
+
+    expect(state.available).toBe(true)
+    expect(state.gates).toEqual([])
+    expect(state.scopedRateLimits).toEqual([
+      { scope: 'opus', recoversAt: iso(10 * 60_000) }
+    ])
+  })
+
+  it('sorts model-scoped cooldowns by recovery time', () => {
+    const account = makeAccount({
+      extra: {
+        model_rate_limits: {
+          later: {
+            rate_limited_at: iso(-60_000),
+            rate_limit_reset_at: iso(20 * 60_000)
+          },
+          sooner: {
+            rate_limited_at: iso(-60_000),
+            rate_limit_reset_at: iso(5 * 60_000)
+          }
+        }
+      }
+    })
+
+    expect(resolveScopedRateLimits(account, NOW).map((item) => item.scope)).toEqual([
+      'sooner',
+      'later'
+    ])
   })
 })

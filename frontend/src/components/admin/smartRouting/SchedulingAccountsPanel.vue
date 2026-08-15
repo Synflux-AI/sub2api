@@ -62,6 +62,19 @@
                 {{ gateLabel(gate) }}
               </span>
             </template>
+            <span
+              v-for="limit in (row as AccountRow).state.scopedRateLimits"
+              :key="`${limit.scope}:${limit.recoversAt}`"
+              class="badge badge-warning text-xs"
+              :title="limit.recoversAt"
+            >
+              {{
+                t('admin.smartRouting.accounts.modelRateLimited', {
+                  model: limit.scope,
+                  countdown: formatCountdown(limit.recoversAt)
+                })
+              }}
+            </span>
           </div>
           <div
             v-if="!(row as AccountRow).state.available && (row as AccountRow).countdown"

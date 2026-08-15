@@ -107,6 +107,7 @@ export default {
       colActions: 'Actions',
 
       gateAvailable: 'Schedulable',
+      modelRateLimited: '429 · {model} · {countdown}',
       healthDisabled: 'Disabled',
       healthTier0: 'Primary',
       healthTier1: 'Candidate',

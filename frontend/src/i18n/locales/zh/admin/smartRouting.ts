@@ -103,6 +103,7 @@ export default {
       colActions: '操作',
 
       gateAvailable: '可调度',
+      modelRateLimited: '429 · {model} · {countdown}',
       healthDisabled: '未开启',
       healthTier0: '主池',
       healthTier1: '候选池',
