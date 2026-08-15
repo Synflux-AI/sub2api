@@ -462,16 +462,22 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
-    path: '/admin/routing-strategies',
-    name: 'AdminRoutingStrategies',
-    component: () => import('@/views/admin/RoutingStrategiesView.vue'),
+    path: '/admin/smart-routing',
+    name: 'AdminSmartRouting',
+    component: () => import('@/views/admin/SmartRoutingView.vue'),
     meta: {
       requiresAuth: true,
       requiresAdmin: true,
-      title: 'Routing Strategies',
-      titleKey: 'admin.routingStrategies.title',
-      descriptionKey: 'admin.routingStrategies.description'
+      title: 'Smart Routing',
+      titleKey: 'admin.smartRouting.title',
+      descriptionKey: 'admin.smartRouting.description'
     }
+  },
+  {
+    // 路由策略已并入智能调度页。保留旧路径重定向，旧书签与外部链接继续可用。
+    path: '/admin/routing-strategies',
+    name: 'AdminRoutingStrategies',
+    redirect: { name: 'AdminSmartRouting', query: { tab: 'strategies' } }
   },
   {
     path: '/admin/channels',
@@ -951,7 +957,9 @@ router.beforeEach(async (to, _from, next) => {
   if (authStore.isSimpleMode) {
     const restrictedPaths = [
       '/admin/groups',
-      '/admin/routing-strategies',
+      // 旧的 /admin/routing-strategies 已重定向到智能调度页，路由匹配阶段就完成跳转，
+      // 到达本守卫时 to.path 已是新路径，因此这里只需列新路径。
+      '/admin/smart-routing',
       '/admin/error-handling-rules',
       '/admin/subscriptions',
       '/admin/redeem',

@@ -172,6 +172,7 @@ export default {
     users: 'Users',
     groups: 'Groups',
     routingStrategies: 'Routing Strategies',
+    smartRouting: 'Smart Routing',
     errorHandlingRules: 'Error Handling Rules',
     channels: 'Channels',
     availableChannels: 'Available Channels',
