@@ -24,7 +24,11 @@ func (r *groupUsageSummaryCacheProbe) GetAllGroupUsageSummary(context.Context, t
 	return []usagestats.GroupUsageSummary{{GroupID: 1, TotalCost: 10, TodayCost: 2}}, nil
 }
 
-func TestGroupHandler_GetUsageSummaryUsesTimezoneScopedCache(t *testing.T) {
+// 分组用量汇总改由服务端时区的预聚合 rollup 提供（migrations 222/223），
+// 日界由 service.GroupUsageTodayStart 统一裁定，缓存键只跟随该日界。
+// 客户端 timezone 参数不再参与分桶——rollup 是按服务端时区聚合的，
+// 无法按任意客户端时区重切，若某次改动让该参数重新影响缓存键，此用例会失败。
+func TestGroupHandler_GetUsageSummaryCacheKeyedByServerDayNotClientTimezone(t *testing.T) {
 	groupUsageSummaryCache = newSnapshotCache(30 * time.Second)
 	t.Cleanup(func() { groupUsageSummaryCache = newSnapshotCache(30 * time.Second) })
 
@@ -51,8 +55,9 @@ func TestGroupHandler_GetUsageSummaryUsesTimezoneScopedCache(t *testing.T) {
 	require.Equal(t, "hit", rec2.Header().Get("X-Snapshot-Cache"))
 	require.Equal(t, int32(1), repo.calls.Load())
 
+	// 换客户端时区仍命中同一条目：日界由服务端配置时区决定，与该参数无关。
 	rec3 := request("Pacific/Auckland")
 	require.Equal(t, http.StatusOK, rec3.Code)
-	require.Equal(t, "miss", rec3.Header().Get("X-Snapshot-Cache"))
-	require.Equal(t, int32(2), repo.calls.Load())
+	require.Equal(t, "hit", rec3.Header().Get("X-Snapshot-Cache"))
+	require.Equal(t, int32(1), repo.calls.Load())
 }
