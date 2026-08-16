@@ -174,30 +174,6 @@ func appendUsageLogModelsQueryFilter(query string, args []any, model string, mod
 	return query + " AND " + conditions[0], args
 }
 
-// appendRawUsageLogModelQueryFilter keeps direct model filters on the raw model column for backward
-// compatibility with historical rows. Requested/upstream analytics must use
-// resolveModelDimensionExpression instead.
-func appendRawUsageLogModelQueryFilter(query string, args []any, model string) (string, []any) {
-	if strings.TrimSpace(model) == "" {
-		return query, args
-	}
-	query += fmt.Sprintf(" AND %s = $%d", rawUsageLogModelColumn, len(args)+1)
-	args = append(args, model)
-	return query, args
-}
-
-func appendUsageLogModelQueryFilter(query string, args []any, model string, source string) (string, []any) {
-	if strings.TrimSpace(source) == "" {
-		return appendRawUsageLogModelQueryFilter(query, args, model)
-	}
-	if strings.TrimSpace(model) == "" {
-		return query, args
-	}
-	query += fmt.Sprintf(" AND %s = $%d", resolveModelDimensionExpression(source), len(args)+1)
-	args = append(args, model)
-	return query, args
-}
-
 type usageLogRepository struct {
 	client *dbent.Client
 	sql    sqlExecutor
