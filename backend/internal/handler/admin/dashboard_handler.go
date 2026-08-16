@@ -499,7 +499,7 @@ func (h *DashboardHandler) GetAPIKeyUsageTrend(c *gin.Context) {
 
 // GetUserUsageTrend handles getting user usage trend data
 // GET /api/v1/admin/dashboard/users-trend
-// Query params: start_date, end_date (YYYY-MM-DD), granularity (day/hour), limit (default 12), sort_by
+// Query params: start_date, end_date (YYYY-MM-DD), granularity (day/hour), limit (default 12), sort_by, user_id, api_key_id, account_id, group_id, model
 func (h *DashboardHandler) GetUserUsageTrend(c *gin.Context) {
 	startTime, endTime := parseTimeRange(c)
 	granularity := c.DefaultQuery("granularity", "day")
@@ -512,8 +512,13 @@ func (h *DashboardHandler) GetUserUsageTrend(c *gin.Context) {
 	if sortBy != "actual_cost" && sortBy != "requests" && sortBy != "total_tokens" {
 		sortBy = "total_tokens"
 	}
+	filters, err := parseDashboardSnapshotV2Filters(c)
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
 
-	trend, hit, err := h.getUserUsageTrendCached(c.Request.Context(), startTime, endTime, granularity, limit, sortBy)
+	trend, hit, err := h.getUserUsageTrendCached(c.Request.Context(), startTime, endTime, granularity, limit, sortBy, *filters)
 	if err != nil {
 		response.Error(c, 500, "Failed to get user usage trend")
 		return

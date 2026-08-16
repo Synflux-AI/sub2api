@@ -85,7 +85,7 @@ func (r *usageLogRepository) GetAPIKeyUsageTrend(ctx context.Context, startTime,
 }
 
 // GetUserUsageTrend returns usage trend data grouped by user and date
-func (r *usageLogRepository) GetUserUsageTrend(ctx context.Context, startTime, endTime time.Time, granularity string, limit int, sortBy string) (results []UserUsageTrendPoint, err error) {
+func (r *usageLogRepository) GetUserUsageTrend(ctx context.Context, startTime, endTime time.Time, granularity string, limit int, sortBy string, filters UsageLogFilters) (results []UserUsageTrendPoint, err error) {
 	dateFormat := safeDateFormat(granularity)
 	orderBy := "SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens)"
 	switch sortBy {
@@ -95,14 +95,46 @@ func (r *usageLogRepository) GetUserUsageTrend(ctx context.Context, startTime, e
 		orderBy = "COUNT(*)"
 	}
 
-	query := fmt.Sprintf(`
-		WITH top_users AS (
-			SELECT user_id
+	query := `
+		WITH filtered_logs AS (
+			SELECT *
 			FROM usage_logs
 			WHERE created_at >= $1 AND created_at < $2
+	`
+	args := []any{startTime, endTime}
+	if filters.UserID > 0 {
+		query += fmt.Sprintf(" AND user_id = $%d", len(args)+1)
+		args = append(args, filters.UserID)
+	}
+	if filters.APIKeyID > 0 {
+		query += fmt.Sprintf(" AND api_key_id = $%d", len(args)+1)
+		args = append(args, filters.APIKeyID)
+	}
+	if filters.AccountID > 0 {
+		query += fmt.Sprintf(" AND account_id = $%d", len(args)+1)
+		args = append(args, filters.AccountID)
+	}
+	if filters.GroupID > 0 {
+		query += fmt.Sprintf(" AND group_id = $%d", len(args)+1)
+		args = append(args, filters.GroupID)
+	}
+	query, args = appendUsageLogModelQueryFilter(query, args, filters.Model, filters.ModelFilterSource)
+	query, args = appendRequestTypeOrStreamQueryFilter(query, args, filters.RequestType, filters.Stream)
+	if filters.BillingType != nil {
+		query += fmt.Sprintf(" AND billing_type = $%d", len(args)+1)
+		args = append(args, int16(*filters.BillingType))
+	}
+	if filters.UpstreamModelMismatch != nil {
+		query += " AND " + upstreamModelMismatchCondition("upstream_model_mismatch", *filters.UpstreamModelMismatch)
+	}
+
+	query += fmt.Sprintf(`
+		), top_users AS (
+			SELECT user_id
+			FROM filtered_logs
 			GROUP BY user_id
 			ORDER BY %s DESC, user_id ASC
-			LIMIT $3
+			LIMIT $%d
 		)
 		SELECT
 			TO_CHAR(u.created_at, '%s') as date,
@@ -116,15 +148,15 @@ func (r *usageLogRepository) GetUserUsageTrend(ctx context.Context, startTime, e
 			COALESCE(SUM(u.input_tokens + u.output_tokens + u.cache_creation_tokens + u.cache_read_tokens), 0) as tokens,
 			COALESCE(SUM(u.total_cost), 0) as cost,
 			COALESCE(SUM(u.actual_cost), 0) as actual_cost
-		FROM usage_logs u
+		FROM filtered_logs u
 		LEFT JOIN top_users top ON u.user_id = top.user_id
 		LEFT JOIN users us ON u.user_id = us.id
-		WHERE u.created_at >= $4 AND u.created_at < $5
 		GROUP BY 1, 2, 3, 4, 5, 6, 7
 		ORDER BY date ASC, tokens DESC
-	`, orderBy, dateFormat)
+	`, orderBy, len(args)+1, dateFormat)
+	args = append(args, limit)
 
-	rows, err := r.sql.QueryContext(ctx, query, startTime, endTime, limit, startTime, endTime)
+	rows, err := r.sql.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}

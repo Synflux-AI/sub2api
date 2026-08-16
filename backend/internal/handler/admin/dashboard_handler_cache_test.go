@@ -16,9 +16,10 @@ import (
 
 type dashboardUsageRepoCacheProbe struct {
 	service.UsageLogRepository
-	trendCalls      atomic.Int32
-	usersTrendCalls atomic.Int32
-	usersTrendSorts []string
+	trendCalls        atomic.Int32
+	usersTrendCalls   atomic.Int32
+	usersTrendSorts   []string
+	usersTrendFilters []usagestats.UsageLogFilters
 }
 
 func (r *dashboardUsageRepoCacheProbe) GetUsageTrendWithUsageFilters(
@@ -56,9 +57,11 @@ func (r *dashboardUsageRepoCacheProbe) GetUserUsageTrend(
 	granularity string,
 	limit int,
 	sortBy string,
+	filters usagestats.UsageLogFilters,
 ) ([]usagestats.UserUsageTrendPoint, error) {
 	r.usersTrendCalls.Add(1)
 	r.usersTrendSorts = append(r.usersTrendSorts, sortBy)
+	r.usersTrendFilters = append(r.usersTrendFilters, filters)
 	return []usagestats.UserUsageTrendPoint{{
 		Date:       "2026-03-11",
 		UserID:     1,
@@ -172,4 +175,50 @@ func TestDashboardHandler_GetUserUsageTrend_CachesSortSeparately(t *testing.T) {
 	}
 	require.Equal(t, int32(2), repo.usersTrendCalls.Load())
 	require.Equal(t, []string{"actual_cost", "total_tokens"}, repo.usersTrendSorts)
+}
+
+func TestDashboardHandler_GetUserUsageTrend_ForwardsFiltersAndCachesSeparately(t *testing.T) {
+	t.Cleanup(resetDashboardReadCachesForTest)
+	resetDashboardReadCachesForTest()
+
+	gin.SetMode(gin.TestMode)
+	repo := &dashboardUsageRepoCacheProbe{}
+	handler := NewDashboardHandler(service.NewDashboardService(repo, nil, nil, nil), nil)
+	router := gin.New()
+	router.GET("/admin/dashboard/users-trend", handler.GetUserUsageTrend)
+
+	for _, model := range []string{"gpt-5", "claude-sonnet-4"} {
+		req := httptest.NewRequest(http.MethodGet, "/admin/dashboard/users-trend?start_date=2026-03-01&end_date=2026-03-07&user_id=11&api_key_id=22&account_id=33&group_id=44&model="+model, nil)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		require.Equal(t, http.StatusOK, rec.Code)
+		require.Equal(t, "miss", rec.Header().Get("X-Snapshot-Cache"))
+	}
+
+	require.Equal(t, int32(2), repo.usersTrendCalls.Load())
+	require.Equal(t, []usagestats.UsageLogFilters{
+		{UserID: 11, APIKeyID: 22, AccountID: 33, GroupID: 44, Model: "gpt-5"},
+		{UserID: 11, APIKeyID: 22, AccountID: 33, GroupID: 44, Model: "claude-sonnet-4"},
+	}, repo.usersTrendFilters)
+}
+
+func TestDashboardHandler_GetSnapshotV2_UsersTrendReusesFilters(t *testing.T) {
+	t.Cleanup(resetDashboardReadCachesForTest)
+	resetDashboardReadCachesForTest()
+
+	gin.SetMode(gin.TestMode)
+	repo := &dashboardUsageRepoCacheProbe{}
+	handler := NewDashboardHandler(service.NewDashboardService(repo, nil, nil, nil), nil)
+	router := gin.New()
+	router.GET("/admin/dashboard/snapshot-v2", handler.GetSnapshotV2)
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/dashboard/snapshot-v2?include_stats=false&include_trend=false&include_model_stats=false&include_group_stats=false&include_users_trend=true&user_id=11&api_key_id=22&account_id=33&group_id=44&model=gpt-5", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, int32(1), repo.usersTrendCalls.Load())
+	require.Equal(t, []usagestats.UsageLogFilters{{
+		UserID: 11, APIKeyID: 22, AccountID: 33, GroupID: 44, Model: "gpt-5",
+	}}, repo.usersTrendFilters)
 }
