@@ -1,19 +1,19 @@
 <template>
   <div class="space-y-6">
-    <div class="flex flex-wrap items-center gap-2">
-      <p class="min-w-0 flex-1 text-xs text-gray-500 dark:text-dark-400">
+    <div class="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
+      <p class="col-span-2 min-w-0 text-xs text-gray-500 dark:text-dark-400 sm:flex-1">
         {{ t('admin.smartRouting.settings.configOnlyNotice') }}
       </p>
-      <button class="btn btn-secondary btn-sm" :disabled="loading" @click="reload">
+      <button class="btn btn-secondary btn-sm w-full sm:w-auto" :disabled="loading" @click="reload">
         {{ t('admin.smartRouting.settings.reload') }}
       </button>
-      <button class="btn btn-primary btn-sm" :disabled="saving || loading" @click="save">
+      <button class="btn btn-primary btn-sm w-full sm:w-auto" :disabled="saving || loading" @click="save">
         {{ saving ? t('admin.smartRouting.settings.saving') : t('admin.smartRouting.settings.save') }}
       </button>
     </div>
 
     <!-- 账号健康分 -->
-    <section class="card p-5">
+    <section class="card p-4 sm:p-5">
       <h3 class="text-sm font-semibold text-gray-900 dark:text-white">
         {{ t('admin.smartRouting.settings.healthTitle') }}
       </h3>
@@ -61,7 +61,7 @@
     </section>
 
     <!-- 首 Token 时延 -->
-    <section class="card p-5">
+    <section class="card p-4 sm:p-5">
       <h3 class="text-sm font-semibold text-gray-900 dark:text-white">
         {{ t('admin.smartRouting.settings.ttftTitle') }}
       </h3>
@@ -104,7 +104,7 @@
     </section>
 
     <!-- 价格感知 -->
-    <section class="card p-5">
+    <section class="card p-4 sm:p-5">
       <h3 class="text-sm font-semibold text-gray-900 dark:text-white">
         {{ t('admin.smartRouting.settings.priceTitle') }}
       </h3>
@@ -121,7 +121,7 @@
     </section>
 
     <!-- OpenAI 高级调度权重 -->
-    <section class="card p-5">
+    <section class="card p-4 sm:p-5">
       <h3 class="text-sm font-semibold text-gray-900 dark:text-white">
         {{ t('admin.smartRouting.settings.openaiTitle') }}
       </h3>
@@ -166,7 +166,7 @@
     </section>
 
     <!-- 冷却与闸门 -->
-    <section class="card p-5">
+    <section class="card p-4 sm:p-5">
       <h3 class="text-sm font-semibold text-gray-900 dark:text-white">
         {{ t('admin.smartRouting.settings.cooldownTitle') }}
       </h3>
@@ -180,7 +180,7 @@
         <div
           v-for="item in cooldownLinks"
           :key="item.key"
-          class="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gray-200 px-4 py-3 dark:border-dark-700"
+          class="flex flex-col items-stretch gap-3 rounded-lg border border-gray-200 px-4 py-3 dark:border-dark-700 sm:flex-row sm:items-center sm:justify-between"
         >
           <div class="min-w-0">
             <div class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ item.label }}</div>
@@ -188,7 +188,7 @@
               {{ t('admin.smartRouting.settings.configuredIn') }}
             </p>
           </div>
-          <RouterLink :to="item.to" class="btn btn-secondary btn-sm shrink-0">
+          <RouterLink :to="item.to" class="btn btn-secondary btn-sm w-full shrink-0 sm:w-auto">
             {{ item.actionLabel }}
           </RouterLink>
         </div>
@@ -196,7 +196,7 @@
     </section>
 
     <!-- 其他 -->
-    <section class="card p-5">
+    <section class="card p-4 sm:p-5">
       <h3 class="text-sm font-semibold text-gray-900 dark:text-white">
         {{ t('admin.smartRouting.settings.otherTitle') }}
       </h3>
@@ -214,7 +214,7 @@
           <Toggle v-model="form.allow_ungrouped_key_scheduling" />
         </div>
 
-        <div class="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gray-200 px-4 py-3 dark:border-dark-700">
+        <div class="flex flex-col items-stretch gap-3 rounded-lg border border-gray-200 px-4 py-3 dark:border-dark-700 sm:flex-row sm:items-center sm:justify-between">
           <div class="min-w-0">
             <div class="text-sm font-medium text-gray-700 dark:text-gray-300">
               {{ t('admin.smartRouting.settings.errorHandlingRules') }}
@@ -223,7 +223,7 @@
               {{ t('admin.smartRouting.settings.errorHandlingRulesHint') }}
             </p>
           </div>
-          <RouterLink to="/admin/error-handling-rules" class="btn btn-secondary btn-sm shrink-0">
+          <RouterLink to="/admin/error-handling-rules" class="btn btn-secondary btn-sm w-full shrink-0 sm:w-auto">
             {{ t('admin.smartRouting.settings.openErrorRules') }}
           </RouterLink>
         </div>

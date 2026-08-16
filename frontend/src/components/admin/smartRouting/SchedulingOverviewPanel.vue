@@ -107,7 +107,7 @@
               :key="row.key"
               class="border-t border-gray-100 dark:border-dark-700/50"
             >
-              <td class="px-4 py-2 text-gray-900 dark:text-white">{{ row.key }}</td>
+              <td class="break-all px-4 py-2 text-gray-900 dark:text-white">{{ row.key }}</td>
               <td class="px-4 py-2 text-right" :class="row.available < row.total ? 'text-amber-600 dark:text-amber-400' : 'text-gray-600 dark:text-gray-300'">
                 {{ row.available }}
               </td>
@@ -141,7 +141,7 @@
                 :key="row.key"
                 class="border-t border-gray-100 dark:border-dark-700/50"
               >
-                <td class="px-4 py-2 text-gray-900 dark:text-white">{{ row.key }}</td>
+                <td class="break-all px-4 py-2 text-gray-900 dark:text-white">{{ row.key }}</td>
                 <td class="px-4 py-2 text-right" :class="row.available < row.total ? 'text-amber-600 dark:text-amber-400' : 'text-gray-600 dark:text-gray-300'">
                   {{ row.available }}
                 </td>
@@ -168,7 +168,60 @@
       </div>
 
       <div class="card overflow-hidden">
-        <table class="w-full text-sm">
+        <div class="divide-y divide-gray-100 dark:divide-dark-700/50 md:hidden">
+          <article v-for="row in slowAccounts" :key="row.account.id" class="p-4">
+            <div class="flex min-w-0 items-start justify-between gap-3">
+              <div class="min-w-0">
+                <div class="break-words font-medium text-gray-900 dark:text-white">
+                  {{ row.account.name }}
+                </div>
+                <div class="text-xs text-gray-400">#{{ row.account.id }}</div>
+              </div>
+              <span class="badge badge-gray shrink-0 text-xs">{{ row.account.platform }}</span>
+            </div>
+
+            <dl class="mt-3 grid grid-cols-2 gap-3">
+              <div>
+                <dt class="text-xs text-gray-500 dark:text-dark-400">
+                  {{ t('admin.smartRouting.overview.ttftP50') }}
+                </dt>
+                <dd class="mt-0.5 font-mono text-sm text-gray-700 dark:text-gray-300">
+                  {{ formatMs(row.ttft.p50_ms) }}
+                </dd>
+              </div>
+              <div>
+                <dt class="text-xs text-gray-500 dark:text-dark-400">
+                  {{ t('admin.smartRouting.overview.ttftBaseline') }}
+                </dt>
+                <dd class="mt-0.5 font-mono text-sm text-gray-700 dark:text-gray-300">
+                  {{ formatMs(row.baselineMs) }}
+                </dd>
+              </div>
+            </dl>
+
+            <div class="mt-3 flex flex-wrap items-center gap-1.5">
+              <span :class="['badge text-xs', ttftRatioBadgeClass(row.ttft)]">
+                {{ row.ttft.ratio.toFixed(1) }}×
+              </span>
+              <span v-if="row.ttft.degraded" class="text-xs text-red-600 dark:text-red-400">
+                {{ ttftDegradeEnabled
+                  ? t('admin.smartRouting.overview.ttftPenalized')
+                  : t('admin.smartRouting.overview.ttftWouldPenalize') }}
+              </span>
+            </div>
+            <p class="mt-2 break-all text-xs text-gray-500 dark:text-dark-400">
+              <template v-if="row.ttft.worst_model">
+                {{ row.ttft.worst_model }} · {{ row.ttft.worst_ratio.toFixed(1) }}×
+              </template>
+              <template v-else>—</template>
+            </p>
+          </article>
+          <p v-if="slowAccounts.length === 0" class="px-4 py-8 text-center text-sm text-gray-400">
+            {{ t('admin.smartRouting.overview.slowEmpty') }}
+          </p>
+        </div>
+
+        <table class="hidden w-full text-sm md:table">
           <thead class="bg-gray-50 text-xs text-gray-500 dark:bg-dark-800 dark:text-dark-400">
             <tr>
               <th class="px-4 py-2 text-left font-medium">{{ t('admin.smartRouting.overview.account') }}</th>
@@ -235,7 +288,44 @@
       </div>
 
       <div class="card overflow-hidden">
-        <table class="w-full text-sm">
+        <div class="divide-y divide-gray-100 dark:divide-dark-700/50 md:hidden">
+          <article v-for="row in blockedAccounts" :key="row.account.id" class="p-4">
+            <div class="flex min-w-0 items-start justify-between gap-3">
+              <div class="min-w-0">
+                <div class="break-words font-medium text-gray-900 dark:text-white">
+                  {{ row.account.name }}
+                </div>
+                <div class="text-xs text-gray-400">#{{ row.account.id }}</div>
+              </div>
+              <span class="badge badge-gray shrink-0 text-xs">{{ row.account.platform }}</span>
+            </div>
+            <div class="mt-3 flex flex-wrap gap-1">
+              <span
+                v-for="gate in row.state.gates"
+                :key="gate"
+                :class="['badge text-xs', gateBadgeClass(gate)]"
+              >
+                {{ gateLabel(gate) }}
+              </span>
+            </div>
+            <div class="mt-3 border-t border-gray-100 pt-3 text-xs dark:border-dark-700/50">
+              <span class="text-gray-500 dark:text-dark-400">
+                {{ t('admin.smartRouting.overview.recoversIn') }}:
+              </span>
+              <span v-if="row.countdown" class="ml-1 font-mono text-gray-700 dark:text-gray-300">
+                {{ row.countdown }}
+              </span>
+              <span v-else class="ml-1 text-red-600 dark:text-red-400">
+                {{ t('admin.smartRouting.overview.needsManualAction') }}
+              </span>
+            </div>
+          </article>
+          <p v-if="blockedAccounts.length === 0" class="px-4 py-8 text-center text-sm text-gray-400">
+            {{ t('admin.smartRouting.overview.blockedEmpty') }}
+          </p>
+        </div>
+
+        <table class="hidden w-full text-sm md:table">
           <thead class="bg-gray-50 text-xs text-gray-500 dark:bg-dark-800 dark:text-dark-400">
             <tr>
               <th class="px-4 py-2 text-left font-medium">{{ t('admin.smartRouting.overview.account') }}</th>

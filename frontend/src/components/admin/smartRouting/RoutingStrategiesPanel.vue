@@ -6,8 +6,8 @@
           {{ t('admin.routingStrategies.description') }}
         </h2>
       </div>
-      <div class="flex flex-wrap items-center justify-end gap-2">
-        <button @click="loadStrategies" :disabled="loading" class="btn btn-secondary" :title="t('common.refresh')">
+      <div class="grid w-full grid-cols-[auto_1fr_1fr] gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center sm:justify-end">
+        <button @click="loadStrategies" :disabled="loading" class="btn btn-secondary px-3 sm:px-4" :title="t('common.refresh')">
           <Icon name="refresh" size="md" :class="loading ? 'animate-spin' : ''" />
         </button>
         <button @click="openTester" class="btn btn-secondary">
@@ -40,7 +40,7 @@
           </template>
 
           <template #cell-conditions="{ row }">
-            <span class="text-sm text-gray-600 dark:text-gray-300">{{ conditionsSummary(row) }}</span>
+            <span class="break-all text-sm text-gray-600 dark:text-gray-300">{{ conditionsSummary(row) }}</span>
           </template>
 
           <template #cell-action="{ row }">
@@ -50,7 +50,7 @@
           </template>
 
           <template #cell-accounts="{ row }">
-            <span class="text-sm text-gray-600 dark:text-gray-300">{{ accountsSummary(row.account_ids) }}</span>
+            <span class="break-words text-sm text-gray-600 dark:text-gray-300">{{ accountsSummary(row.account_ids) }}</span>
           </template>
 
           <template #cell-enabled="{ row }">
@@ -60,7 +60,7 @@
           </template>
 
           <template #cell-actions="{ row }">
-            <div class="flex items-center space-x-1">
+            <div class="flex items-center justify-end space-x-1">
               <button
                 @click="openEditDialog(row)"
                 class="rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-dark-600 dark:hover:text-gray-300"
@@ -131,10 +131,10 @@
 
         <!-- Conditions -->
         <div>
-          <div class="mb-2 flex items-center justify-between">
+          <div class="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <label class="input-label mb-0">{{ t('admin.routingStrategies.conditions') }}</label>
-            <div class="flex items-center gap-2">
-              <Select v-model="form.match_mode" :options="matchModeOptions" class="w-44" />
+            <div class="grid grid-cols-[minmax(0,1fr)_auto] gap-2 sm:flex sm:items-center">
+              <Select v-model="form.match_mode" :options="matchModeOptions" class="w-full sm:w-44" />
               <button type="button" @click="addCondition" class="btn btn-secondary btn-sm">
                 <Icon name="plus" size="sm" class="mr-1" />
                 {{ t('admin.routingStrategies.addCondition') }}
@@ -149,37 +149,37 @@
           <div
             v-for="(cond, idx) in form.conditions"
             :key="idx"
-            class="mb-2 grid grid-cols-12 items-center gap-2"
+            class="mb-2 grid grid-cols-1 gap-2 rounded-lg border border-gray-200 p-2 dark:border-dark-700 sm:grid-cols-12 sm:items-center sm:border-0 sm:p-0"
           >
             <Select
               :model-value="cond.type"
               :options="conditionTypeOptions"
-              class="col-span-3"
+              class="sm:col-span-3"
               @update:model-value="(v) => onConditionTypeChange(idx, v as string)"
             />
             <Select
               v-if="cond.type !== 'client'"
               v-model="cond.op"
               :options="opOptionsFor(cond.type)"
-              class="col-span-3"
+              class="sm:col-span-3"
             />
             <Select
               v-if="cond.type === 'client'"
               v-model="cond.value"
               :options="clientOptions"
-              class="col-span-8"
+              class="sm:col-span-8"
             />
             <input
               v-else
               v-model="cond.value"
               type="text"
-              class="input col-span-5"
+              class="input sm:col-span-5"
               :placeholder="conditionValuePlaceholder(cond.type)"
             />
             <button
               type="button"
               @click="removeCondition(idx)"
-              class="col-span-1 flex justify-center rounded-lg p-1.5 text-gray-500 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20"
+              class="flex h-10 w-10 items-center justify-center justify-self-end rounded-lg p-1.5 text-gray-500 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 sm:col-span-1 sm:h-auto sm:w-auto sm:justify-self-stretch"
               :title="t('common.delete')"
             >
               <Icon name="trash" size="sm" />
@@ -202,20 +202,20 @@
             <div
               v-for="acc in filteredAccounts"
               :key="acc.id"
-              class="flex items-center gap-2 rounded px-2 py-1 hover:bg-gray-50 dark:hover:bg-dark-700"
+              class="flex flex-col items-stretch gap-2 rounded px-2 py-2 hover:bg-gray-50 dark:hover:bg-dark-700 sm:flex-row sm:items-center sm:py-1"
             >
-              <label class="flex flex-1 cursor-pointer items-center gap-2 truncate">
+              <label class="flex min-w-0 flex-1 cursor-pointer items-center gap-2">
                 <input
                   type="checkbox"
                   :checked="form.account_ids.includes(acc.id)"
                   @change="toggleAccount(acc.id)"
                 />
                 <span class="truncate text-sm text-gray-800 dark:text-gray-200">{{ acc.name }}</span>
-                <span class="text-xs text-gray-400">{{ acc.platform }} · #{{ acc.id }}</span>
+                <span class="shrink-0 text-xs text-gray-400">{{ acc.platform }} · #{{ acc.id }}</span>
               </label>
               <div
                 v-if="form.account_ids.includes(acc.id)"
-                class="flex shrink-0 items-center gap-1"
+                class="flex shrink-0 items-center justify-end gap-1 sm:justify-start"
                 :title="t('admin.routingStrategies.accountPriorityHint')"
               >
                 <span class="text-xs text-gray-400">{{ t('admin.routingStrategies.accountPriorityLabel') }}</span>
@@ -241,9 +241,9 @@
       </form>
 
       <template #footer>
-        <div class="flex justify-end gap-3">
-          <button type="button" @click="closeEdit" class="btn btn-secondary">{{ t('common.cancel') }}</button>
-          <button type="submit" form="routing-strategy-form" :disabled="saving" class="btn btn-primary">
+        <div class="grid w-full grid-cols-2 gap-2 sm:flex sm:justify-end sm:gap-3">
+          <button type="button" @click="closeEdit" class="btn btn-secondary w-full sm:w-auto">{{ t('common.cancel') }}</button>
+          <button type="submit" form="routing-strategy-form" :disabled="saving" class="btn btn-primary w-full sm:w-auto">
             {{ saving ? t('common.saving') : t('common.save') }}
           </button>
         </div>
@@ -296,9 +296,9 @@
       </form>
 
       <template #footer>
-        <div class="flex justify-end gap-3">
-          <button type="button" @click="showTester = false" class="btn btn-secondary">{{ t('common.cancel') }}</button>
-          <button type="submit" form="routing-tester-form" :disabled="testing" class="btn btn-primary">
+        <div class="grid w-full grid-cols-2 gap-2 sm:flex sm:justify-end sm:gap-3">
+          <button type="button" @click="showTester = false" class="btn btn-secondary w-full sm:w-auto">{{ t('common.cancel') }}</button>
+          <button type="submit" form="routing-tester-form" :disabled="testing" class="btn btn-primary w-full sm:w-auto">
             {{ t('admin.routingStrategies.runTest') }}
           </button>
         </div>

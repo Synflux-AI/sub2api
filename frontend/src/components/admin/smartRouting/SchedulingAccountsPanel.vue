@@ -1,18 +1,18 @@
 <template>
   <div class="space-y-4">
     <!-- 过滤器 -->
-    <div class="flex flex-wrap items-center gap-2">
+    <div class="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
       <SearchInput
         v-model="search"
         :placeholder="t('admin.smartRouting.accounts.searchPlaceholder')"
-        class="w-full sm:w-64"
+        class="col-span-2 w-full sm:w-64"
       />
-      <Select v-model="platformFilter" :options="platformOptions" class="w-40" />
-      <Select v-model="groupFilter" :options="groupOptions" class="w-44" />
-      <Select v-model="gateFilter" :options="gateOptions" class="w-40" />
+      <Select v-model="platformFilter" :options="platformOptions" class="w-full sm:w-40" />
+      <Select v-model="groupFilter" :options="groupOptions" class="w-full sm:w-44" />
+      <Select v-model="gateFilter" :options="gateOptions" class="w-full sm:w-40" />
 
-      <div class="ml-auto flex items-center gap-2">
-        <RouterLink to="/admin/accounts" class="btn btn-secondary btn-sm">
+      <div class="col-span-2 flex sm:ml-auto">
+        <RouterLink to="/admin/accounts" class="btn btn-secondary btn-sm w-full sm:w-auto">
           {{ t('admin.smartRouting.common.goToAccount') }}
         </RouterLink>
       </div>

@@ -3,25 +3,30 @@
     <div class="space-y-4">
       <div class="card">
         <!-- Tab 栏 -->
-        <div class="flex flex-wrap items-center border-b border-gray-200 px-2 dark:border-dark-700 sm:px-4">
-          <button
-            v-for="tab in tabs"
-            :key="tab.key"
-            type="button"
-            data-testid="smart-routing-tab"
-            class="-mb-px inline-flex items-center gap-1.5 border-b-2 px-3 py-3 text-sm font-medium transition-colors sm:px-4"
-            :class="
-              activeTab === tab.key
-                ? 'border-primary-500 text-primary-600 dark:text-primary-400'
-                : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700 dark:text-gray-400 dark:hover:border-dark-500 dark:hover:text-gray-200'
-            "
-            @click="switchTab(tab.key)"
-          >
-            <Icon :name="tab.icon" size="sm" />
-            {{ tab.label }}
-          </button>
+        <div class="flex items-center border-b border-gray-200 pl-2 dark:border-dark-700 sm:px-4">
+          <div class="min-w-0 flex-1 overflow-x-auto">
+            <div class="flex min-w-max">
+              <button
+                v-for="tab in tabs"
+                :key="tab.key"
+                type="button"
+                data-testid="smart-routing-tab"
+                class="-mb-px inline-flex min-h-11 items-center gap-1.5 whitespace-nowrap border-b-2 px-3 py-3 text-sm font-medium transition-colors sm:px-4"
+                :class="
+                  activeTab === tab.key
+                    ? 'border-primary-500 text-primary-600 dark:text-primary-400'
+                    : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700 dark:text-gray-400 dark:hover:border-dark-500 dark:hover:text-gray-200'
+                "
+                :aria-pressed="activeTab === tab.key"
+                @click="switchTab(tab.key)"
+              >
+                <Icon :name="tab.icon" size="sm" />
+                {{ tab.label }}
+              </button>
+            </div>
+          </div>
 
-          <div class="ml-auto flex items-center gap-2 py-2 pr-1">
+          <div class="flex shrink-0 items-center py-2 pl-2 pr-2 sm:pr-1">
             <button
               type="button"
               class="btn btn-secondary btn-sm"
@@ -34,7 +39,7 @@
           </div>
         </div>
 
-        <div class="p-4 sm:p-5">
+        <div class="p-3 sm:p-5">
           <p class="mb-4 text-sm text-gray-500 dark:text-dark-400">
             {{ t('admin.smartRouting.description') }}
           </p>
