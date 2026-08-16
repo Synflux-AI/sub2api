@@ -9,6 +9,7 @@ import (
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/lib/pq"
 	gocache "github.com/patrickmn/go-cache"
 )
 
@@ -112,6 +113,65 @@ func appendUsageLogModelWhereCondition(conditions []string, args []any, model st
 	conditions = append(conditions, fmt.Sprintf("%s = $%d", resolveModelDimensionExpression(source), len(args)+1))
 	args = append(args, model)
 	return conditions, args
+}
+
+func appendUsageLogIDWhereCondition(conditions []string, args []any, column string, id int64, ids []int64) ([]string, []any) {
+	normalized := normalizePositiveInt64IDs(ids)
+	if len(normalized) > 0 {
+		conditions = append(conditions, fmt.Sprintf("%s = ANY($%d)", column, len(args)+1))
+		return conditions, append(args, pq.Array(normalized))
+	}
+	if id > 0 {
+		conditions = append(conditions, fmt.Sprintf("%s = $%d", column, len(args)+1))
+		args = append(args, id)
+	}
+	return conditions, args
+}
+
+func appendUsageLogIDQueryFilter(query string, args []any, column string, id int64, ids []int64) (string, []any) {
+	conditions, args := appendUsageLogIDWhereCondition(nil, args, column, id, ids)
+	if len(conditions) == 0 {
+		return query, args
+	}
+	return query + " AND " + conditions[0], args
+}
+
+func normalizeFilterModels(models []string) []string {
+	seen := make(map[string]struct{}, len(models))
+	out := make([]string, 0, len(models))
+	for _, raw := range models {
+		model := strings.TrimSpace(raw)
+		if model == "" {
+			continue
+		}
+		if _, ok := seen[model]; ok {
+			continue
+		}
+		seen[model] = struct{}{}
+		out = append(out, model)
+	}
+	return out
+}
+
+func appendUsageLogModelsWhereCondition(conditions []string, args []any, model string, models []string, source string) ([]string, []any) {
+	normalized := normalizeFilterModels(models)
+	if len(normalized) == 0 {
+		return appendUsageLogModelWhereCondition(conditions, args, model, source)
+	}
+	column := rawUsageLogModelColumn
+	if strings.TrimSpace(source) != "" {
+		column = resolveModelDimensionExpression(source)
+	}
+	conditions = append(conditions, fmt.Sprintf("%s = ANY($%d)", column, len(args)+1))
+	return conditions, append(args, pq.Array(normalized))
+}
+
+func appendUsageLogModelsQueryFilter(query string, args []any, model string, models []string, source string) (string, []any) {
+	conditions, args := appendUsageLogModelsWhereCondition(nil, args, model, models, source)
+	if len(conditions) == 0 {
+		return query, args
+	}
+	return query + " AND " + conditions[0], args
 }
 
 // appendRawUsageLogModelQueryFilter keeps direct model filters on the raw model column for backward

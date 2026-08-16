@@ -941,11 +941,17 @@ func buildOpsErrorLogsWhere(filter *service.OpsErrorLogFilter) (string, []any) {
 		args = append(args, p)
 		clauses = append(clauses, "e.platform = $"+itoa(len(args)))
 	}
-	if filter.GroupID != nil && *filter.GroupID > 0 {
+	if ids := normalizePositiveInt64IDs(filter.GroupIDs); len(ids) > 0 {
+		args = append(args, pq.Array(ids))
+		clauses = append(clauses, "e.group_id = ANY($"+itoa(len(args))+")")
+	} else if filter.GroupID != nil && *filter.GroupID > 0 {
 		args = append(args, *filter.GroupID)
 		clauses = append(clauses, "e.group_id = $"+itoa(len(args)))
 	}
-	if filter.AccountID != nil && *filter.AccountID > 0 {
+	if ids := normalizePositiveInt64IDs(filter.AccountIDs); len(ids) > 0 {
+		args = append(args, pq.Array(ids))
+		clauses = append(clauses, "e.account_id = ANY($"+itoa(len(args))+")")
+	} else if filter.AccountID != nil && *filter.AccountID > 0 {
 		args = append(args, *filter.AccountID)
 		clauses = append(clauses, "e.account_id = $"+itoa(len(args)))
 	}
@@ -1023,7 +1029,10 @@ func buildOpsErrorLogsWhere(filter *service.OpsErrorLogFilter) (string, []any) {
 		clauses = append(clauses, "EXISTS (SELECT 1 FROM users u WHERE u.id = e.user_id AND u.email ILIKE $"+n+")")
 	}
 
-	if filter.UserID != nil && *filter.UserID > 0 {
+	if ids := normalizePositiveInt64IDs(filter.UserIDs); len(ids) > 0 {
+		args = append(args, pq.Array(ids))
+		clauses = append(clauses, "e.user_id = ANY($"+itoa(len(args))+")")
+	} else if filter.UserID != nil && *filter.UserID > 0 {
 		args = append(args, *filter.UserID)
 		n := itoa(len(args))
 		clauses = append(clauses, "e.user_id = $"+n)
@@ -1032,7 +1041,10 @@ func buildOpsErrorLogsWhere(filter *service.OpsErrorLogFilter) (string, []any) {
 		args = append(args, *filter.APIKeyID)
 		clauses = append(clauses, "e.api_key_id = $"+itoa(len(args)))
 	}
-	if m := strings.TrimSpace(filter.Model); m != "" {
+	if models := normalizeFilterModels(filter.Models); len(models) > 0 {
+		args = append(args, pq.Array(models))
+		clauses = append(clauses, "COALESCE(e.requested_model, e.model, '') = ANY($"+itoa(len(args))+")")
+	} else if m := strings.TrimSpace(filter.Model); m != "" {
 		if filter.ModelFuzzy {
 			args = append(args, "%"+escapeLikePattern(m)+"%")
 			clauses = append(clauses, "COALESCE(e.requested_model, e.model, '') ILIKE $"+itoa(len(args)))

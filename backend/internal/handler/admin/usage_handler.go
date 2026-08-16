@@ -201,6 +201,10 @@ func (h *UsageHandler) List(c *gin.Context) {
 		EndTime:               endTime,
 		ExactTotal:            exactTotal,
 	}
+	if err := applyUsageMultiFilters(c, &filters); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
 
 	records, result, err := h.usageService.ListWithFilters(c.Request.Context(), params, filters)
 	if err != nil {
@@ -351,6 +355,10 @@ func (h *UsageHandler) Stats(c *gin.Context) {
 		UpstreamModelMismatch: upstreamModelMismatch,
 		StartTime:             &startTime,
 		EndTime:               &endTime,
+	}
+	if err := applyUsageMultiFilters(c, &filters); err != nil {
+		response.BadRequest(c, err.Error())
+		return
 	}
 
 	var stats *usagestats.UsageStats

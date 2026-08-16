@@ -275,10 +275,20 @@ func (h *DashboardHandler) GetUsageTrend(c *gin.Context) {
 		}
 		includeLatency = value
 	}
+	filters := usagestats.UsageLogFilters{
+		UserID: userID, APIKeyID: apiKeyID, AccountID: accountID, GroupID: groupID,
+		Model: model, ModelFilterSource: usagestats.ModelSourceRequested,
+		RequestType: requestType, Stream: stream, BillingType: billingType,
+		UpstreamModelMismatch: upstreamModelMismatch, IncludeLatency: includeLatency,
+	}
+	if err := applyUsageMultiFilters(c, &filters); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
 
 	// group_by=model 返回按天×模型的明细行(每行带 model),默认行为不变;该路径不走快照缓存。
 	if c.Query("group_by") == "model" {
-		trend, err := h.dashboardService.GetUsageTrendByModelWithFilters(c.Request.Context(), startTime, endTime, granularity, userID, apiKeyID, accountID, groupID, model, requestType, stream, billingType, upstreamModelMismatch)
+		trend, err := h.dashboardService.GetUsageTrendByModelWithUsageFilters(c.Request.Context(), startTime, endTime, granularity, filters)
 		if err != nil {
 			response.Error(c, 500, "Failed to get usage trend")
 			return
@@ -292,7 +302,7 @@ func (h *DashboardHandler) GetUsageTrend(c *gin.Context) {
 		return
 	}
 
-	trend, hit, err := h.getUsageTrendCached(c.Request.Context(), startTime, endTime, granularity, userID, apiKeyID, accountID, groupID, model, requestType, stream, billingType, upstreamModelMismatch, includeLatency)
+	trend, hit, err := h.getUsageTrendCachedWithFilters(c.Request.Context(), startTime, endTime, granularity, filters)
 	if err != nil {
 		response.Error(c, 500, "Failed to get usage trend")
 		return
@@ -566,6 +576,9 @@ func parseUserUsageTrendFilters(c *gin.Context) (usagestats.UsageLogFilters, err
 			return filters, err
 		}
 		filters.GroupID = id
+	}
+	if err := applyUsageMultiFilters(c, &filters); err != nil {
+		return filters, err
 	}
 
 	return filters, nil

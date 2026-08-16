@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/lib/pq"
 )
 
 const (
@@ -975,9 +976,11 @@ func isQueryTimeoutErr(err error) bool {
 func buildUsageWhere(filter *service.OpsDashboardFilter, start, end time.Time, startIndex int) (join string, where string, args []any, nextIndex int) {
 	platform := ""
 	groupID := (*int64)(nil)
+	var groupIDs []int64
 	if filter != nil {
 		platform = strings.TrimSpace(strings.ToLower(filter.Platform))
 		groupID = filter.GroupID
+		groupIDs = normalizePositiveInt64IDs(filter.GroupIDs)
 	}
 
 	idx := startIndex
@@ -991,7 +994,11 @@ func buildUsageWhere(filter *service.OpsDashboardFilter, start, end time.Time, s
 	clauses = append(clauses, fmt.Sprintf("ul.created_at < $%d", idx))
 	idx++
 
-	if groupID != nil && *groupID > 0 {
+	if len(groupIDs) > 0 {
+		args = append(args, pq.Array(groupIDs))
+		clauses = append(clauses, fmt.Sprintf("ul.group_id = ANY($%d)", idx))
+		idx++
+	} else if groupID != nil && *groupID > 0 {
 		args = append(args, *groupID)
 		clauses = append(clauses, fmt.Sprintf("ul.group_id = $%d", idx))
 		idx++
@@ -1012,9 +1019,11 @@ func buildUsageWhere(filter *service.OpsDashboardFilter, start, end time.Time, s
 func buildErrorWhere(filter *service.OpsDashboardFilter, start, end time.Time, startIndex int) (where string, args []any, nextIndex int) {
 	platform := ""
 	groupID := (*int64)(nil)
+	var groupIDs []int64
 	if filter != nil {
 		platform = strings.TrimSpace(strings.ToLower(filter.Platform))
 		groupID = filter.GroupID
+		groupIDs = normalizePositiveInt64IDs(filter.GroupIDs)
 	}
 
 	idx := startIndex
@@ -1030,7 +1039,11 @@ func buildErrorWhere(filter *service.OpsDashboardFilter, start, end time.Time, s
 
 	clauses = append(clauses, "is_count_tokens = FALSE")
 
-	if groupID != nil && *groupID > 0 {
+	if len(groupIDs) > 0 {
+		args = append(args, pq.Array(groupIDs))
+		clauses = append(clauses, fmt.Sprintf("group_id = ANY($%d)", idx))
+		idx++
+	} else if groupID != nil && *groupID > 0 {
 		args = append(args, *groupID)
 		clauses = append(clauses, fmt.Sprintf("group_id = $%d", idx))
 		idx++
@@ -1042,12 +1055,20 @@ func buildErrorWhere(filter *service.OpsDashboardFilter, start, end time.Time, s
 	}
 
 	if filter != nil {
-		if filter.UserID != nil && *filter.UserID > 0 {
+		if ids := normalizePositiveInt64IDs(filter.UserIDs); len(ids) > 0 {
+			args = append(args, pq.Array(ids))
+			clauses = append(clauses, fmt.Sprintf("user_id = ANY($%d)", idx))
+			idx++
+		} else if filter.UserID != nil && *filter.UserID > 0 {
 			args = append(args, *filter.UserID)
 			clauses = append(clauses, fmt.Sprintf("user_id = $%d", idx))
 			idx++
 		}
-		if filter.AccountID != nil && *filter.AccountID > 0 {
+		if ids := normalizePositiveInt64IDs(filter.AccountIDs); len(ids) > 0 {
+			args = append(args, pq.Array(ids))
+			clauses = append(clauses, fmt.Sprintf("account_id = ANY($%d)", idx))
+			idx++
+		} else if filter.AccountID != nil && *filter.AccountID > 0 {
 			args = append(args, *filter.AccountID)
 			clauses = append(clauses, fmt.Sprintf("account_id = $%d", idx))
 			idx++
@@ -1057,7 +1078,11 @@ func buildErrorWhere(filter *service.OpsDashboardFilter, start, end time.Time, s
 			clauses = append(clauses, fmt.Sprintf("api_key_id = $%d", idx))
 			idx++
 		}
-		if m := strings.TrimSpace(filter.Model); m != "" {
+		if models := normalizeFilterModels(filter.Models); len(models) > 0 {
+			args = append(args, pq.Array(models))
+			clauses = append(clauses, fmt.Sprintf("COALESCE(requested_model, model, '') = ANY($%d)", idx))
+			idx++
+		} else if m := strings.TrimSpace(filter.Model); m != "" {
 			args = append(args, m)
 			clauses = append(clauses, fmt.Sprintf("COALESCE(requested_model, model, '') = $%d", idx))
 			idx++
