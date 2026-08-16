@@ -187,8 +187,11 @@ func TestDashboardHandler_GetUserUsageTrend_ForwardsFiltersAndCachesSeparately(t
 	router := gin.New()
 	router.GET("/admin/dashboard/users-trend", handler.GetUserUsageTrend)
 
-	for _, model := range []string{"gpt-5", "claude-sonnet-4"} {
-		req := httptest.NewRequest(http.MethodGet, "/admin/dashboard/users-trend?start_date=2026-03-01&end_date=2026-03-07&user_id=11&api_key_id=22&account_id=33&group_id=44&model="+model, nil)
+	for _, query := range []string{
+		"model=%20gpt-5%20&request_type=invalid&stream=invalid&billing_type=invalid&upstream_model_mismatch=invalid",
+		"model=claude-sonnet-4",
+	} {
+		req := httptest.NewRequest(http.MethodGet, "/admin/dashboard/users-trend?start_date=2026-03-01&end_date=2026-03-07&user_id=11&api_key_id=22&account_id=33&group_id=44&"+query, nil)
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
 		require.Equal(t, http.StatusOK, rec.Code)
@@ -197,9 +200,29 @@ func TestDashboardHandler_GetUserUsageTrend_ForwardsFiltersAndCachesSeparately(t
 
 	require.Equal(t, int32(2), repo.usersTrendCalls.Load())
 	require.Equal(t, []usagestats.UsageLogFilters{
-		{UserID: 11, APIKeyID: 22, AccountID: 33, GroupID: 44, Model: "gpt-5"},
-		{UserID: 11, APIKeyID: 22, AccountID: 33, GroupID: 44, Model: "claude-sonnet-4"},
+		{UserID: 11, APIKeyID: 22, AccountID: 33, GroupID: 44, Model: " gpt-5 ", ModelFilterSource: usagestats.ModelSourceRequested},
+		{UserID: 11, APIKeyID: 22, AccountID: 33, GroupID: 44, Model: "claude-sonnet-4", ModelFilterSource: usagestats.ModelSourceRequested},
 	}, repo.usersTrendFilters)
+}
+
+func TestDashboardHandler_GetUserUsageTrend_RejectsWhitespaceIDs(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	for _, name := range []string{"user_id", "api_key_id", "account_id", "group_id"} {
+		t.Run(name, func(t *testing.T) {
+			repo := &dashboardUsageRepoCacheProbe{}
+			handler := NewDashboardHandler(service.NewDashboardService(repo, nil, nil, nil), nil)
+			router := gin.New()
+			router.GET("/admin/dashboard/users-trend", handler.GetUserUsageTrend)
+
+			req := httptest.NewRequest(http.MethodGet, "/admin/dashboard/users-trend?"+name+"=%20", nil)
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, req)
+
+			require.Equal(t, http.StatusBadRequest, rec.Code)
+			require.Zero(t, repo.usersTrendCalls.Load())
+		})
+	}
 }
 
 func TestDashboardHandler_GetSnapshotV2_UsersTrendReusesFilters(t *testing.T) {
@@ -219,6 +242,6 @@ func TestDashboardHandler_GetSnapshotV2_UsersTrendReusesFilters(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, int32(1), repo.usersTrendCalls.Load())
 	require.Equal(t, []usagestats.UsageLogFilters{{
-		UserID: 11, APIKeyID: 22, AccountID: 33, GroupID: 44, Model: "gpt-5",
+		UserID: 11, APIKeyID: 22, AccountID: 33, GroupID: 44, Model: "gpt-5", ModelFilterSource: usagestats.ModelSourceRequested,
 	}}, repo.usersTrendFilters)
 }

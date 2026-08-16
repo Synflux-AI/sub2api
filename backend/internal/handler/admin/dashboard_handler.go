@@ -512,13 +512,13 @@ func (h *DashboardHandler) GetUserUsageTrend(c *gin.Context) {
 	if sortBy != "actual_cost" && sortBy != "requests" && sortBy != "total_tokens" {
 		sortBy = "total_tokens"
 	}
-	filters, err := parseDashboardSnapshotV2Filters(c)
+	filters, err := parseUserUsageTrendFilters(c)
 	if err != nil {
 		response.BadRequest(c, err.Error())
 		return
 	}
 
-	trend, hit, err := h.getUserUsageTrendCached(c.Request.Context(), startTime, endTime, granularity, limit, sortBy, *filters)
+	trend, hit, err := h.getUserUsageTrendCached(c.Request.Context(), startTime, endTime, granularity, limit, sortBy, filters)
 	if err != nil {
 		response.Error(c, 500, "Failed to get user usage trend")
 		return
@@ -531,6 +531,44 @@ func (h *DashboardHandler) GetUserUsageTrend(c *gin.Context) {
 		"end_date":    endTime.Add(-24 * time.Hour).Format("2006-01-02"),
 		"granularity": granularity,
 	})
+}
+
+func parseUserUsageTrendFilters(c *gin.Context) (usagestats.UsageLogFilters, error) {
+	filters := usagestats.UsageLogFilters{
+		Model:             c.Query("model"),
+		ModelFilterSource: usagestats.ModelSourceRequested,
+	}
+
+	if raw := c.Query("user_id"); raw != "" {
+		id, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil {
+			return filters, err
+		}
+		filters.UserID = id
+	}
+	if raw := c.Query("api_key_id"); raw != "" {
+		id, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil {
+			return filters, err
+		}
+		filters.APIKeyID = id
+	}
+	if raw := c.Query("account_id"); raw != "" {
+		id, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil {
+			return filters, err
+		}
+		filters.AccountID = id
+	}
+	if raw := c.Query("group_id"); raw != "" {
+		id, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil {
+			return filters, err
+		}
+		filters.GroupID = id
+	}
+
+	return filters, nil
 }
 
 // BatchUsersUsageRequest represents the request body for batch user usage stats

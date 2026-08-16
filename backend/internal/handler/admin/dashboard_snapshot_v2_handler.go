@@ -226,7 +226,9 @@ func (h *DashboardHandler) buildSnapshotV2Response(
 	}
 
 	if includeUsersTrend {
-		usersTrend, _, err := h.getUserUsageTrendCached(ctx, startTime, endTime, granularity, usersTrendLimit, "total_tokens", *filters)
+		usersTrendFilters := *filters
+		usersTrendFilters.ModelFilterSource = usagestats.ModelSourceRequested
+		usersTrend, _, err := h.getUserUsageTrendCached(ctx, startTime, endTime, granularity, usersTrendLimit, "total_tokens", usersTrendFilters)
 		if err != nil {
 			return nil, errors.New("failed to get user usage trend")
 		}

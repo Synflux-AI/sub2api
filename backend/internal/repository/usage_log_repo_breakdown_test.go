@@ -135,14 +135,14 @@ func TestGetUserUsageTrendFiltersBeforeRankingAndBuckets(t *testing.T) {
 	start := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
 	end := start.Add(24 * time.Hour)
 
-	mock.ExpectQuery(`WITH filtered_logs AS \( SELECT \* FROM usage_logs WHERE created_at >= \$1 AND created_at < \$2 AND user_id = \$3 AND api_key_id = \$4 AND account_id = \$5 AND group_id = \$6 AND model = \$7 \), top_users AS \( SELECT user_id FROM filtered_logs.*FROM filtered_logs u`).
+	mock.ExpectQuery(`WITH filtered_logs AS \( SELECT \* FROM usage_logs WHERE created_at >= \$1 AND created_at < \$2 AND user_id = \$3 AND api_key_id = \$4 AND account_id = \$5 AND group_id = \$6 AND COALESCE\(NULLIF\(TRIM\(requested_model\), ''\), model\) = \$7 \), top_users AS \( SELECT user_id FROM filtered_logs.*FROM filtered_logs u`).
 		WithArgs(start, end, int64(11), int64(22), int64(33), int64(44), "gpt-5", 8).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"date", "user_id", "key", "label", "email", "username", "notes", "requests", "tokens", "cost", "actual_cost",
 		}))
 
 	rows, err := repo.GetUserUsageTrend(context.Background(), start, end, "day", 8, "total_tokens", usagestats.UsageLogFilters{
-		UserID: 11, APIKeyID: 22, AccountID: 33, GroupID: 44, Model: "gpt-5",
+		UserID: 11, APIKeyID: 22, AccountID: 33, GroupID: 44, Model: "gpt-5", ModelFilterSource: usagestats.ModelSourceRequested,
 	})
 	require.NoError(t, err)
 	require.Empty(t, rows)
