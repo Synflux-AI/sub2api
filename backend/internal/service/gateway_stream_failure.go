@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
@@ -49,6 +50,7 @@ func (s *GatewayService) recordStreamFailureCause(
 	cause streamFailureCause,
 	message string,
 	firstTokenSeen bool,
+	clientDisconnected bool,
 ) {
 	if account == nil {
 		return
@@ -67,11 +69,19 @@ func (s *GatewayService) recordStreamFailureCause(
 		zap.String("account_name", account.Name),
 		zap.String("model", model),
 		zap.Bool("passthrough", true),
+		zap.Bool("client_disconnected", clientDisconnected),
 		zap.String("message", safeMessage),
 	)
 
 	if c == nil {
 		return
+	}
+	// Stage 借用来打「客户端已先行断开」的标：missing_terminal 分支不因客户端
+	// 断开而提前 return（详见调用点注释），会与上游真断流的样本混在同一个
+	// cause 桶里。这里只打标不改控制流，供 OpenObserve 按 stage 拆分统计。
+	stage := ""
+	if clientDisconnected {
+		stage = "client_disconnected"
 	}
 	setOpsUpstreamError(c, 0, safeMessage, "")
 	appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
@@ -82,6 +92,7 @@ func (s *GatewayService) recordStreamFailureCause(
 		Kind:        opsUpstreamErrorKindStreamFailure,
 		Reason:      string(cause),
 		Scope:       scope,
+		Stage:       stage,
 		Message:     safeMessage,
 	})
 }
@@ -113,18 +124,24 @@ func (s *GatewayService) flushUnmatchedStreamError(
 	if ev == nil || account == nil {
 		return
 	}
-	message := sanitizeUpstreamErrorPayload(ev.message)
-	detail := sanitizeUpstreamErrorPayload(ev.detail)
-	if s != nil && s.cfg != nil {
+	// logMessage 只喂给 stdout 结构化 warn，必须是脱敏后的值——这条日志不经过
+	// appendOpsUpstreamError，没有别的机会脱敏。
+	logMessage := sanitizeUpstreamErrorPayload(ev.message)
+
+	// opsDetail 喂给 ops 事件，必须保留原文（未脱敏）：appendOpsUpstreamError
+	// 内部会从 Detail/Message 算出 rawMatchBody 供规则匹配用，脱敏必须在那
+	// 之后才发生，否则关键字会被 *** 打断（Finding 2）。这里只做「原文 →
+	// 截断」，脱敏交给 appendOpsUpstreamError 内部的兜底逻辑。
+	//
+	// 隐私开关默认 fail-closed：s 或 s.cfg 为 nil 时 opsDetail 保持空，而不是
+	// 保留完整未截断的上游正文（Finding 3）。
+	opsDetail := ""
+	if s != nil && s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
 		maxBytes := s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes
 		if maxBytes <= 0 {
 			maxBytes = 2048
 		}
-		if !s.cfg.Gateway.LogUpstreamErrorBody {
-			detail = ""
-		} else {
-			detail = truncateString(detail, maxBytes)
-		}
+		opsDetail = truncateString(ev.detail, maxBytes)
 	}
 
 	logger.FromContext(ctx).Warn("gateway.stream_error_event_unmatched",
@@ -134,20 +151,27 @@ func (s *GatewayService) flushUnmatchedStreamError(
 		zap.Int("attempt", attempt),
 		zap.Int("status_code", ev.statusCode),
 		zap.String("error_type", ev.errType),
-		zap.String("message", message),
+		zap.String("message", logMessage),
 	)
 
 	if c == nil {
 		return
 	}
+	// UpstreamStatusCode 故意不写（传 0）：这里的 statusCode 是从上游 SSE error
+	// 帧推断出来的合成值（anthropicPassthroughSSEError 恒非零），wire 上游状态
+	// 其实是 200。非零值会让 checkSkipMonitoringForUpstreamEvent 提前退出的
+	// 短路失效，进而对一条纯观测记录跑 MatchRule；只要运维配了一条仅凭状态码
+	// （不含关键字）+ skip_monitoring=true 的 passthrough 规则，就会整条丢弃
+	// ops_error_logs 行，包括这里刚写的 upstream_error_message（Finding 1）。
+	// 派生出来的状态码改放进 Reason，形如 http_500。
 	appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
-		Platform:           account.Platform,
-		AccountID:          account.ID,
-		AccountName:        account.Name,
-		UpstreamStatusCode: ev.statusCode,
-		Passthrough:        true,
-		Kind:               opsUpstreamErrorKindStreamErrorUnmatched,
-		Message:            message,
-		Detail:             detail,
+		Platform:    account.Platform,
+		AccountID:   account.ID,
+		AccountName: account.Name,
+		Passthrough: true,
+		Kind:        opsUpstreamErrorKindStreamErrorUnmatched,
+		Reason:      "http_" + strconv.Itoa(ev.statusCode),
+		Message:     ev.message,
+		Detail:      opsDetail,
 	})
 }

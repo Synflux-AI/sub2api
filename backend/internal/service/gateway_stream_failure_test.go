@@ -9,10 +9,39 @@ import (
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
+
+// newStreamFailureLogObserver 装一个 zaptest/observer core，通过
+// logger.IntoContext 注入 ctx，供验收 1（三个终止点各产生一条
+// gateway.stream_failure 结构化 warn，带 cause/scope/account_id/model）用
+// 观测方式断言，而不是走「日志到底打没打」的猜测。
+// GatewayService.Forward 直接把调用方传入的 ctx 转发到
+// recordStreamFailureCause，中途不重新绑定 request context，因此这里可以
+// 直接把观测用的 ctx 传给 svc.Forward。
+func newStreamFailureLogObserver(t *testing.T) (context.Context, *observer.ObservedLogs) {
+	t.Helper()
+	core, logs := observer.New(zap.DebugLevel)
+	return logger.IntoContext(context.Background(), zap.New(core)), logs
+}
+
+// requireStreamFailureLog 断言 observedLogs 里恰好有一条 gateway.stream_failure
+// warn，并校验验收 1 要求的字段名与取值：cause / scope / account_id / model。
+func requireStreamFailureLog(t *testing.T, logs *observer.ObservedLogs, wantCause streamFailureCause, wantScope string, wantAccountID int64, wantModel string) {
+	t.Helper()
+	entries := logs.FilterMessage("gateway.stream_failure").All()
+	require.Len(t, entries, 1)
+	fields := entries[0].ContextMap()
+	require.Equal(t, string(wantCause), fields["cause"])
+	require.Equal(t, wantScope, fields["scope"])
+	require.EqualValues(t, wantAccountID, fields["account_id"])
+	require.Equal(t, wantModel, fields["model"])
+}
 
 func opsUpstreamEvents(t *testing.T, c *gin.Context) []*OpsUpstreamErrorEvent {
 	t.Helper()
@@ -27,8 +56,9 @@ func TestPassthroughMissingTerminalRecordsOpsCause(t *testing.T) {
 	upstream := &sequencedHTTPUpstream{responses: []sequencedUpstreamResponse{{status: 200, body: ""}}}
 	svc := newErrorHandlingRulePassthroughService(t, upstream, &ErrorHandlingRuleSettings{Enabled: false})
 	c, _ := newErrorHandlingRuleTestContextWithRecorder()
+	ctx, logs := newStreamFailureLogObserver(t)
 
-	_, err := svc.Forward(context.Background(), c, newErrorHandlingRulePassthroughAccount(), newErrorHandlingRuleStreamParsed(t))
+	_, err := svc.Forward(ctx, c, newErrorHandlingRulePassthroughAccount(), newErrorHandlingRuleStreamParsed(t))
 	require.ErrorContains(t, err, "missing terminal event")
 
 	msg, ok := c.Get(OpsUpstreamErrorMessageKey)
@@ -44,6 +74,11 @@ func TestPassthroughMissingTerminalRecordsOpsCause(t *testing.T) {
 	// upstream_status_code 必须保持不写：wire 上游状态确实是 200，
 	// 合成一个 5xx 会污染上游状态维度。
 	require.Zero(t, events[0].UpstreamStatusCode)
+
+	// 验收 1：三个终止点各自产生一条带 cause/scope/account_id/model 的
+	// gateway.stream_failure 结构化 warn。account 702、model 见
+	// newErrorHandlingRulePassthroughAccount / newErrorHandlingRuleStreamParsed。
+	requireStreamFailureLog(t, logs, streamFailureMissingTerminal, streamFailureScopeBeforeFirstToken, 702, "claude-sonnet-4-5")
 }
 
 func TestPassthroughMissingTerminalAfterFirstTokenRecordsScope(t *testing.T) {
@@ -131,9 +166,16 @@ func TestPassthroughReadErrorRecordsOpsCause(t *testing.T) {
 	upstream := &singleResponseHTTPUpstream{status: 200, body: &erroringBody{err: readErr}}
 	svc := newStreamFailureUpstreamService(t, upstream, 0)
 	c, _ := newErrorHandlingRuleTestContextWithRecorder()
+	ctx, logs := newStreamFailureLogObserver(t)
 
-	_, err := svc.Forward(context.Background(), c, newErrorHandlingRulePassthroughAccount(), newErrorHandlingRuleStreamParsed(t))
+	_, err := svc.Forward(ctx, c, newErrorHandlingRulePassthroughAccount(), newErrorHandlingRuleStreamParsed(t))
 	require.ErrorContains(t, err, "stream read error")
+
+	// 验收 2：三个 cause 都写 upstream_error_message，不止 missing_terminal
+	// 那一个用例断言过。
+	msg, ok := c.Get(OpsUpstreamErrorMessageKey)
+	require.True(t, ok)
+	require.True(t, strings.HasPrefix(msg.(string), "stream read error:"), "message=%q", msg)
 
 	events := opsUpstreamEvents(t, c)
 	require.Len(t, events, 1)
@@ -145,6 +187,8 @@ func TestPassthroughReadErrorRecordsOpsCause(t *testing.T) {
 	require.Zero(t, events[0].UpstreamStatusCode)
 	// 尾部是动态 error 文本（readErr.Error()），只断言前缀。
 	require.True(t, strings.HasPrefix(events[0].Message, "stream read error:"), "message=%q", events[0].Message)
+
+	requireStreamFailureLog(t, logs, streamFailureReadError, streamFailureScopeBeforeFirstToken, 702, "claude-sonnet-4-5")
 }
 
 func TestPassthroughIntervalTimeoutRecordsOpsCause(t *testing.T) {
@@ -153,9 +197,15 @@ func TestPassthroughIntervalTimeoutRecordsOpsCause(t *testing.T) {
 	upstream := &singleResponseHTTPUpstream{status: 200, body: &blockingBody{release: release}}
 	svc := newStreamFailureUpstreamService(t, upstream, 1) // 1s：测试里能接受的最小间隔
 	c, _ := newErrorHandlingRuleTestContextWithRecorder()
+	ctx, logs := newStreamFailureLogObserver(t)
 
-	_, err := svc.Forward(context.Background(), c, newErrorHandlingRulePassthroughAccount(), newErrorHandlingRuleStreamParsed(t))
+	_, err := svc.Forward(ctx, c, newErrorHandlingRulePassthroughAccount(), newErrorHandlingRuleStreamParsed(t))
 	require.ErrorContains(t, err, "stream data interval timeout")
+
+	// 验收 2：三个 cause 都写 upstream_error_message。
+	msg, ok := c.Get(OpsUpstreamErrorMessageKey)
+	require.True(t, ok)
+	require.Equal(t, "stream data interval timeout", msg)
 
 	events := opsUpstreamEvents(t, c)
 	require.Len(t, events, 1)
@@ -166,6 +216,8 @@ func TestPassthroughIntervalTimeoutRecordsOpsCause(t *testing.T) {
 	// upstream_status_code 必须保持不写：wire 上游状态确实是 200。
 	require.Zero(t, events[0].UpstreamStatusCode)
 	require.Equal(t, "stream data interval timeout", events[0].Message)
+
+	requireStreamFailureLog(t, logs, streamFailureIntervalTimeout, streamFailureScopeBeforeFirstToken, 702, "claude-sonnet-4-5")
 }
 
 func TestPassthroughUnmatchedStreamErrorIsRecordedOnce(t *testing.T) {
@@ -259,12 +311,34 @@ func TestPassthroughUnmatchedStreamErrorIsSanitized(t *testing.T) {
 func TestRecordStreamFailureCauseIsNilSafe(t *testing.T) {
 	svc := &GatewayService{}
 	require.NotPanics(t, func() {
-		svc.recordStreamFailureCause(context.Background(), nil, nil, "m", streamFailureReadError, "boom", false)
+		svc.recordStreamFailureCause(context.Background(), nil, nil, "m", streamFailureReadError, "boom", false, false)
 	})
 	c, _ := newErrorHandlingRuleTestContextWithRecorder()
 	require.NotPanics(t, func() {
-		svc.recordStreamFailureCause(context.Background(), c, nil, "m", streamFailureReadError, "boom", false)
+		svc.recordStreamFailureCause(context.Background(), c, nil, "m", streamFailureReadError, "boom", false, false)
 	})
 	_, ok := c.Get(OpsUpstreamErrorsKey)
 	require.False(t, ok, "account 缺失时不应写入 ops")
+}
+
+// TestRecordStreamFailureCauseTagsClientDisconnected 覆盖 Finding 5：
+// missing_terminal 分支不因客户端已断开而提前 return（read_error /
+// interval_timeout 会），会与上游真断流的样本混进同一个 cause 桶。这里直接
+// 单测 recordStreamFailureCause 的打标行为——不依赖端到端复现
+// clientDisconnected && streamInterval<=0 这个具体分支组合。
+func TestRecordStreamFailureCauseTagsClientDisconnected(t *testing.T) {
+	svc := &GatewayService{}
+	account := newErrorHandlingRulePassthroughAccount()
+	c, _ := newErrorHandlingRuleTestContextWithRecorder()
+	ctx, logs := newStreamFailureLogObserver(t)
+
+	svc.recordStreamFailureCause(ctx, c, account, "claude-sonnet-4-5", streamFailureMissingTerminal, "stream usage incomplete: missing terminal event", false, true)
+
+	entries := logs.FilterMessage("gateway.stream_failure").All()
+	require.Len(t, entries, 1)
+	require.Equal(t, true, entries[0].ContextMap()["client_disconnected"])
+
+	events := opsUpstreamEvents(t, c)
+	require.Len(t, events, 1)
+	require.Equal(t, "client_disconnected", events[0].Stage)
 }

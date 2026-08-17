@@ -860,7 +860,7 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthroughWithRu
 						}
 					}
 					s.recordStreamFailureCause(ctx, c, account, model,
-						streamFailureMissingTerminal, "stream usage incomplete: missing terminal event", firstTokenMs != nil)
+						streamFailureMissingTerminal, "stream usage incomplete: missing terminal event", firstTokenMs != nil, clientDisconnected)
 					return resultWithUsage(), nil, fmt.Errorf("stream usage incomplete: missing terminal event")
 				}
 				return resultWithUsage(), nil, nil
@@ -881,7 +881,7 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthroughWithRu
 					return resultWithUsage(), nil, ev.err
 				}
 				s.recordStreamFailureCause(ctx, c, account, model,
-					streamFailureReadError, fmt.Sprintf("stream read error: %v", ev.err), firstTokenMs != nil)
+					streamFailureReadError, fmt.Sprintf("stream read error: %v", ev.err), firstTokenMs != nil, clientDisconnected)
 				return resultWithUsage(), nil, fmt.Errorf("stream read error: %w", ev.err)
 			}
 
@@ -912,7 +912,7 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthroughWithRu
 				s.rateLimitService.HandleStreamTimeout(ctx, account, model)
 			}
 			s.recordStreamFailureCause(ctx, c, account, model,
-				streamFailureIntervalTimeout, "stream data interval timeout", firstTokenMs != nil)
+				streamFailureIntervalTimeout, "stream data interval timeout", firstTokenMs != nil, clientDisconnected)
 			return resultWithUsage(), nil, fmt.Errorf("stream data interval timeout")
 
 		case <-keepaliveCh:

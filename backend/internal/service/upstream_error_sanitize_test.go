@@ -111,3 +111,27 @@ func TestSanitizeUpstreamErrorPayloadKeepsBareTokenCountText(t *testing.T) {
 	require.NotContains(t, out, "secret")
 	require.Contains(t, out, upstreamSensitiveMask)
 }
+
+// TestSanitizeUpstreamErrorPayloadMasksCookieInTruncatedJSON 覆盖 Finding 4：
+// log_upstream_error_body_max_bytes 默认 2048，上游 >2KB 的错误正文截断后
+// 落在对象中间，产出非法 JSON，走文本兜底路径（maskTextSecrets）。此前
+// upstreamSensitiveKVRegex 缺了 cookie/session_id/id_token 三个字段名，
+// session cookie 会原样写进 ops_error_logs 与 stdout。这里用 finding 描述
+// 里给出的确切复现串验证三者都被掩码。
+func TestSanitizeUpstreamErrorPayloadMasksCookieInTruncatedJSON(t *testing.T) {
+	in := `{"error":{"message":"auth failed"},"debug":{"cookie":"sk_session=abc123`
+	out := sanitizeUpstreamErrorPayload(in)
+
+	require.NotContains(t, out, "sk_session=abc123")
+	require.Contains(t, out, upstreamSensitiveMask)
+	require.Contains(t, out, "auth failed")
+}
+
+// TestSanitizeUpstreamErrorPayloadMasksSessionIDAndIDTokenInText 补齐
+// Finding 4 的另外两个遗漏字段：session_id、id_token，同样走文本兜底路径。
+func TestSanitizeUpstreamErrorPayloadMasksSessionIDAndIDTokenInText(t *testing.T) {
+	out := sanitizeUpstreamErrorPayload(`session_id=abcdef123456 id_token=eyJhbGciOiJIUzI1NiJ9.trailing`)
+	require.NotContains(t, out, "abcdef123456")
+	require.NotContains(t, out, "eyJhbGciOiJIUzI1NiJ9.trailing")
+	require.Contains(t, out, upstreamSensitiveMask)
+}

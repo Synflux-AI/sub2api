@@ -40,7 +40,12 @@ var (
 	// `token: 4096` / `token=4096` 是常见合法文案，裸 token 会把这些数字
 	// 误打码。JSON 字段名清单（upstreamSensitiveFieldRegex）里的 token 是
 	// `^...$` 锚定的字段名，语义无歧义，予以保留。
-	upstreamSensitiveKVRegex = regexp.MustCompile(`(?i)\b(x-api-key|api[_-]?key|apikey|authorization|access[_-]?token|refresh[_-]?token|client[_-]?secret|secret|password|passwd)\b("?)(\s*[:=]\s*)("?)([^"\s,;)}\]]+)("?)`)
+	//
+	// id_token / cookie / session_id 没有裸 token 那种误伤风险（不存在
+	// "cookie: 4096" 这类合法计数文案），补进来是为了兜住「截断后的非法
+	// JSON 降级到文本正则」这条路径——upstreamSensitiveFieldRegex 覆盖了这
+	// 三个 JSON 字段名，但降级到文本时只有这条正则生效，此前漏了它们。
+	upstreamSensitiveKVRegex = regexp.MustCompile(`(?i)\b(x-api-key|api[_-]?key|apikey|authorization|access[_-]?token|refresh[_-]?token|id[_-]?token|client[_-]?secret|secret|password|passwd|cookie|session[_-]?id)\b("?)(\s*[:=]\s*)("?)([^"\s,;)}\]]+)("?)`)
 
 	// upstreamBearerRegex 匹配 "Bearer <token>" 形态。
 	upstreamBearerRegex = regexp.MustCompile(`(?i)\bbearer\s+[A-Za-z0-9._\-]{8,}`)
