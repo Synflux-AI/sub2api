@@ -1764,17 +1764,9 @@ func sleepGeminiBackoff(attempt int) {
 	time.Sleep(sleepFor)
 }
 
-var (
-	sensitiveQueryParamRegex = regexp.MustCompile(`(?i)([?&](?:key|client_secret|access_token|refresh_token)=)[^&"\s]+`)
-	retryInRegex             = regexp.MustCompile(`Please retry in ([0-9.]+)s`)
-)
-
-func sanitizeUpstreamErrorMessage(msg string) string {
-	if msg == "" {
-		return msg
-	}
-	return sensitiveQueryParamRegex.ReplaceAllString(msg, `$1***`)
-}
+// sensitiveQueryParamRegex 与 sanitizeUpstreamErrorMessage 已迁至
+// upstream_error_sanitize.go（同包）。
+var retryInRegex = regexp.MustCompile(`Please retry in ([0-9.]+)s`)
 
 func (s *GeminiMessagesCompatService) writeGeminiMappedError(c *gin.Context, account *Account, upstreamStatus int, upstreamRequestID string, body []byte) error {
 	MarkResponseCommitted(c)

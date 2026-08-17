@@ -247,6 +247,11 @@ func appendOpsUpstreamError(c *gin.Context, ev OpsUpstreamErrorEvent) {
 	if ev.Message != "" {
 		ev.Message = sanitizeUpstreamErrorMessage(ev.Message)
 	}
+	// Detail 承载上游响应体原文，直接写进 ops_error_logs.upstream_errors。
+	// 这里是所有调用点的唯一汇聚处，作为兜底脱敏。
+	if ev.Detail != "" {
+		ev.Detail = sanitizeUpstreamErrorPayload(ev.Detail)
+	}
 
 	var existing []*OpsUpstreamErrorEvent
 	if v, ok := c.Get(OpsUpstreamErrorsKey); ok {
