@@ -901,6 +901,27 @@ func escapeLikePattern(s string) string {
 	return likePatternReplacer.Replace(s)
 }
 
+// opsErrorLogSearchClause 拼后台错误日志的关键字过滤子句。
+//
+// upstream_error_message 必须在内：流中断类错误（missing terminal event /
+// read error / interval timeout）的真实 cause 只落在该列，error_message 记的
+// 是 handler 补写的通用文案 "Upstream request failed"。少了这一列，后台按真实
+// 文案搜索恒为 0 条。
+func opsErrorLogSearchClause(placeholder string) string {
+	cols := []string{
+		"e.request_id",
+		"e.client_request_id",
+		"e.trace_id",
+		"e.error_message",
+		"e.upstream_error_message",
+	}
+	parts := make([]string, 0, len(cols))
+	for _, col := range cols {
+		parts = append(parts, col+" ILIKE "+placeholder)
+	}
+	return "(" + strings.Join(parts, " OR ") + ")"
+}
+
 func buildOpsErrorLogsWhere(filter *service.OpsErrorLogFilter) (string, []any) {
 	clauses := make([]string, 0, 12)
 	args := make([]any, 0, 12)
@@ -1013,7 +1034,7 @@ func buildOpsErrorLogsWhere(filter *service.OpsErrorLogFilter) (string, []any) {
 		like := "%" + q + "%"
 		args = append(args, like)
 		n := itoa(len(args))
-		clauses = append(clauses, "(e.request_id ILIKE $"+n+" OR e.client_request_id ILIKE $"+n+" OR e.trace_id ILIKE $"+n+" OR e.error_message ILIKE $"+n+")")
+		clauses = append(clauses, opsErrorLogSearchClause("$"+n))
 	}
 
 	if userQuery := strings.TrimSpace(filter.UserQuery); userQuery != "" {
