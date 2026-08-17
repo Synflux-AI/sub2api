@@ -169,10 +169,15 @@ func TestPassthroughIntervalTimeoutRecordsOpsCause(t *testing.T) {
 }
 
 func TestPassthroughUnmatchedStreamErrorIsRecordedOnce(t *testing.T) {
-	body := "event: error\ndata: " + streamRuleConcurrencyError + "\n\n" +
+	// 两条未命中 payload 内容不同（分别是 api_error / rate_limit_error），
+	// 这样断言「记录的是第一条」才能真正区分「保留首条」「保留末条」
+	// 「不去重、每次都覆盖」这三种实现——如果两条内容相同，三种实现都会
+	// 产出同样的结果，测不出去重契约。
+	firstUnmatched := `{"type":"error","error":{"type":"api_error","message":"first unmatched failure"}}`
+	body := "event: error\ndata: " + firstUnmatched + "\n\n" +
 		"event: error\ndata: " + streamRuleConcurrencyError + "\n\n"
 	upstream := &sequencedHTTPUpstream{responses: []sequencedUpstreamResponse{{status: 200, body: body}}}
-	// 规则限定 502，第一级用的是 429（rate_limit_error），必然未命中。
+	// 规则限定 502，两条 payload（500/429）都必然未命中。
 	svc := newErrorHandlingRulePassthroughService(t, upstream, &ErrorHandlingRuleSettings{
 		Enabled: true,
 		Rules:   []ErrorHandlingRule{{ID: "other", StatusCodes: []int{502}, Action: ErrorHandlingActionRetry, RetryCount: errorHandlingIntPtr(1)}},
@@ -187,10 +192,11 @@ func TestPassthroughUnmatchedStreamErrorIsRecordedOnce(t *testing.T) {
 	for _, ev := range events {
 		if ev.Kind == opsUpstreamErrorKindStreamErrorUnmatched {
 			unmatched++
-			require.Contains(t, ev.Message, "Concurrency limit exceeded")
+			require.Contains(t, ev.Message, "first unmatched failure")
+			require.NotContains(t, ev.Message, "Concurrency limit exceeded")
 		}
 	}
-	require.Equal(t, 1, unmatched, "同一 attempt 内连续多个未命中只记一条")
+	require.Equal(t, 1, unmatched, "同一 attempt 内连续多个未命中只记首条")
 }
 
 func TestPassthroughMatchedStreamErrorSuppressesUnmatchedRecord(t *testing.T) {

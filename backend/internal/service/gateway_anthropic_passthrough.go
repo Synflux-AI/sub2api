@@ -606,7 +606,9 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthroughWithRu
 ) (result *streamingResult, ruleMatch *anthropicPassthroughStreamRuleMatch, err error) {
 	var unmatchedStreamError *unmatchedStreamErrorEvent
 	// hit-priority：只要这次 attempt 最终返回了规则命中，未命中记录一律丢弃。
-	// 用 defer 覆盖所有 return 分支，包括后续新增的。
+	// 用 defer 覆盖所有 return 分支，包括后续新增的。`ruleMatch != nil` 是抑制
+	// 未命中记录的唯一机制——不依赖 processEvent 内部是否清空过
+	// unmatchedStreamError，命中分支到这里只经由具名返回值传播。
 	defer func() {
 		if ruleMatch != nil {
 			return
@@ -782,7 +784,6 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthroughWithRu
 					Attempt: attempt, IgnoreRetryElapsed: true, SemanticEventForwarded: semanticEventForwarded, IndependentRetryBudget: true,
 				})
 				if decision.Matched {
-					unmatchedStreamError = nil
 					return &anthropicPassthroughStreamRuleMatch{
 						decision: decision, statusCode: statusCode, body: append([]byte(nil), event.data...),
 						errType: errType, errMessage: errMessage, rawEvent: append([]byte(nil), event.raw...),
