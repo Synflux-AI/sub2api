@@ -840,6 +840,8 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthroughWithRu
 							}, nil
 						}
 					}
+					s.recordStreamFailureCause(ctx, c, account, model,
+						streamFailureMissingTerminal, "stream usage incomplete: missing terminal event", firstTokenMs != nil)
 					return resultWithUsage(), nil, fmt.Errorf("stream usage incomplete: missing terminal event")
 				}
 				return resultWithUsage(), nil, nil
@@ -859,6 +861,8 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthroughWithRu
 					logger.CtxPrintf(ctx, "service.gateway", "[Anthropic passthrough] SSE line too long: account=%d max_size=%d error=%v", account.ID, maxLineSize, ev.err)
 					return resultWithUsage(), nil, ev.err
 				}
+				s.recordStreamFailureCause(ctx, c, account, model,
+					streamFailureReadError, fmt.Sprintf("stream read error: %v", ev.err), firstTokenMs != nil)
 				return resultWithUsage(), nil, fmt.Errorf("stream read error: %w", ev.err)
 			}
 
@@ -888,6 +892,8 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthroughWithRu
 			if s.rateLimitService != nil {
 				s.rateLimitService.HandleStreamTimeout(ctx, account, model)
 			}
+			s.recordStreamFailureCause(ctx, c, account, model,
+				streamFailureIntervalTimeout, "stream data interval timeout", firstTokenMs != nil)
 			return resultWithUsage(), nil, fmt.Errorf("stream data interval timeout")
 
 		case <-keepaliveCh:
