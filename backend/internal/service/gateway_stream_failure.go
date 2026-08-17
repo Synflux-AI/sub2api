@@ -85,3 +85,69 @@ func (s *GatewayService) recordStreamFailureCause(
 		Message:     safeMessage,
 	})
 }
+
+const opsUpstreamErrorKindStreamErrorUnmatched = "stream_error_unmatched"
+
+// unmatchedStreamErrorEvent 是一次「上游发了 error 帧、但错误处理规则没匹配上」
+// 的现场。运维配关键字全靠这份原文——现状是它被完全丢弃，只能靠持续监控猜。
+type unmatchedStreamErrorEvent struct {
+	statusCode int
+	errType    string
+	message    string
+	detail     string
+}
+
+// flushUnmatchedStreamError 在 attempt 终态落一条未命中记录。
+//
+// 采用 hit-priority 去重：调用方保证同一 attempt 内只保留首条未命中，且一旦
+// 后续 error 命中规则就整体丢弃——同一次故障只应产生一条记录，命中记录
+// （error_handling_rule_matched）优先级更高。
+func (s *GatewayService) flushUnmatchedStreamError(
+	ctx context.Context,
+	c *gin.Context,
+	account *Account,
+	model string,
+	attempt int,
+	ev *unmatchedStreamErrorEvent,
+) {
+	if ev == nil || account == nil {
+		return
+	}
+	message := sanitizeUpstreamErrorPayload(ev.message)
+	detail := sanitizeUpstreamErrorPayload(ev.detail)
+	if s != nil && s.cfg != nil {
+		maxBytes := s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes
+		if maxBytes <= 0 {
+			maxBytes = 2048
+		}
+		if !s.cfg.Gateway.LogUpstreamErrorBody {
+			detail = ""
+		} else {
+			detail = truncateString(detail, maxBytes)
+		}
+	}
+
+	logger.FromContext(ctx).Warn("gateway.stream_error_event_unmatched",
+		zap.Int64("account_id", account.ID),
+		zap.String("account_name", account.Name),
+		zap.String("model", model),
+		zap.Int("attempt", attempt),
+		zap.Int("status_code", ev.statusCode),
+		zap.String("error_type", ev.errType),
+		zap.String("message", message),
+	)
+
+	if c == nil {
+		return
+	}
+	appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+		Platform:           account.Platform,
+		AccountID:          account.ID,
+		AccountName:        account.Name,
+		UpstreamStatusCode: ev.statusCode,
+		Passthrough:        true,
+		Kind:               opsUpstreamErrorKindStreamErrorUnmatched,
+		Message:            message,
+		Detail:             detail,
+	})
+}

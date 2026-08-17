@@ -603,7 +603,16 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthroughWithRu
 	ruleTracker *errorHandlingRuleTracker,
 	streamState *anthropicPassthroughStreamState,
 	attempt int,
-) (*streamingResult, *anthropicPassthroughStreamRuleMatch, error) {
+) (result *streamingResult, ruleMatch *anthropicPassthroughStreamRuleMatch, err error) {
+	var unmatchedStreamError *unmatchedStreamErrorEvent
+	// hit-priority：只要这次 attempt 最终返回了规则命中，未命中记录一律丢弃。
+	// 用 defer 覆盖所有 return 分支，包括后续新增的。
+	defer func() {
+		if ruleMatch != nil {
+			return
+		}
+		s.flushUnmatchedStreamError(ctx, c, account, model, attempt, unmatchedStreamError)
+	}()
 	if streamState == nil {
 		streamState = &anthropicPassthroughStreamState{}
 	}
@@ -773,11 +782,20 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthroughWithRu
 					Attempt: attempt, IgnoreRetryElapsed: true, SemanticEventForwarded: semanticEventForwarded, IndependentRetryBudget: true,
 				})
 				if decision.Matched {
+					unmatchedStreamError = nil
 					return &anthropicPassthroughStreamRuleMatch{
 						decision: decision, statusCode: statusCode, body: append([]byte(nil), event.data...),
 						errType: errType, errMessage: errMessage, rawEvent: append([]byte(nil), event.raw...),
 						semanticEventForwarded: semanticEventForwarded,
 					}, nil
+				}
+				if unmatchedStreamError == nil {
+					unmatchedStreamError = &unmatchedStreamErrorEvent{
+						statusCode: statusCode,
+						errType:    errType,
+						message:    errMessage,
+						detail:     string(event.data),
+					}
 				}
 			}
 		}

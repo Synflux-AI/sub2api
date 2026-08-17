@@ -168,6 +168,88 @@ func TestPassthroughIntervalTimeoutRecordsOpsCause(t *testing.T) {
 	require.Equal(t, "stream data interval timeout", events[0].Message)
 }
 
+func TestPassthroughUnmatchedStreamErrorIsRecordedOnce(t *testing.T) {
+	body := "event: error\ndata: " + streamRuleConcurrencyError + "\n\n" +
+		"event: error\ndata: " + streamRuleConcurrencyError + "\n\n"
+	upstream := &sequencedHTTPUpstream{responses: []sequencedUpstreamResponse{{status: 200, body: body}}}
+	// 规则限定 502，第一级用的是 429（rate_limit_error），必然未命中。
+	svc := newErrorHandlingRulePassthroughService(t, upstream, &ErrorHandlingRuleSettings{
+		Enabled: true,
+		Rules:   []ErrorHandlingRule{{ID: "other", StatusCodes: []int{502}, Action: ErrorHandlingActionRetry, RetryCount: errorHandlingIntPtr(1)}},
+	})
+	c, _ := newErrorHandlingRuleTestContextWithRecorder()
+
+	_, err := svc.Forward(context.Background(), c, newErrorHandlingRulePassthroughAccount(), newErrorHandlingRuleStreamParsed(t))
+	require.Error(t, err)
+
+	events := opsUpstreamEvents(t, c)
+	unmatched := 0
+	for _, ev := range events {
+		if ev.Kind == opsUpstreamErrorKindStreamErrorUnmatched {
+			unmatched++
+			require.Contains(t, ev.Message, "Concurrency limit exceeded")
+		}
+	}
+	require.Equal(t, 1, unmatched, "同一 attempt 内连续多个未命中只记一条")
+}
+
+func TestPassthroughMatchedStreamErrorSuppressesUnmatchedRecord(t *testing.T) {
+	body := "event: error\ndata: " + `{"type":"error","error":{"type":"api_error","message":"transient blip"}}` + "\n\n" +
+		"event: error\ndata: " + streamRuleConcurrencyError + "\n\n"
+	upstream := &sequencedHTTPUpstream{responses: []sequencedUpstreamResponse{
+		{status: 200, body: body},
+		{status: 200, body: streamRuleSuccess},
+	}}
+	svc := newErrorHandlingRulePassthroughService(t, upstream, &ErrorHandlingRuleSettings{
+		Enabled: true,
+		Rules:   []ErrorHandlingRule{streamErrorRule(ErrorHandlingActionRetry, 1, ErrorHandlingExhaustedActionDefault)},
+	})
+	c, _ := newErrorHandlingRuleTestContextWithRecorder()
+
+	_, err := svc.Forward(context.Background(), c, newErrorHandlingRulePassthroughAccount(), newErrorHandlingRuleStreamParsed(t))
+	require.NoError(t, err)
+
+	if v, ok := c.Get(OpsUpstreamErrorsKey); ok {
+		events, _ := v.([]*OpsUpstreamErrorEvent)
+		for _, ev := range events {
+			require.NotEqual(t, opsUpstreamErrorKindStreamErrorUnmatched, ev.Kind,
+				"同一 attempt 内后续 error 命中规则时，未命中记录必须被抑制")
+		}
+	}
+}
+
+func TestPassthroughUnmatchedStreamErrorIsSanitized(t *testing.T) {
+	payload := `{"type":"error","error":{"type":"api_error","message":"denied","api_key":"sk-live-abcdefgh"}}`
+	upstream := &sequencedHTTPUpstream{responses: []sequencedUpstreamResponse{
+		{status: 200, body: "event: error\ndata: " + payload + "\n\n"},
+	}}
+	svc := newErrorHandlingRulePassthroughService(t, upstream, &ErrorHandlingRuleSettings{
+		Enabled: true,
+		Rules:   []ErrorHandlingRule{{ID: "other", StatusCodes: []int{502}, Action: ErrorHandlingActionRetry, RetryCount: errorHandlingIntPtr(1)}},
+	})
+	// 必须打开 LogUpstreamErrorBody，否则 detail 恒为空，这条用例会空跑通过
+	// 而完全没有验证脱敏。
+	svc.cfg.Gateway.LogUpstreamErrorBody = true
+	c, _ := newErrorHandlingRuleTestContextWithRecorder()
+
+	_, err := svc.Forward(context.Background(), c, newErrorHandlingRulePassthroughAccount(), newErrorHandlingRuleStreamParsed(t))
+	require.Error(t, err)
+
+	events := opsUpstreamEvents(t, c)
+	unmatchedSeen := false
+	for _, ev := range events {
+		require.NotContains(t, ev.Message, "sk-live-abcdefgh")
+		require.NotContains(t, ev.Detail, "sk-live-abcdefgh")
+		if ev.Kind == opsUpstreamErrorKindStreamErrorUnmatched {
+			unmatchedSeen = true
+			// detail 必须真的带上了原文（脱敏后），否则等于没测。
+			require.Contains(t, ev.Detail, upstreamSensitiveMask)
+			require.Contains(t, ev.Detail, "denied")
+		}
+	}
+	require.True(t, unmatchedSeen)
+}
+
 func TestRecordStreamFailureCauseIsNilSafe(t *testing.T) {
 	svc := &GatewayService{}
 	require.NotPanics(t, func() {
