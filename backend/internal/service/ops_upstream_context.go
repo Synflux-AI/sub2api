@@ -244,8 +244,19 @@ func appendOpsUpstreamError(c *gin.Context, ev OpsUpstreamErrorEvent) {
 	ev.UpstreamURL = strings.TrimSpace(ev.UpstreamURL)
 	ev.Message = strings.TrimSpace(ev.Message)
 	ev.Detail = strings.TrimSpace(ev.Detail)
+
+	// rawMatchBody 必须在任何脱敏发生之前算出：规则匹配（applyErrorPassthroughRule /
+	// MatchRule）要用未改写的原始上游文本，脱敏只作用于日志与 ops 落库字段
+	// （ev.Message / ev.Detail）。两者分离，之后不得互相回退。
+	rawMatchBody := upstreamRawMatchBody(ev.Detail, ev.Message)
+
 	if ev.Message != "" {
 		ev.Message = sanitizeUpstreamErrorMessage(ev.Message)
+	}
+	// Detail 承载上游响应体原文，直接写进 ops_error_logs.upstream_errors。
+	// 这里是所有调用点的唯一汇聚处，作为兜底脱敏。
+	if ev.Detail != "" {
+		ev.Detail = sanitizeUpstreamErrorPayload(ev.Detail)
 	}
 
 	var existing []*OpsUpstreamErrorEvent
@@ -259,7 +270,17 @@ func appendOpsUpstreamError(c *gin.Context, ev OpsUpstreamErrorEvent) {
 	existing = append(existing, &evCopy)
 	c.Set(OpsUpstreamErrorsKey, existing)
 
-	checkSkipMonitoringForUpstreamEvent(c, &evCopy)
+	checkSkipMonitoringForUpstreamEvent(c, &evCopy, rawMatchBody)
+}
+
+// upstreamRawMatchBody 算出用于规则匹配的原始（未脱敏）文本：Detail 优先，
+// 为空则回退 Message。与 checkSkipMonitoringForUpstreamEvent 原先内部派生
+// body 的优先级保持一致，唯一区别是调用方必须在脱敏之前取值。
+func upstreamRawMatchBody(detail, message string) string {
+	if detail != "" {
+		return detail
+	}
+	return message
 }
 
 // checkSkipMonitoringForUpstreamEvent checks whether the upstream error event
@@ -267,7 +288,11 @@ func appendOpsUpstreamError(c *gin.Context, ev OpsUpstreamErrorEvent) {
 // OpsSkipPassthroughKey on the context.  This ensures intermediate retry /
 // failover errors (which never go through the final applyErrorPassthroughRule
 // path) can still suppress ops_error_logs recording.
-func checkSkipMonitoringForUpstreamEvent(c *gin.Context, ev *OpsUpstreamErrorEvent) {
+//
+// rawMatchBody 必须是脱敏之前的原始上游文本（见 upstreamRawMatchBody）：规则
+// 匹配不能用已打码的 ev.Detail/ev.Message，否则关键字会被掩码打断，导致规则
+// 命不中。
+func checkSkipMonitoringForUpstreamEvent(c *gin.Context, ev *OpsUpstreamErrorEvent, rawMatchBody string) {
 	if ev.UpstreamStatusCode == 0 {
 		return
 	}
@@ -277,15 +302,9 @@ func checkSkipMonitoringForUpstreamEvent(c *gin.Context, ev *OpsUpstreamErrorEve
 		return
 	}
 
-	// Use the best available body representation for keyword matching.
-	// Even when body is empty, MatchRule can still match rules that only
-	// specify ErrorCodes (no Keywords), so we always call it.
-	body := ev.Detail
-	if body == "" {
-		body = ev.Message
-	}
-
-	rule := svc.MatchRule(ev.Platform, ev.UpstreamStatusCode, []byte(body))
+	// Even when rawMatchBody is empty, MatchRule can still match rules that
+	// only specify ErrorCodes (no Keywords), so we always call it.
+	rule := svc.MatchRule(ev.Platform, ev.UpstreamStatusCode, []byte(rawMatchBody))
 	if rule != nil && rule.SkipMonitoring {
 		c.Set(OpsSkipPassthroughKey, true)
 	}

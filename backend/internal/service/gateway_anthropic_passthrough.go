@@ -603,7 +603,18 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthroughWithRu
 	ruleTracker *errorHandlingRuleTracker,
 	streamState *anthropicPassthroughStreamState,
 	attempt int,
-) (*streamingResult, *anthropicPassthroughStreamRuleMatch, error) {
+) (result *streamingResult, ruleMatch *anthropicPassthroughStreamRuleMatch, err error) {
+	var unmatchedStreamError *unmatchedStreamErrorEvent
+	// hit-priority：只要这次 attempt 最终返回了规则命中，未命中记录一律丢弃。
+	// 用 defer 覆盖所有 return 分支，包括后续新增的。`ruleMatch != nil` 是抑制
+	// 未命中记录的唯一机制——不依赖 processEvent 内部是否清空过
+	// unmatchedStreamError，命中分支到这里只经由具名返回值传播。
+	defer func() {
+		if ruleMatch != nil {
+			return
+		}
+		s.flushUnmatchedStreamError(ctx, c, account, model, attempt, unmatchedStreamError)
+	}()
 	if streamState == nil {
 		streamState = &anthropicPassthroughStreamState{}
 	}
@@ -779,6 +790,14 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthroughWithRu
 						semanticEventForwarded: semanticEventForwarded,
 					}, nil
 				}
+				if unmatchedStreamError == nil {
+					unmatchedStreamError = &unmatchedStreamErrorEvent{
+						statusCode: statusCode,
+						errType:    errType,
+						message:    errMessage,
+						detail:     string(event.data),
+					}
+				}
 			}
 		}
 
@@ -840,6 +859,8 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthroughWithRu
 							}, nil
 						}
 					}
+					s.recordStreamFailureCause(ctx, c, account, model,
+						streamFailureMissingTerminal, "stream usage incomplete: missing terminal event", firstTokenMs != nil, clientDisconnected)
 					return resultWithUsage(), nil, fmt.Errorf("stream usage incomplete: missing terminal event")
 				}
 				return resultWithUsage(), nil, nil
@@ -859,6 +880,8 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthroughWithRu
 					logger.CtxPrintf(ctx, "service.gateway", "[Anthropic passthrough] SSE line too long: account=%d max_size=%d error=%v", account.ID, maxLineSize, ev.err)
 					return resultWithUsage(), nil, ev.err
 				}
+				s.recordStreamFailureCause(ctx, c, account, model,
+					streamFailureReadError, fmt.Sprintf("stream read error: %v", ev.err), firstTokenMs != nil, clientDisconnected)
 				return resultWithUsage(), nil, fmt.Errorf("stream read error: %w", ev.err)
 			}
 
@@ -888,6 +911,8 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthroughWithRu
 			if s.rateLimitService != nil {
 				s.rateLimitService.HandleStreamTimeout(ctx, account, model)
 			}
+			s.recordStreamFailureCause(ctx, c, account, model,
+				streamFailureIntervalTimeout, "stream data interval timeout", firstTokenMs != nil, clientDisconnected)
 			return resultWithUsage(), nil, fmt.Errorf("stream data interval timeout")
 
 		case <-keepaliveCh:
