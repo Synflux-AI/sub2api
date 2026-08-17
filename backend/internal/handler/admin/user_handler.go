@@ -120,6 +120,8 @@ type BindUserAuthIdentityChannelRequest struct {
 //   - attr[{id}]: filter by custom attribute value, e.g. attr[1]=company
 //   - group_name: fuzzy filter by allowed group name
 //   - api_key_group_id: filter by the exact group bound to the user's API keys
+//   - created_at_from, created_at_before: RFC3339 registration time range [from, before)
+//   - last_used_at_from, last_used_at_before: RFC3339 latest usage time range [from, before)
 func (h *UserHandler) List(c *gin.Context) {
 	page, pageSize := response.ParsePagination(c)
 
@@ -136,6 +138,24 @@ func (h *UserHandler) List(c *gin.Context) {
 		Search:     search,
 		GroupName:  strings.TrimSpace(c.Query("group_name")),
 		Attributes: parseAttributeFilters(c),
+	}
+	var ok bool
+	if filters.CreatedAtFrom, ok = parseUserListTime(c, "created_at_from"); !ok {
+		return
+	}
+	if filters.CreatedAtBefore, ok = parseUserListTime(c, "created_at_before"); !ok {
+		return
+	}
+	if filters.LastUsedAtFrom, ok = parseUserListTime(c, "last_used_at_from"); !ok {
+		return
+	}
+	if filters.LastUsedAtBefore, ok = parseUserListTime(c, "last_used_at_before"); !ok {
+		return
+	}
+	if !validUserListTimeRange(filters.CreatedAtFrom, filters.CreatedAtBefore) ||
+		!validUserListTimeRange(filters.LastUsedAtFrom, filters.LastUsedAtBefore) {
+		response.BadRequest(c, "Invalid user time range: start must be before end")
+		return
 	}
 	if raw := strings.TrimSpace(c.Query("api_key_group_id")); raw != "" {
 		if id, parseErr := strconv.ParseInt(raw, 10, 64); parseErr == nil && id > 0 {
@@ -180,6 +200,24 @@ func (h *UserHandler) List(c *gin.Context) {
 	}
 
 	response.Paginated(c, out, total, page, pageSize)
+}
+
+func parseUserListTime(c *gin.Context, key string) (*time.Time, bool) {
+	raw := strings.TrimSpace(c.Query(key))
+	if raw == "" {
+		return nil, true
+	}
+	parsed, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		response.BadRequest(c, "Invalid "+key+": expected RFC3339")
+		return nil, false
+	}
+	parsed = parsed.UTC()
+	return &parsed, true
+}
+
+func validUserListTimeRange(from, before *time.Time) bool {
+	return from == nil || before == nil || from.Before(*before)
 }
 
 // parseAttributeFilters extracts attribute filters from query params

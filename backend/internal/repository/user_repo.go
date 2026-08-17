@@ -543,6 +543,15 @@ func (r *userRepository) ListWithFilters(ctx context.Context, params pagination.
 			dbgroup.NameContainsFold(filters.GroupName),
 		))
 	}
+	if filters.CreatedAtFrom != nil {
+		q = q.Where(dbuser.CreatedAtGTE(*filters.CreatedAtFrom))
+	}
+	if filters.CreatedAtBefore != nil {
+		q = q.Where(dbuser.CreatedAtLT(*filters.CreatedAtBefore))
+	}
+	if filters.LastUsedAtFrom != nil || filters.LastUsedAtBefore != nil {
+		q = q.Where(userLastUsedAtRange(filters.LastUsedAtFrom, filters.LastUsedAtBefore))
+	}
 
 	if filters.APIKeyGroupID > 0 {
 		// 按"API Key 实际绑定的分组"过滤：用户只要有任意一个未软删除的 API Key
@@ -763,6 +772,24 @@ func userLastUsedAtOrder(sortOrder string) []func(*entsql.Selector) {
 	}
 	return []func(*entsql.Selector){
 		orderExpr("DESC", "LAST", entsql.Desc),
+	}
+}
+
+func userLastUsedAtRange(from, before *time.Time) predicate.User {
+	return func(s *entsql.Selector) {
+		latest := fmt.Sprintf("(SELECT MAX(created_at) FROM usage_logs WHERE user_id = %s)", s.C(dbuser.FieldID))
+		predicates := make([]*entsql.Predicate, 0, 2)
+		if from != nil {
+			predicates = append(predicates, entsql.P(func(b *entsql.Builder) {
+				b.WriteString(latest).WriteString(" >= ").Arg(from.UTC())
+			}))
+		}
+		if before != nil {
+			predicates = append(predicates, entsql.P(func(b *entsql.Builder) {
+				b.WriteString(latest).WriteString(" < ").Arg(before.UTC())
+			}))
+		}
+		s.Where(entsql.And(predicates...))
 	}
 }
 
