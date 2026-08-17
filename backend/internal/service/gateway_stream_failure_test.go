@@ -175,7 +175,9 @@ func TestPassthroughReadErrorRecordsOpsCause(t *testing.T) {
 	// 那一个用例断言过。
 	msg, ok := c.Get(OpsUpstreamErrorMessageKey)
 	require.True(t, ok)
-	require.True(t, strings.HasPrefix(msg.(string), "stream read error:"), "message=%q", msg)
+	msgStr, ok := msg.(string)
+	require.True(t, ok, "message=%v", msg)
+	require.True(t, strings.HasPrefix(msgStr, "stream read error:"), "message=%q", msgStr)
 
 	events := opsUpstreamEvents(t, c)
 	require.Len(t, events, 1)
