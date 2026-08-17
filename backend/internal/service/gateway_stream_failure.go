@@ -58,6 +58,8 @@ func (s *GatewayService) recordStreamFailureCause(
 		scope = streamFailureScopeAfterFirstToken
 	}
 
+	safeMessage := sanitizeUpstreamErrorPayload(message)
+
 	logger.FromContext(ctx).Warn("gateway.stream_failure",
 		zap.String("cause", string(cause)),
 		zap.String("scope", scope),
@@ -65,13 +67,13 @@ func (s *GatewayService) recordStreamFailureCause(
 		zap.String("account_name", account.Name),
 		zap.String("model", model),
 		zap.Bool("passthrough", true),
-		zap.String("message", sanitizeUpstreamErrorPayload(message)),
+		zap.String("message", safeMessage),
 	)
 
 	if c == nil {
 		return
 	}
-	setOpsUpstreamError(c, 0, message, "")
+	setOpsUpstreamError(c, 0, safeMessage, "")
 	appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 		Platform:    account.Platform,
 		AccountID:   account.ID,
@@ -80,6 +82,6 @@ func (s *GatewayService) recordStreamFailureCause(
 		Kind:        opsUpstreamErrorKindStreamFailure,
 		Reason:      string(cause),
 		Scope:       scope,
-		Message:     message,
+		Message:     safeMessage,
 	})
 }

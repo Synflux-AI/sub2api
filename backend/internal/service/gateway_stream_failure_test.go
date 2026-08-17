@@ -2,8 +2,14 @@ package service
 
 import (
 	"context"
+	"errors"
+	"io"
+	"net/http"
+	"strings"
 	"testing"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
@@ -53,6 +59,113 @@ func TestPassthroughMissingTerminalAfterFirstTokenRecordsScope(t *testing.T) {
 	events := opsUpstreamEvents(t, c)
 	require.Len(t, events, 1)
 	require.Equal(t, streamFailureScopeAfterFirstToken, events[0].Scope)
+}
+
+// erroringBody is an io.ReadCloser whose Read always fails with a fixed,
+// non-EOF error. It simulates a mid-stream network failure (e.g. connection
+// reset) that sequencedHTTPUpstream's string-only body cannot express, so we
+// can exercise the read_error termination point end-to-end through Forward.
+type erroringBody struct {
+	err error
+}
+
+func (b *erroringBody) Read(_ []byte) (int, error) { return 0, b.err }
+func (b *erroringBody) Close() error               { return nil }
+
+// blockingBody is an io.ReadCloser whose Read blocks until release is closed.
+// It simulates a stalled upstream that never sends another byte, so the
+// interval_timeout termination point can be exercised without racing against
+// an accidental EOF/error path. Tests must close release before returning to
+// unblock the background scanner goroutine and avoid leaking it.
+type blockingBody struct {
+	release chan struct{}
+}
+
+func (b *blockingBody) Read(_ []byte) (int, error) {
+	<-b.release
+	return 0, io.EOF
+}
+func (b *blockingBody) Close() error { return nil }
+
+// singleResponseHTTPUpstream returns one fixed *http.Response, with a
+// caller-supplied body, for every call. Used where sequencedHTTPUpstream's
+// string-backed body can't express a body that errors or blocks mid-read.
+type singleResponseHTTPUpstream struct {
+	status int
+	body   io.ReadCloser
+}
+
+func (u *singleResponseHTTPUpstream) Do(_ *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
+	return &http.Response{
+		StatusCode: u.status,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       u.body,
+	}, nil
+}
+
+func (u *singleResponseHTTPUpstream) DoWithTLS(req *http.Request, proxyURL string, accountID int64, accountConcurrency int, _ *tlsfingerprint.Profile) (*http.Response, error) {
+	return u.Do(req, proxyURL, accountID, accountConcurrency)
+}
+
+// newStreamFailureUpstreamService mirrors newErrorHandlingRulePassthroughService
+// but allows an arbitrary HTTPUpstream (needed for bodies that error/block
+// mid-read) and a configurable stream data interval timeout.
+func newStreamFailureUpstreamService(t *testing.T, upstream HTTPUpstream, streamDataIntervalTimeout int) *GatewayService {
+	t.Helper()
+	repo := &gatewayTTLSettingRepo{data: map[string]string{}}
+	cfg := &config.Config{Gateway: config.GatewayConfig{
+		MaxLineSize:               defaultMaxLineSize,
+		StreamDataIntervalTimeout: streamDataIntervalTimeout,
+	}}
+	svc := &GatewayService{
+		cfg: cfg, responseHeaderFilter: compileResponseHeaderFilter(cfg), httpUpstream: upstream,
+		settingService: NewSettingService(repo, cfg), deferredService: &DeferredService{},
+		tlsFPProfileService: &TLSFingerprintProfileService{},
+	}
+	require.NoError(t, svc.settingService.SetErrorHandlingRuleSettings(context.Background(), &ErrorHandlingRuleSettings{Enabled: false}))
+	return svc
+}
+
+func TestPassthroughReadErrorRecordsOpsCause(t *testing.T) {
+	readErr := errors.New("connection reset by peer")
+	upstream := &singleResponseHTTPUpstream{status: 200, body: &erroringBody{err: readErr}}
+	svc := newStreamFailureUpstreamService(t, upstream, 0)
+	c, _ := newErrorHandlingRuleTestContextWithRecorder()
+
+	_, err := svc.Forward(context.Background(), c, newErrorHandlingRulePassthroughAccount(), newErrorHandlingRuleStreamParsed(t))
+	require.ErrorContains(t, err, "stream read error")
+
+	events := opsUpstreamEvents(t, c)
+	require.Len(t, events, 1)
+	require.Equal(t, opsUpstreamErrorKindStreamFailure, events[0].Kind)
+	require.Equal(t, string(streamFailureReadError), events[0].Reason)
+	require.Equal(t, streamFailureScopeBeforeFirstToken, events[0].Scope)
+	require.True(t, events[0].Passthrough)
+	// upstream_status_code 必须保持不写：wire 上游状态确实是 200。
+	require.Zero(t, events[0].UpstreamStatusCode)
+	// 尾部是动态 error 文本（readErr.Error()），只断言前缀。
+	require.True(t, strings.HasPrefix(events[0].Message, "stream read error:"), "message=%q", events[0].Message)
+}
+
+func TestPassthroughIntervalTimeoutRecordsOpsCause(t *testing.T) {
+	release := make(chan struct{})
+	defer close(release)
+	upstream := &singleResponseHTTPUpstream{status: 200, body: &blockingBody{release: release}}
+	svc := newStreamFailureUpstreamService(t, upstream, 1) // 1s：测试里能接受的最小间隔
+	c, _ := newErrorHandlingRuleTestContextWithRecorder()
+
+	_, err := svc.Forward(context.Background(), c, newErrorHandlingRulePassthroughAccount(), newErrorHandlingRuleStreamParsed(t))
+	require.ErrorContains(t, err, "stream data interval timeout")
+
+	events := opsUpstreamEvents(t, c)
+	require.Len(t, events, 1)
+	require.Equal(t, opsUpstreamErrorKindStreamFailure, events[0].Kind)
+	require.Equal(t, string(streamFailureIntervalTimeout), events[0].Reason)
+	require.Equal(t, streamFailureScopeBeforeFirstToken, events[0].Scope)
+	require.True(t, events[0].Passthrough)
+	// upstream_status_code 必须保持不写：wire 上游状态确实是 200。
+	require.Zero(t, events[0].UpstreamStatusCode)
+	require.Equal(t, "stream data interval timeout", events[0].Message)
 }
 
 func TestRecordStreamFailureCauseIsNilSafe(t *testing.T) {
