@@ -161,4 +161,33 @@ func (s *UserRepoSuite) TestListWithFilters_SortByLastUsedAtDesc_UsesUsageLogsNo
 	s.Require().Equal(nilUsage.ID, users[2].ID)
 }
 
+func (s *UserRepoSuite) TestListWithFilters_FiltersCreatedAndLatestUsageRanges() {
+	now := time.Now().UTC().Truncate(time.Second)
+	inside := s.mustCreateUser(&service.User{Email: "inside-time-range@example.com"})
+	outside := s.mustCreateUser(&service.User{Email: "outside-time-range@example.com"})
+	_, err := integrationDB.ExecContext(s.ctx, "UPDATE users SET created_at = $1 WHERE id = $2", now.Add(-2*time.Hour), inside.ID)
+	s.Require().NoError(err)
+	_, err = integrationDB.ExecContext(s.ctx, "UPDATE users SET created_at = $1 WHERE id = $2", now.Add(-8*time.Hour), outside.ID)
+	s.Require().NoError(err)
+	s.mustInsertUsageLog(inside.ID, now.Add(-90*time.Minute))
+	s.mustInsertUsageLog(outside.ID, now.Add(-5*time.Hour))
+	s.mustInsertUsageLog(outside.ID, now.Add(-30*time.Minute))
+
+	createdFrom, before := now.Add(-3*time.Hour), now
+	users, result, err := s.repo.ListWithFilters(s.ctx, pagination.PaginationParams{Page: 1, PageSize: 10}, service.UserListFilters{
+		CreatedAtFrom: &createdFrom, CreatedAtBefore: &before,
+	})
+	s.Require().NoError(err)
+	s.Require().Equal(int64(1), result.Total)
+	s.Require().Equal(inside.ID, users[0].ID)
+
+	usedFrom, usedBefore := now.Add(-6*time.Hour), now.Add(-time.Hour)
+	users, result, err = s.repo.ListWithFilters(s.ctx, pagination.PaginationParams{Page: 1, PageSize: 10}, service.UserListFilters{
+		LastUsedAtFrom: &usedFrom, LastUsedAtBefore: &usedBefore,
+	})
+	s.Require().NoError(err)
+	s.Require().Equal(int64(1), result.Total)
+	s.Require().Equal(inside.ID, users[0].ID)
+}
+
 func TestUserRepoSortSuiteSmoke(_ *testing.T) {}

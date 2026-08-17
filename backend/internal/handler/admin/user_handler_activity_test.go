@@ -68,6 +68,41 @@ func TestUserHandlerListIncludesActivityFieldsAndSortParams(t *testing.T) {
 	require.WithinDuration(t, lastUsedAt, *resp.Data.Items[0].LastUsedAt, time.Second)
 }
 
+func TestUserHandlerListParsesUserTimeRanges(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	adminSvc := newStubAdminService()
+	handler := NewUserHandler(adminSvc, nil, nil, nil, nil, nil, nil)
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodGet,
+		"/api/v1/admin/users?created_at_from=2026-07-01T00%3A00%3A00Z&created_at_before=2026-07-08T00%3A00%3A00Z&last_used_at_from=2026-07-02T00%3A00%3A00Z&last_used_at_before=2026-07-09T00%3A00%3A00Z", nil)
+
+	handler.List(c)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Equal(t, "2026-07-01T00:00:00Z", adminSvc.lastListUsers.filters.CreatedAtFrom.Format(time.RFC3339))
+	require.Equal(t, "2026-07-08T00:00:00Z", adminSvc.lastListUsers.filters.CreatedAtBefore.Format(time.RFC3339))
+	require.Equal(t, "2026-07-02T00:00:00Z", adminSvc.lastListUsers.filters.LastUsedAtFrom.Format(time.RFC3339))
+	require.Equal(t, "2026-07-09T00:00:00Z", adminSvc.lastListUsers.filters.LastUsedAtBefore.Format(time.RFC3339))
+}
+
+func TestUserHandlerListRejectsInvalidUserTimeRange(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	adminSvc := newStubAdminService()
+	handler := NewUserHandler(adminSvc, nil, nil, nil, nil, nil, nil)
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodGet,
+		"/api/v1/admin/users?created_at_from=2026-07-08T00%3A00%3A00Z&created_at_before=2026-07-01T00%3A00%3A00Z", nil)
+
+	handler.List(c)
+
+	require.Equal(t, http.StatusBadRequest, recorder.Code)
+	require.Zero(t, adminSvc.lastListUsers.calls)
+}
+
 func TestUserHandlerGetByIDIncludesActivityFields(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
