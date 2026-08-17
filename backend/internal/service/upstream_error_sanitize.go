@@ -20,13 +20,36 @@ var (
 	// 且它不是凭证。
 	upstreamSensitiveFieldRegex = regexp.MustCompile(`(?i)^(x-)?(api[_-]?key|apikey|authorization|access[_-]?token|refresh[_-]?token|id[_-]?token|client[_-]?secret|secret|password|passwd|token|cookie|session[_-]?id)$`)
 
-	// upstreamSensitiveKVRegex 匹配纯文本里的 key=value / key: value。
-	// 第 3、5 组捕获可选的开闭引号：必须把闭引号一起吃进匹配范围，否则替换后
-	// 会留下一个多余的引号（`token: "abc"` → `token: "***""`）。
-	upstreamSensitiveKVRegex = regexp.MustCompile(`(?i)\b(x-api-key|api[_-]?key|apikey|authorization|access[_-]?token|refresh[_-]?token|client[_-]?secret|secret|password|passwd|token)\b(\s*[:=]\s*)("?)([^"\s,;)}\]]+)("?)`)
+	// upstreamSensitiveKVRegex 匹配纯文本（含降级后的非法 JSON 片段）里的
+	// key=value / key: value / "key":"value"。
+	//
+	// 组号（quote-aware，key 与分隔符之间允许一个可选的闭引号，用来吃掉
+	// JSON key 的收尾引号，如 `"api_key":"..."`）：
+	//   1 key 名
+	//   2 key 后的可选闭引号（JSON key 收尾引号，如有）
+	//   3 分隔符 `:` 或 `=`（含前后空白）
+	//   4 value 的可选开引号
+	//   5 value 内容
+	//   6 value 的可选闭引号
+	// 4、6 必须整体吃进匹配范围，否则替换后会留下多余的引号
+	// （`token: "abc"` → `token: "***""`）。
+	//
+	// 故意不含裸 `token`：这条规则的输出可能经 sanitizeUpstreamErrorMessage
+	// 直接进入面向客户端的错误文案（如 openai_images_responses.go 的
+	// OpenAIImagesUpstreamError.Message），而模型侧把 token 计数写成
+	// `token: 4096` / `token=4096` 是常见合法文案，裸 token 会把这些数字
+	// 误打码。JSON 字段名清单（upstreamSensitiveFieldRegex）里的 token 是
+	// `^...$` 锚定的字段名，语义无歧义，予以保留。
+	upstreamSensitiveKVRegex = regexp.MustCompile(`(?i)\b(x-api-key|api[_-]?key|apikey|authorization|access[_-]?token|refresh[_-]?token|client[_-]?secret|secret|password|passwd)\b("?)(\s*[:=]\s*)("?)([^"\s,;)}\]]+)("?)`)
 
 	// upstreamBearerRegex 匹配 "Bearer <token>" 形态。
 	upstreamBearerRegex = regexp.MustCompile(`(?i)\bbearer\s+[A-Za-z0-9._\-]{8,}`)
+
+	// sseLineIndicatorRegex 判断某一行是否是 SSE 帧行（`data:`/`event:` 打头，
+	// 允许前导空白）。必须锚定行首，否则单行 JSON 里如果某个字符串字段的值
+	// 恰好包含子串 "data:"（如 "authentication data: invalid"），会被误判为
+	// SSE payload，从而绕过 JSON 递归脱敏、退化到弱文本正则。
+	sseLineIndicatorRegex = regexp.MustCompile(`(?m)^[ \t]*(?:data|event):`)
 )
 
 // sanitizeUpstreamErrorMessage 保留原名与签名，供既有调用点继续使用。
@@ -52,7 +75,7 @@ func sanitizeUpstreamErrorPayload(payload string) string {
 }
 
 func isLikelySSEPayload(payload string) bool {
-	return strings.Contains(payload, "data:") || strings.Contains(payload, "event:")
+	return sseLineIndicatorRegex.MatchString(payload)
 }
 
 // sanitizeUpstreamErrorPayloadValue 处理「JSON 或纯文本」，不再识别 SSE，
@@ -113,9 +136,9 @@ func maskTextSecrets(text string) string {
 	text = upstreamBearerRegex.ReplaceAllString(text, "Bearer "+upstreamSensitiveMask)
 	return upstreamSensitiveKVRegex.ReplaceAllStringFunc(text, func(match string) string {
 		groups := upstreamSensitiveKVRegex.FindStringSubmatch(match)
-		if len(groups) < 6 {
+		if len(groups) < 7 {
 			return match
 		}
-		return groups[1] + groups[2] + groups[3] + upstreamSensitiveMask + groups[5]
+		return groups[1] + groups[2] + groups[3] + groups[4] + upstreamSensitiveMask + groups[6]
 	})
 }

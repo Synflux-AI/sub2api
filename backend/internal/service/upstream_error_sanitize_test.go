@@ -42,8 +42,12 @@ func TestSanitizeUpstreamErrorPayloadKeepsSignatureText(t *testing.T) {
 }
 
 func TestSanitizeUpstreamErrorPayloadPreservesQuotingInText(t *testing.T) {
-	out := sanitizeUpstreamErrorPayload(`token: "abcdefghij" trailing`)
-	require.Equal(t, `token: "`+upstreamSensitiveMask+`" trailing`, out)
+	// 原用例使用裸 "token" 作为 key 验证引号保留机制；task-1 fix round 1
+	// 裁决要求文本 KV 正则移除裸 token（避免对客文案里的 "token: 4096"
+	// 计数误打码，见 upstream_error_sanitize.go 里 upstreamSensitiveKVRegex
+	// 的注释）。改用 "password" 验证同样的引号保留机制，不影响测试意图。
+	out := sanitizeUpstreamErrorPayload(`password: "abcdefghij" trailing`)
+	require.Equal(t, `password: "`+upstreamSensitiveMask+`" trailing`, out)
 }
 
 func TestSanitizeUpstreamErrorMessageStillMasksQueryParams(t *testing.T) {
@@ -55,4 +59,55 @@ func TestSanitizeUpstreamErrorMessageStillMasksQueryParams(t *testing.T) {
 func TestSanitizeUpstreamErrorPayloadEmptyInputUnchanged(t *testing.T) {
 	require.Equal(t, "", sanitizeUpstreamErrorPayload(""))
 	require.Equal(t, "   ", sanitizeUpstreamErrorPayload("   "))
+}
+
+// TestSanitizeUpstreamErrorPayloadMasksTruncatedJSONField 覆盖 Finding 1
+// 的第一个复现，及 Finding 2 的叠加论证：既有 40+ 调用点在 truncateString
+// 之后才赋给 ev.Detail，截断可能把合法 JSON 切成非法 JSON、落到文本兜底
+// 路径。这里验证被截断成非法 JSON 的 api_key 字段仍会被掩码。
+func TestSanitizeUpstreamErrorPayloadMasksTruncatedJSONField(t *testing.T) {
+	in := `{"error":{"message":"bad key","api_key":"sk-live-1234567890abcdef`
+	out := sanitizeUpstreamErrorPayload(in)
+
+	require.NotContains(t, out, "sk-live-1234567890abcdef")
+	require.Contains(t, out, upstreamSensitiveMask)
+	require.Contains(t, out, "bad key")
+}
+
+// TestSanitizeUpstreamErrorPayloadMasksJSONWithEmbeddedDataColon 覆盖
+// Finding 1 的第二个复现：单行合法 JSON 的字符串字段里恰好出现子串
+// "data:"，isLikelySSEPayload 若只做 substring 判断会把整个 payload
+// 误路由进 SSE 逐行文本路径，导致同一对象里的 api_key 原样泄漏。
+func TestSanitizeUpstreamErrorPayloadMasksJSONWithEmbeddedDataColon(t *testing.T) {
+	in := `{"error":{"message":"authentication data: invalid","api_key":"sk-live-999888777"}}`
+	out := sanitizeUpstreamErrorPayload(in)
+
+	require.NotContains(t, out, "sk-live-999888777")
+	require.Contains(t, out, upstreamSensitiveMask)
+	require.Contains(t, out, "authentication data: invalid")
+}
+
+// TestSanitizeUpstreamErrorPayloadMasksCompactJSONTextFallback 验证紧凑
+// （无空格）JSON 走文本兜底路径时，quote-aware 的 upstreamSensitiveKVRegex
+// 依然能匹配 "key":"value" 形态。
+func TestSanitizeUpstreamErrorPayloadMasksCompactJSONTextFallback(t *testing.T) {
+	out := maskTextSecrets(`{"password":"hunter2hunter2"}`)
+
+	require.NotContains(t, out, "hunter2hunter2")
+	require.Contains(t, out, upstreamSensitiveMask)
+}
+
+// TestSanitizeUpstreamErrorPayloadKeepsBareTokenCountText 覆盖 Finding 3
+// 的裁决：文本 KV 正则移除裸 token，避免把 "token: 4096" 这类合法的模型
+// token 计数文案误打码——这类文案可能经 sanitizeUpstreamErrorMessage 直接
+// 进入面向客户端的错误响应（如 openai_images_responses.go 的
+// OpenAIImagesUpstreamError.Message）。同时确认 JSON 字段名清单里的
+// token 仍会被掩码（该字段名锚定、语义无歧义）。
+func TestSanitizeUpstreamErrorPayloadKeepsBareTokenCountText(t *testing.T) {
+	require.Equal(t, "token: 4096", sanitizeUpstreamErrorPayload("token: 4096"))
+	require.Equal(t, "token=4096", sanitizeUpstreamErrorPayload("token=4096"))
+
+	out := sanitizeUpstreamErrorPayload(`{"token":"secret"}`)
+	require.NotContains(t, out, "secret")
+	require.Contains(t, out, upstreamSensitiveMask)
 }
