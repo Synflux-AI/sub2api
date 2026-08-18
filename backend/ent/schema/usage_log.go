@@ -169,6 +169,10 @@ func (UsageLog) Fields() []ent.Field {
 		field.JSON("image_size_breakdown", map[string]int{}).
 			Optional().
 			SchemaType(map[string]string{dialect.Postgres: "jsonb"}),
+		field.String("image_response_format").
+			MaxLen(16).
+			Optional().
+			Nillable(),
 
 		// 视频生成字段（Grok 视频按秒计费；billing_mode 走 token/其他模式时这些列仍标记视频用量）
 		field.Int("video_count").

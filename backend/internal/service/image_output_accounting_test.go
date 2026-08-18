@@ -2,7 +2,36 @@ package service
 
 import (
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
+
+func TestOpenAIImageOutputCounter_ResponseFormatUsesResponseKey(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		body      string
+		want      string
+		wantCount int
+	}{
+		{name: "base64", body: `{"data":[{"b64_json":"aW1hZ2U="}]}`, want: "b64_json", wantCount: 1},
+		{name: "url", body: `{"data":[{"url":"https://example.com/image.png"}]}`, want: "url", wantCount: 1},
+		{name: "url wins when both keys exist", body: `{"type":"image_generation.completed","b64_json":"aW1hZ2U=","url":"data:image/png;base64,aW1hZ2U="}`, want: "url", wantCount: 1},
+		{name: "image edit", body: `{"type":"image_edit.completed","url":"https://example.com/edited.png"}`, want: "url", wantCount: 1},
+		{name: "text response", body: `{"output":[{"type":"message","content":[{"type":"output_text","text":"hi"}]}]}`, want: "", wantCount: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			counter := newOpenAIImageOutputCounter()
+			counter.AddJSONResponse([]byte(tt.body))
+			counter.AddSSEData([]byte(tt.body))
+			require.Equal(t, tt.want, counter.ResponseFormat())
+			require.Equal(t, tt.wantCount, counter.Count())
+		})
+	}
+}
 
 func TestOpenAIImageOutputCounter_TextOnlyMessage(t *testing.T) {
 	// Simulate a text-only response from /v1/responses

@@ -885,6 +885,26 @@ func (_u *UsageLogUpdate) ClearImageSizeBreakdown() *UsageLogUpdate {
 	return _u
 }
 
+// SetImageResponseFormat sets the "image_response_format" field.
+func (_u *UsageLogUpdate) SetImageResponseFormat(v string) *UsageLogUpdate {
+	_u.mutation.SetImageResponseFormat(v)
+	return _u
+}
+
+// SetNillableImageResponseFormat sets the "image_response_format" field if the given value is not nil.
+func (_u *UsageLogUpdate) SetNillableImageResponseFormat(v *string) *UsageLogUpdate {
+	if v != nil {
+		_u.SetImageResponseFormat(*v)
+	}
+	return _u
+}
+
+// ClearImageResponseFormat clears the value of the "image_response_format" field.
+func (_u *UsageLogUpdate) ClearImageResponseFormat() *UsageLogUpdate {
+	_u.mutation.ClearImageResponseFormat()
+	return _u
+}
+
 // SetVideoCount sets the "video_count" field.
 func (_u *UsageLogUpdate) SetVideoCount(v int) *UsageLogUpdate {
 	_u.mutation.ResetVideoCount()
@@ -1129,6 +1149,11 @@ func (_u *UsageLogUpdate) check() error {
 	if v, ok := _u.mutation.ImageSizeSource(); ok {
 		if err := usagelog.ImageSizeSourceValidator(v); err != nil {
 			return &ValidationError{Name: "image_size_source", err: fmt.Errorf(`ent: validator failed for field "UsageLog.image_size_source": %w`, err)}
+		}
+	}
+	if v, ok := _u.mutation.ImageResponseFormat(); ok {
+		if err := usagelog.ImageResponseFormatValidator(v); err != nil {
+			return &ValidationError{Name: "image_response_format", err: fmt.Errorf(`ent: validator failed for field "UsageLog.image_response_format": %w`, err)}
 		}
 	}
 	if v, ok := _u.mutation.VideoResolution(); ok {
@@ -1387,6 +1412,12 @@ func (_u *UsageLogUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if _u.mutation.ImageSizeBreakdownCleared() {
 		_spec.ClearField(usagelog.FieldImageSizeBreakdown, field.TypeJSON)
+	}
+	if value, ok := _u.mutation.ImageResponseFormat(); ok {
+		_spec.SetField(usagelog.FieldImageResponseFormat, field.TypeString, value)
+	}
+	if _u.mutation.ImageResponseFormatCleared() {
+		_spec.ClearField(usagelog.FieldImageResponseFormat, field.TypeString)
 	}
 	if value, ok := _u.mutation.VideoCount(); ok {
 		_spec.SetField(usagelog.FieldVideoCount, field.TypeInt, value)
@@ -2430,6 +2461,26 @@ func (_u *UsageLogUpdateOne) ClearImageSizeBreakdown() *UsageLogUpdateOne {
 	return _u
 }
 
+// SetImageResponseFormat sets the "image_response_format" field.
+func (_u *UsageLogUpdateOne) SetImageResponseFormat(v string) *UsageLogUpdateOne {
+	_u.mutation.SetImageResponseFormat(v)
+	return _u
+}
+
+// SetNillableImageResponseFormat sets the "image_response_format" field if the given value is not nil.
+func (_u *UsageLogUpdateOne) SetNillableImageResponseFormat(v *string) *UsageLogUpdateOne {
+	if v != nil {
+		_u.SetImageResponseFormat(*v)
+	}
+	return _u
+}
+
+// ClearImageResponseFormat clears the value of the "image_response_format" field.
+func (_u *UsageLogUpdateOne) ClearImageResponseFormat() *UsageLogUpdateOne {
+	_u.mutation.ClearImageResponseFormat()
+	return _u
+}
+
 // SetVideoCount sets the "video_count" field.
 func (_u *UsageLogUpdateOne) SetVideoCount(v int) *UsageLogUpdateOne {
 	_u.mutation.ResetVideoCount()
@@ -2687,6 +2738,11 @@ func (_u *UsageLogUpdateOne) check() error {
 	if v, ok := _u.mutation.ImageSizeSource(); ok {
 		if err := usagelog.ImageSizeSourceValidator(v); err != nil {
 			return &ValidationError{Name: "image_size_source", err: fmt.Errorf(`ent: validator failed for field "UsageLog.image_size_source": %w`, err)}
+		}
+	}
+	if v, ok := _u.mutation.ImageResponseFormat(); ok {
+		if err := usagelog.ImageResponseFormatValidator(v); err != nil {
+			return &ValidationError{Name: "image_response_format", err: fmt.Errorf(`ent: validator failed for field "UsageLog.image_response_format": %w`, err)}
 		}
 	}
 	if v, ok := _u.mutation.VideoResolution(); ok {
@@ -2962,6 +3018,12 @@ func (_u *UsageLogUpdateOne) sqlSave(ctx context.Context) (_node *UsageLog, err 
 	}
 	if _u.mutation.ImageSizeBreakdownCleared() {
 		_spec.ClearField(usagelog.FieldImageSizeBreakdown, field.TypeJSON)
+	}
+	if value, ok := _u.mutation.ImageResponseFormat(); ok {
+		_spec.SetField(usagelog.FieldImageResponseFormat, field.TypeString, value)
+	}
+	if _u.mutation.ImageResponseFormatCleared() {
+		_spec.ClearField(usagelog.FieldImageResponseFormat, field.TypeString)
 	}
 	if value, ok := _u.mutation.VideoCount(); ok {
 		_spec.SetField(usagelog.FieldVideoCount, field.TypeInt, value)
