@@ -25,8 +25,11 @@ import (
 // v21: 又一次撞号——上游 v19(group search/audio/video_model_prices 计费字段)与本仓库 v20
 // 字段集不同,合并后快照同时含上游计费字段与本仓库 codex_cli_only 等扩展字段,
 // 与任一方旧版本均不兼容,升 21 强制失效。
+// v22: 再次撞号——上游 v20(group long-context and model pricing fields)与本仓库 v21
+// 字段集不同,合并后快照同时含上游长上下文/模型定价字段与本仓库扩展字段,
+// 与任一方旧版本均不兼容,升 22 强制失效。
 // 注:本仓库与上游各自独立演进该版本号,每次 sync 合并若双方都动过快照结构,需继续递增。
-const apiKeyAuthSnapshotVersion = 21
+const apiKeyAuthSnapshotVersion = 22
 
 type apiKeyAuthCacheConfig struct {
 	l1Size        int
@@ -423,6 +426,8 @@ func (s *APIKeyService) snapshotFromAPIKey(ctx context.Context, apiKey *APIKey) 
 			AudioRealtimePricePerMin:        apiKey.Group.AudioRealtimePricePerMin,
 			AudioTTSPricePerMillionChars:    apiKey.Group.AudioTTSPricePerMillionChars,
 			AudioSTTPricePerHour:            apiKey.Group.AudioSTTPricePerHour,
+			LongContextPricingEnabled:       apiKey.Group.LongContextPricingEnabled,
+			ModelPricing:                    apiKey.Group.ModelPricing,
 			ClaudeCodeOnly:                  apiKey.Group.ClaudeCodeOnly,
 			CodexCLIOnly:                    apiKey.Group.CodexCLIOnly,
 			FallbackGroupID:                 apiKey.Group.FallbackGroupID,
@@ -524,6 +529,8 @@ func (s *APIKeyService) snapshotToAPIKey(key string, snapshot *APIKeyAuthSnapsho
 			AudioRealtimePricePerMin:        snapshot.Group.AudioRealtimePricePerMin,
 			AudioTTSPricePerMillionChars:    snapshot.Group.AudioTTSPricePerMillionChars,
 			AudioSTTPricePerHour:            snapshot.Group.AudioSTTPricePerHour,
+			LongContextPricingEnabled:       snapshot.Group.LongContextPricingEnabled,
+			ModelPricing:                    snapshot.Group.ModelPricing,
 			ClaudeCodeOnly:                  snapshot.Group.ClaudeCodeOnly,
 			CodexCLIOnly:                    snapshot.Group.CodexCLIOnly,
 			FallbackGroupID:                 snapshot.Group.FallbackGroupID,
