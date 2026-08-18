@@ -65,6 +65,19 @@ func TestExtractOpenAIUsageFromJSONBytes_NonStreamingMergesImageGen(t *testing.T
 	assert.Equal(t, 2800, usage.ImageInputTokens, "image input tokens from tool_usage.image_gen")
 }
 
+func TestExtractOpenAIUsageFromJSONBytes_CamelCaseImageUsage(t *testing.T) {
+	body := []byte(`{
+		"request_id": "api-eaec0f3d7df94ddbb62c340640c3664d",
+		"usage": {"inputTokens": 38, "outputTokens": 3300, "totalTokens": 3338},
+		"data": [{"url": "https://example.com/one.png"}, {"url": "https://example.com/two.png"}]
+	}`)
+
+	usage, ok := extractOpenAIUsageFromJSONBytes(body)
+	assert.True(t, ok)
+	assert.Equal(t, 38, usage.InputTokens)
+	assert.Equal(t, 3300, usage.OutputTokens)
+}
+
 func TestExtractOpenAIUsageFromJSONBytes_NoToolUsageUnchanged(t *testing.T) {
 	// Standard response without tool_usage — behavior should be unchanged
 	body := []byte(`{
