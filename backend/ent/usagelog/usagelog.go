@@ -100,6 +100,8 @@ const (
 	FieldImageSizeSource = "image_size_source"
 	// FieldImageSizeBreakdown holds the string denoting the image_size_breakdown field in the database.
 	FieldImageSizeBreakdown = "image_size_breakdown"
+	// FieldImageResponseFormat holds the string denoting the image_response_format field in the database.
+	FieldImageResponseFormat = "image_response_format"
 	// FieldVideoCount holds the string denoting the video_count field in the database.
 	FieldVideoCount = "video_count"
 	// FieldVideoResolution holds the string denoting the video_resolution field in the database.
@@ -205,6 +207,7 @@ var Columns = []string{
 	FieldImageOutputSize,
 	FieldImageSizeSource,
 	FieldImageSizeBreakdown,
+	FieldImageResponseFormat,
 	FieldVideoCount,
 	FieldVideoResolution,
 	FieldVideoDurationSeconds,
@@ -287,6 +290,8 @@ var (
 	ImageOutputSizeValidator func(string) error
 	// ImageSizeSourceValidator is a validator for the "image_size_source" field. It is called by the builders before save.
 	ImageSizeSourceValidator func(string) error
+	// ImageResponseFormatValidator is a validator for the "image_response_format" field. It is called by the builders before save.
+	ImageResponseFormatValidator func(string) error
 	// DefaultVideoCount holds the default value on creation for the "video_count" field.
 	DefaultVideoCount int
 	// VideoResolutionValidator is a validator for the "video_resolution" field. It is called by the builders before save.
@@ -513,6 +518,11 @@ func ByImageOutputSize(opts ...sql.OrderTermOption) OrderOption {
 // ByImageSizeSource orders the results by the image_size_source field.
 func ByImageSizeSource(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldImageSizeSource, opts...).ToFunc()
+}
+
+// ByImageResponseFormat orders the results by the image_response_format field.
+func ByImageResponseFormat(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldImageResponseFormat, opts...).ToFunc()
 }
 
 // ByVideoCount orders the results by the video_count field.

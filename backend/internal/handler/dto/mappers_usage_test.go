@@ -236,15 +236,17 @@ func TestUsageLogFromService_IncludesImageBillingMetadataForUserAndAdmin(t *test
 	inputSize := "1024x1024"
 	outputSize := "3840x2160"
 	source := "output"
+	responseFormat := "url"
 	log := &service.UsageLog{
-		RequestID:          "req_image_metadata",
-		Model:              "gpt-image-2",
-		ImageCount:         2,
-		ImageSize:          &imageSize,
-		ImageInputSize:     &inputSize,
-		ImageOutputSize:    &outputSize,
-		ImageSizeSource:    &source,
-		ImageSizeBreakdown: map[string]int{"4K": 2},
+		RequestID:           "req_image_metadata",
+		Model:               "gpt-image-2",
+		ImageCount:          2,
+		ImageSize:           &imageSize,
+		ImageInputSize:      &inputSize,
+		ImageOutputSize:     &outputSize,
+		ImageSizeSource:     &source,
+		ImageSizeBreakdown:  map[string]int{"4K": 2},
+		ImageResponseFormat: &responseFormat,
 	}
 
 	userDTO := UsageLogFromService(log)
@@ -261,6 +263,8 @@ func TestUsageLogFromService_IncludesImageBillingMetadataForUserAndAdmin(t *test
 		require.NotNil(t, got.ImageSizeSource)
 		require.Equal(t, source, *got.ImageSizeSource)
 		require.Equal(t, map[string]int{"4K": 2}, got.ImageSizeBreakdown)
+		require.NotNil(t, got.ImageResponseFormat)
+		require.Equal(t, responseFormat, *got.ImageResponseFormat)
 	}
 }
 
@@ -281,11 +285,13 @@ func TestUsageLogFromService_PreservesHistoricalMissingImageSize(t *testing.T) {
 	require.Nil(t, dto.ImageOutputSize)
 	require.Nil(t, dto.ImageSizeSource)
 	require.Nil(t, dto.ImageSizeBreakdown)
+	require.Nil(t, dto.ImageResponseFormat)
 
 	body, err := json.Marshal(dto)
 	require.NoError(t, err)
 	require.Contains(t, string(body), `"image_size":null`)
 	require.NotContains(t, string(body), `"image_size":"2K"`)
+	require.NotContains(t, string(body), `"image_response_format"`)
 }
 
 func f64Ptr(value float64) *float64 {

@@ -233,13 +233,14 @@ func buildOpenAIImagesStreamPartialPayload(
 		createdAt = time.Now().Unix()
 	}
 
-	payload := []byte(`{"type":"","created_at":0,"partial_image_index":0,"b64_json":""}`)
+	payload := []byte(`{"type":"","created_at":0,"partial_image_index":0}`)
 	payload, _ = sjson.SetBytes(payload, "type", eventType)
 	payload, _ = sjson.SetBytes(payload, "created_at", createdAt)
 	payload, _ = sjson.SetBytes(payload, "partial_image_index", partialImageIndex)
-	payload, _ = sjson.SetBytes(payload, "b64_json", b64)
-	if strings.EqualFold(strings.TrimSpace(responseFormat), "url") {
-		payload, _ = sjson.SetBytes(payload, "url", "data:"+openAIImageOutputMIMEType(meta.OutputFormat)+";base64,"+b64)
+	if strings.EqualFold(strings.TrimSpace(responseFormat), openAIImageResponseFormatURL) {
+		payload, _ = sjson.SetBytes(payload, openAIImageResponseFormatURL, "data:"+openAIImageOutputMIMEType(meta.OutputFormat)+";base64,"+b64)
+	} else {
+		payload, _ = sjson.SetBytes(payload, openAIImageResponseFormatB64JSON, b64)
 	}
 	if meta.Background != "" {
 		payload, _ = sjson.SetBytes(payload, "background", meta.Background)
@@ -270,12 +271,13 @@ func buildOpenAIImagesStreamCompletedPayload(
 		createdAt = time.Now().Unix()
 	}
 
-	payload := []byte(`{"type":"","created_at":0,"b64_json":""}`)
+	payload := []byte(`{"type":"","created_at":0}`)
 	payload, _ = sjson.SetBytes(payload, "type", eventType)
 	payload, _ = sjson.SetBytes(payload, "created_at", createdAt)
-	payload, _ = sjson.SetBytes(payload, "b64_json", img.Result)
-	if strings.EqualFold(strings.TrimSpace(responseFormat), "url") {
-		payload, _ = sjson.SetBytes(payload, "url", "data:"+openAIImageOutputMIMEType(img.OutputFormat)+";base64,"+img.Result)
+	if strings.EqualFold(strings.TrimSpace(responseFormat), openAIImageResponseFormatURL) {
+		payload, _ = sjson.SetBytes(payload, openAIImageResponseFormatURL, "data:"+openAIImageOutputMIMEType(img.OutputFormat)+";base64,"+img.Result)
+	} else {
+		payload, _ = sjson.SetBytes(payload, openAIImageResponseFormatB64JSON, img.Result)
 	}
 	if img.Background != "" {
 		payload, _ = sjson.SetBytes(payload, "background", img.Background)
@@ -945,14 +947,14 @@ func buildOpenAIImagesAPIResponse(
 
 	format := strings.ToLower(strings.TrimSpace(responseFormat))
 	if format == "" {
-		format = "b64_json"
+		format = openAIImageResponseFormatB64JSON
 	}
 	for _, img := range results {
 		item := []byte(`{}`)
-		if format == "url" {
-			item, _ = sjson.SetBytes(item, "url", "data:"+openAIImageOutputMIMEType(img.OutputFormat)+";base64,"+img.Result)
+		if format == openAIImageResponseFormatURL {
+			item, _ = sjson.SetBytes(item, openAIImageResponseFormatURL, "data:"+openAIImageOutputMIMEType(img.OutputFormat)+";base64,"+img.Result)
 		} else {
-			item, _ = sjson.SetBytes(item, "b64_json", img.Result)
+			item, _ = sjson.SetBytes(item, openAIImageResponseFormatB64JSON, img.Result)
 		}
 		if img.RevisedPrompt != "" {
 			item, _ = sjson.SetBytes(item, "revised_prompt", img.RevisedPrompt)
@@ -1327,7 +1329,7 @@ func (s *OpenAIGatewayService) handleOpenAIImagesOAuthStreamingResponse(
 
 	format := strings.ToLower(strings.TrimSpace(responseFormat))
 	if format == "" {
-		format = "b64_json"
+		format = openAIImageResponseFormatB64JSON
 	}
 
 	usage := OpenAIUsage{}
@@ -1777,6 +1779,10 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 		imageOutputSizes []string
 		firstTokenMs     *int
 	)
+	imageResponseFormat := openAIImageResponseFormatB64JSON
+	if strings.EqualFold(strings.TrimSpace(parsed.ResponseFormat), openAIImageResponseFormatURL) {
+		imageResponseFormat = openAIImageResponseFormatURL
+	}
 	// 与 handleOpenAIImagesOAuthResponseError 的比较端同口径：排除非流式 JSON
 	// keepalive 心跳字节，避免 failover 第 2 轮起把上一轮心跳残留误判为已写响应。
 	writerSizeBeforeResponse := OpenAIImagesJSONKeepaliveAdjustedWrittenSize(c)
@@ -1785,18 +1791,19 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 		if err != nil {
 			if imageCount > 0 {
 				return &OpenAIForwardResult{
-					RequestID:        resp.Header.Get("x-request-id"),
-					Usage:            usage,
-					Model:            requestModel,
-					UpstreamModel:    requestModel,
-					Stream:           parsed.Stream,
-					ResponseHeaders:  resp.Header.Clone(),
-					Duration:         time.Since(startTime),
-					FirstTokenMs:     firstTokenMs,
-					ImageCount:       imageCount,
-					ImageSize:        parsed.SizeTier,
-					ImageInputSize:   parsed.Size,
-					ImageOutputSizes: imageOutputSizes,
+					RequestID:           resp.Header.Get("x-request-id"),
+					Usage:               usage,
+					Model:               requestModel,
+					UpstreamModel:       requestModel,
+					Stream:              parsed.Stream,
+					ResponseHeaders:     resp.Header.Clone(),
+					Duration:            time.Since(startTime),
+					FirstTokenMs:        firstTokenMs,
+					ImageCount:          imageCount,
+					ImageSize:           parsed.SizeTier,
+					ImageInputSize:      parsed.Size,
+					ImageOutputSizes:    imageOutputSizes,
+					ImageResponseFormat: imageResponseFormat,
 				}, err
 			}
 			return nil, s.handleOpenAIImagesOAuthResponseError(
@@ -1829,18 +1836,19 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 		imageCount = parsed.N
 	}
 	return &OpenAIForwardResult{
-		RequestID:        resp.Header.Get("x-request-id"),
-		Usage:            usage,
-		Model:            requestModel,
-		UpstreamModel:    requestModel,
-		Stream:           parsed.Stream,
-		ResponseHeaders:  resp.Header.Clone(),
-		Duration:         time.Since(startTime),
-		FirstTokenMs:     firstTokenMs,
-		ImageCount:       imageCount,
-		ImageSize:        parsed.SizeTier,
-		ImageInputSize:   parsed.Size,
-		ImageOutputSizes: imageOutputSizes,
+		RequestID:           resp.Header.Get("x-request-id"),
+		Usage:               usage,
+		Model:               requestModel,
+		UpstreamModel:       requestModel,
+		Stream:              parsed.Stream,
+		ResponseHeaders:     resp.Header.Clone(),
+		Duration:            time.Since(startTime),
+		FirstTokenMs:        firstTokenMs,
+		ImageCount:          imageCount,
+		ImageSize:           parsed.SizeTier,
+		ImageInputSize:      parsed.Size,
+		ImageOutputSizes:    imageOutputSizes,
+		ImageResponseFormat: imageResponseFormat,
 	}, nil
 }
 

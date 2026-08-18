@@ -9,12 +9,13 @@ import (
 )
 
 type openAIImageOutputCounter struct {
-	seen         map[string]struct{}
-	seenSizes    map[string]string
-	seenOrder    []string
-	dataSizes    []string
-	count        int
-	maxDataCount int
+	seen           map[string]struct{}
+	seenSizes      map[string]string
+	seenOrder      []string
+	dataSizes      []string
+	responseFormat string
+	count          int
+	maxDataCount   int
 }
 
 func newOpenAIImageOutputCounter() *openAIImageOutputCounter {
@@ -53,6 +54,13 @@ func (c *openAIImageOutputCounter) Sizes() []string {
 	return sizes
 }
 
+func (c *openAIImageOutputCounter) ResponseFormat() string {
+	if c == nil {
+		return ""
+	}
+	return c.responseFormat
+}
+
 func (c *openAIImageOutputCounter) AddJSONResponse(body []byte) {
 	if c == nil || len(body) == 0 || !gjson.ValidBytes(body) {
 		return
@@ -74,7 +82,7 @@ func (c *openAIImageOutputCounter) AddSSEData(data []byte) {
 		c.addImageOutputItem(root.Get("item"))
 	case "response.completed", "response.done":
 		c.addOutputArray(root.Get("response.output"))
-	case "image_generation.completed":
+	case "image_generation.completed", "image_edit.completed":
 		if item := root.Get("item"); item.Exists() {
 			c.addImageOutputItem(item)
 			return
@@ -105,11 +113,13 @@ func (c *openAIImageOutputCounter) addDataArray(data gjson.Result) {
 		if !item.IsObject() {
 			continue
 		}
-		hasImageOutput := strings.TrimSpace(item.Get("url").String()) != "" ||
-			strings.TrimSpace(item.Get("b64_json").String()) != ""
+		hasURL := strings.TrimSpace(item.Get(openAIImageResponseFormatURL).String()) != ""
+		hasBase64 := strings.TrimSpace(item.Get(openAIImageResponseFormatB64JSON).String()) != ""
+		hasImageOutput := hasURL || hasBase64
 		if !hasImageOutput {
 			continue
 		}
+		c.observeResponseFormat(hasURL, hasBase64)
 		imageCount++
 		if size := strings.TrimSpace(item.Get("size").String()); size != "" {
 			sizes = append(sizes, size)
@@ -138,18 +148,21 @@ func (c *openAIImageOutputCounter) addImageOutputItem(item gjson.Result) {
 		return
 	}
 	itemType := strings.TrimSpace(item.Get("type").String())
-	if itemType != "" && itemType != "image_generation_call" && itemType != "image_generation.completed" {
+	if itemType != "" && itemType != "image_generation_call" && itemType != "image_generation.completed" && itemType != "image_edit.completed" {
 		return
 	}
 	if strings.Contains(strings.ToLower(item.Raw), "partial_image") {
 		return
 	}
+	hasURL := strings.TrimSpace(item.Get(openAIImageResponseFormatURL).String()) != ""
+	hasBase64 := strings.TrimSpace(item.Get(openAIImageResponseFormatB64JSON).String()) != ""
+	c.observeResponseFormat(hasURL, hasBase64)
 	result := strings.TrimSpace(item.Get("result").String())
 	if result == "" {
-		result = strings.TrimSpace(item.Get("b64_json").String())
+		result = strings.TrimSpace(item.Get(openAIImageResponseFormatB64JSON).String())
 	}
 	if result == "" {
-		result = strings.TrimSpace(item.Get("url").String())
+		result = strings.TrimSpace(item.Get(openAIImageResponseFormatURL).String())
 	}
 	if result == "" {
 		return
@@ -177,6 +190,14 @@ func (c *openAIImageOutputCounter) addImageOutputItem(item gjson.Result) {
 		c.seenSizes[key] = size
 	}
 	c.count++
+}
+
+func (c *openAIImageOutputCounter) observeResponseFormat(hasURL, hasBase64 bool) {
+	if hasURL {
+		c.responseFormat = openAIImageResponseFormatURL
+	} else if hasBase64 && c.responseFormat == "" {
+		c.responseFormat = openAIImageResponseFormatB64JSON
+	}
 }
 
 func hashOpenAIImageOutputResult(result string) string {

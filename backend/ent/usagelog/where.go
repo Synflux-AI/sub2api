@@ -265,6 +265,11 @@ func ImageSizeSource(v string) predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldEQ(FieldImageSizeSource, v))
 }
 
+// ImageResponseFormat applies equality check predicate on the "image_response_format" field. It's identical to ImageResponseFormatEQ.
+func ImageResponseFormat(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldImageResponseFormat, v))
+}
+
 // VideoCount applies equality check predicate on the "video_count" field. It's identical to VideoCountEQ.
 func VideoCount(v int) predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldEQ(FieldVideoCount, v))
@@ -2363,6 +2368,81 @@ func ImageSizeBreakdownIsNil() predicate.UsageLog {
 // ImageSizeBreakdownNotNil applies the NotNil predicate on the "image_size_breakdown" field.
 func ImageSizeBreakdownNotNil() predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldNotNull(FieldImageSizeBreakdown))
+}
+
+// ImageResponseFormatEQ applies the EQ predicate on the "image_response_format" field.
+func ImageResponseFormatEQ(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldImageResponseFormat, v))
+}
+
+// ImageResponseFormatNEQ applies the NEQ predicate on the "image_response_format" field.
+func ImageResponseFormatNEQ(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNEQ(FieldImageResponseFormat, v))
+}
+
+// ImageResponseFormatIn applies the In predicate on the "image_response_format" field.
+func ImageResponseFormatIn(vs ...string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIn(FieldImageResponseFormat, vs...))
+}
+
+// ImageResponseFormatNotIn applies the NotIn predicate on the "image_response_format" field.
+func ImageResponseFormatNotIn(vs ...string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotIn(FieldImageResponseFormat, vs...))
+}
+
+// ImageResponseFormatGT applies the GT predicate on the "image_response_format" field.
+func ImageResponseFormatGT(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGT(FieldImageResponseFormat, v))
+}
+
+// ImageResponseFormatGTE applies the GTE predicate on the "image_response_format" field.
+func ImageResponseFormatGTE(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGTE(FieldImageResponseFormat, v))
+}
+
+// ImageResponseFormatLT applies the LT predicate on the "image_response_format" field.
+func ImageResponseFormatLT(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLT(FieldImageResponseFormat, v))
+}
+
+// ImageResponseFormatLTE applies the LTE predicate on the "image_response_format" field.
+func ImageResponseFormatLTE(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLTE(FieldImageResponseFormat, v))
+}
+
+// ImageResponseFormatContains applies the Contains predicate on the "image_response_format" field.
+func ImageResponseFormatContains(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldContains(FieldImageResponseFormat, v))
+}
+
+// ImageResponseFormatHasPrefix applies the HasPrefix predicate on the "image_response_format" field.
+func ImageResponseFormatHasPrefix(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldHasPrefix(FieldImageResponseFormat, v))
+}
+
+// ImageResponseFormatHasSuffix applies the HasSuffix predicate on the "image_response_format" field.
+func ImageResponseFormatHasSuffix(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldHasSuffix(FieldImageResponseFormat, v))
+}
+
+// ImageResponseFormatIsNil applies the IsNil predicate on the "image_response_format" field.
+func ImageResponseFormatIsNil() predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIsNull(FieldImageResponseFormat))
+}
+
+// ImageResponseFormatNotNil applies the NotNil predicate on the "image_response_format" field.
+func ImageResponseFormatNotNil() predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotNull(FieldImageResponseFormat))
+}
+
+// ImageResponseFormatEqualFold applies the EqualFold predicate on the "image_response_format" field.
+func ImageResponseFormatEqualFold(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEqualFold(FieldImageResponseFormat, v))
+}
+
+// ImageResponseFormatContainsFold applies the ContainsFold predicate on the "image_response_format" field.
+func ImageResponseFormatContainsFold(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldContainsFold(FieldImageResponseFormat, v))
 }
 
 // VideoCountEQ applies the EQ predicate on the "video_count" field.

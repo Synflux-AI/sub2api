@@ -581,6 +581,20 @@ func (_c *UsageLogCreate) SetImageSizeBreakdown(v map[string]int) *UsageLogCreat
 	return _c
 }
 
+// SetImageResponseFormat sets the "image_response_format" field.
+func (_c *UsageLogCreate) SetImageResponseFormat(v string) *UsageLogCreate {
+	_c.mutation.SetImageResponseFormat(v)
+	return _c
+}
+
+// SetNillableImageResponseFormat sets the "image_response_format" field if the given value is not nil.
+func (_c *UsageLogCreate) SetNillableImageResponseFormat(v *string) *UsageLogCreate {
+	if v != nil {
+		_c.SetImageResponseFormat(*v)
+	}
+	return _c
+}
+
 // SetVideoCount sets the "video_count" field.
 func (_c *UsageLogCreate) SetVideoCount(v int) *UsageLogCreate {
 	_c.mutation.SetVideoCount(v)
@@ -936,6 +950,11 @@ func (_c *UsageLogCreate) check() error {
 			return &ValidationError{Name: "image_size_source", err: fmt.Errorf(`ent: validator failed for field "UsageLog.image_size_source": %w`, err)}
 		}
 	}
+	if v, ok := _c.mutation.ImageResponseFormat(); ok {
+		if err := usagelog.ImageResponseFormatValidator(v); err != nil {
+			return &ValidationError{Name: "image_response_format", err: fmt.Errorf(`ent: validator failed for field "UsageLog.image_response_format": %w`, err)}
+		}
+	}
 	if _, ok := _c.mutation.VideoCount(); !ok {
 		return &ValidationError{Name: "video_count", err: errors.New(`ent: missing required field "UsageLog.video_count"`)}
 	}
@@ -1137,6 +1156,10 @@ func (_c *UsageLogCreate) createSpec() (*UsageLog, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.ImageSizeBreakdown(); ok {
 		_spec.SetField(usagelog.FieldImageSizeBreakdown, field.TypeJSON, value)
 		_node.ImageSizeBreakdown = value
+	}
+	if value, ok := _c.mutation.ImageResponseFormat(); ok {
+		_spec.SetField(usagelog.FieldImageResponseFormat, field.TypeString, value)
+		_node.ImageResponseFormat = &value
 	}
 	if value, ok := _c.mutation.VideoCount(); ok {
 		_spec.SetField(usagelog.FieldVideoCount, field.TypeInt, value)
@@ -2048,6 +2071,24 @@ func (u *UsageLogUpsert) UpdateImageSizeBreakdown() *UsageLogUpsert {
 // ClearImageSizeBreakdown clears the value of the "image_size_breakdown" field.
 func (u *UsageLogUpsert) ClearImageSizeBreakdown() *UsageLogUpsert {
 	u.SetNull(usagelog.FieldImageSizeBreakdown)
+	return u
+}
+
+// SetImageResponseFormat sets the "image_response_format" field.
+func (u *UsageLogUpsert) SetImageResponseFormat(v string) *UsageLogUpsert {
+	u.Set(usagelog.FieldImageResponseFormat, v)
+	return u
+}
+
+// UpdateImageResponseFormat sets the "image_response_format" field to the value that was provided on create.
+func (u *UsageLogUpsert) UpdateImageResponseFormat() *UsageLogUpsert {
+	u.SetExcluded(usagelog.FieldImageResponseFormat)
+	return u
+}
+
+// ClearImageResponseFormat clears the value of the "image_response_format" field.
+func (u *UsageLogUpsert) ClearImageResponseFormat() *UsageLogUpsert {
+	u.SetNull(usagelog.FieldImageResponseFormat)
 	return u
 }
 
@@ -3047,6 +3088,27 @@ func (u *UsageLogUpsertOne) UpdateImageSizeBreakdown() *UsageLogUpsertOne {
 func (u *UsageLogUpsertOne) ClearImageSizeBreakdown() *UsageLogUpsertOne {
 	return u.Update(func(s *UsageLogUpsert) {
 		s.ClearImageSizeBreakdown()
+	})
+}
+
+// SetImageResponseFormat sets the "image_response_format" field.
+func (u *UsageLogUpsertOne) SetImageResponseFormat(v string) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetImageResponseFormat(v)
+	})
+}
+
+// UpdateImageResponseFormat sets the "image_response_format" field to the value that was provided on create.
+func (u *UsageLogUpsertOne) UpdateImageResponseFormat() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateImageResponseFormat()
+	})
+}
+
+// ClearImageResponseFormat clears the value of the "image_response_format" field.
+func (u *UsageLogUpsertOne) ClearImageResponseFormat() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearImageResponseFormat()
 	})
 }
 
@@ -4224,6 +4286,27 @@ func (u *UsageLogUpsertBulk) UpdateImageSizeBreakdown() *UsageLogUpsertBulk {
 func (u *UsageLogUpsertBulk) ClearImageSizeBreakdown() *UsageLogUpsertBulk {
 	return u.Update(func(s *UsageLogUpsert) {
 		s.ClearImageSizeBreakdown()
+	})
+}
+
+// SetImageResponseFormat sets the "image_response_format" field.
+func (u *UsageLogUpsertBulk) SetImageResponseFormat(v string) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetImageResponseFormat(v)
+	})
+}
+
+// UpdateImageResponseFormat sets the "image_response_format" field to the value that was provided on create.
+func (u *UsageLogUpsertBulk) UpdateImageResponseFormat() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateImageResponseFormat()
+	})
+}
+
+// ClearImageResponseFormat clears the value of the "image_response_format" field.
+func (u *UsageLogUpsertBulk) ClearImageResponseFormat() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearImageResponseFormat()
 	})
 }
 

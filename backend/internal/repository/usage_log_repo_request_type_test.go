@@ -102,6 +102,7 @@ func TestUsageLogRepositoryCreateSyncRequestTypeAndLegacyFields(t *testing.T) {
 			sqlmock.AnyArg(), // account_stats_cost
 			sqlmock.AnyArg(), // session_id
 			traceID,
+			sqlmock.AnyArg(), // image_response_format
 			createdAt,
 		).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "created_at"}).AddRow(int64(99), createdAt))
@@ -195,6 +196,7 @@ func TestUsageLogRepositoryCreate_PersistsServiceTier(t *testing.T) {
 			sqlmock.AnyArg(), // account_stats_cost
 			sqlmock.AnyArg(), // session_id
 			sqlmock.AnyArg(), // trace_id
+			sqlmock.AnyArg(), // image_response_format
 			createdAt,
 		).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "created_at"}).AddRow(int64(100), createdAt))
@@ -221,7 +223,7 @@ func TestBuildUsageLogBestEffortInsertQuery_IncludesRequestedModelColumn(t *test
 	require.Contains(t, query, "INSERT INTO usage_logs (")
 	require.Contains(t, query, "\n\t\t\tmodel,\n\t\t\trequested_model,\n\t\t\tupstream_model,\n\t\t\tupstream_response_model,\n\t\t\tupstream_model_mismatch,")
 	require.Contains(t, query, "\n\t\t\trequest_id,\n\t\t\tmodel,\n\t\t\trequested_model,\n\t\t\tupstream_model,\n\t\t\tupstream_response_model,\n\t\t\tupstream_model_mismatch,")
-	require.Contains(t, query, "\n\t\t\tsession_id,\n\t\t\ttrace_id,\n\t\t\tcreated_at")
+	require.Contains(t, query, "\n\t\t\tsession_id,\n\t\t\ttrace_id,\n\t\t\timage_response_format,\n\t\t\tcreated_at")
 	require.Len(t, args, len(prepared.args))
 	require.Equal(t, prepared.args[5], args[5])
 }
@@ -266,20 +268,22 @@ func TestPrepareUsageLogInsert_PersistsImageSizeMetadata(t *testing.T) {
 	inputSize := "1024x1024"
 	outputSize := "3840x2160"
 	source := "output"
+	responseFormat := "url"
 	prepared := prepareUsageLogInsert(&service.UsageLog{
-		UserID:             1,
-		APIKeyID:           2,
-		AccountID:          3,
-		RequestID:          "req-image-metadata",
-		Model:              "gpt-image-2",
-		RequestedModel:     "gpt-image-2",
-		ImageCount:         2,
-		ImageSize:          &imageSize,
-		ImageInputSize:     &inputSize,
-		ImageOutputSize:    &outputSize,
-		ImageSizeSource:    &source,
-		ImageSizeBreakdown: map[string]int{"1K": 1, "4K": 1},
-		CreatedAt:          time.Date(2025, 1, 6, 12, 0, 0, 0, time.UTC),
+		UserID:              1,
+		APIKeyID:            2,
+		AccountID:           3,
+		RequestID:           "req-image-metadata",
+		Model:               "gpt-image-2",
+		RequestedModel:      "gpt-image-2",
+		ImageCount:          2,
+		ImageSize:           &imageSize,
+		ImageInputSize:      &inputSize,
+		ImageOutputSize:     &outputSize,
+		ImageSizeSource:     &source,
+		ImageSizeBreakdown:  map[string]int{"1K": 1, "4K": 1},
+		ImageResponseFormat: &responseFormat,
+		CreatedAt:           time.Date(2025, 1, 6, 12, 0, 0, 0, time.UTC),
 	})
 
 	require.Equal(t, sql.NullString{String: imageSize, Valid: true}, prepared.args[38])
@@ -289,6 +293,7 @@ func TestPrepareUsageLogInsert_PersistsImageSizeMetadata(t *testing.T) {
 	breakdownJSON, ok := prepared.args[42].(string)
 	require.True(t, ok)
 	require.JSONEq(t, `{"1K":1,"4K":1}`, breakdownJSON)
+	require.Equal(t, sql.NullString{String: responseFormat, Valid: true}, prepared.args[len(prepared.args)-2])
 }
 
 func TestCoalesceTrimmedString(t *testing.T) {
@@ -925,6 +930,7 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullFloat64{},
 			sql.NullString{},
 			sql.NullString{},
+			sql.NullString{Valid: true, String: "url"}, // image_response_format
 			now,
 		}})
 		require.NoError(t, err)
@@ -938,6 +944,8 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 		require.NotNil(t, log.ImageSizeSource)
 		require.Equal(t, "output", *log.ImageSizeSource)
 		require.Equal(t, map[string]int{"4K": 2}, log.ImageSizeBreakdown)
+		require.NotNil(t, log.ImageResponseFormat)
+		require.Equal(t, "url", *log.ImageResponseFormat)
 	})
 
 	t.Run("request_type_ws_v2_overrides_legacy", func(t *testing.T) {
@@ -1003,6 +1011,7 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullFloat64{}, // account_stats_cost
 			sql.NullString{},  // session_id
 			sql.NullString{},  // trace_id
+			sql.NullString{},  // image_response_format
 			now,
 		}})
 		require.NoError(t, err)
@@ -1064,6 +1073,7 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullFloat64{}, // account_stats_cost
 			sql.NullString{},  // session_id
 			sql.NullString{},  // trace_id
+			sql.NullString{},  // image_response_format
 			now,
 		}})
 		require.NoError(t, err)
@@ -1125,6 +1135,7 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullFloat64{}, // account_stats_cost
 			sql.NullString{},  // session_id
 			sql.NullString{Valid: true, String: "trace-visible-123"}, // trace_id
+			sql.NullString{}, // image_response_format
 			now,
 		}})
 		require.NoError(t, err)
