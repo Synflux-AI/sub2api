@@ -1615,7 +1615,7 @@ func (s *UsageLogRepoSuite) TestGetUserUsageTrend() {
 	startTime := base.Add(-1 * time.Hour)
 	endTime := base.Add(48 * time.Hour)
 
-	trend, err := s.repo.GetUserUsageTrend(s.ctx, startTime, endTime, "day", 10, "total_tokens")
+	trend, err := s.repo.GetUserUsageTrend(s.ctx, startTime, endTime, "day", 10, "total_tokens", usagestats.UsageLogFilters{})
 	s.Require().NoError(err, "GetUserUsageTrend")
 	s.Require().GreaterOrEqual(len(trend), 2)
 	seenUser1 := false
@@ -1651,7 +1651,7 @@ func (s *UsageLogRepoSuite) TestGetUserUsageTrend_AggregatesOthers() {
 		s.createUsageLog(users[i], keys[i], account, tokens, 0, float64(3-i), base)
 	}
 
-	trend, err := s.repo.GetUserUsageTrend(s.ctx, base.Add(-time.Hour), base.Add(24*time.Hour), "day", 2, "total_tokens")
+	trend, err := s.repo.GetUserUsageTrend(s.ctx, base.Add(-time.Hour), base.Add(24*time.Hour), "day", 2, "total_tokens", usagestats.UsageLogFilters{})
 	s.Require().NoError(err)
 	s.Require().Len(trend, 3)
 

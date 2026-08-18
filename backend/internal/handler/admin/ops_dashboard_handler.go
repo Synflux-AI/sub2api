@@ -464,6 +464,9 @@ func parseOpsDashboardErrorFilter(c *gin.Context, start, end time.Time) (*servic
 		return nil, err
 	}
 	filter.Model = strings.TrimSpace(c.Query("model"))
+	if err := applyOpsDashboardMultiFilters(c, filter); err != nil {
+		return nil, err
+	}
 	filter.ErrorOwner = strings.TrimSpace(c.Query("error_owner"))
 	filter.ErrorSource = strings.TrimSpace(c.Query("error_source"))
 	filter.ErrorType = strings.TrimSpace(c.Query("error_type"))

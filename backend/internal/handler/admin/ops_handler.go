@@ -181,6 +181,10 @@ func (h *OpsHandler) GetErrorLogs(c *gin.Context) {
 		}
 		filter.APIKeyID = &id
 	}
+	if err := applyOpsLogMultiFilters(c, filter); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
 	if v := strings.TrimSpace(c.Query("resolved")); v != "" {
 		switch strings.ToLower(v) {
 		case "1", "true", "yes":

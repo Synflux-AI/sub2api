@@ -11,18 +11,22 @@ import (
 var usageStatsCache = newSnapshotCache(30 * time.Second)
 
 type usageStatsCacheKeyData struct {
-	StartTime             string `json:"start_time"`
-	EndTime               string `json:"end_time"`
-	UserID                int64  `json:"user_id"`
-	APIKeyID              int64  `json:"api_key_id"`
-	AccountID             int64  `json:"account_id"`
-	GroupID               int64  `json:"group_id"`
-	Model                 string `json:"model"`
-	BillingMode           string `json:"billing_mode"`
-	RequestType           *int16 `json:"request_type"`
-	Stream                *bool  `json:"stream"`
-	BillingType           *int8  `json:"billing_type"`
-	UpstreamModelMismatch *bool  `json:"upstream_model_mismatch"`
+	StartTime             string   `json:"start_time"`
+	EndTime               string   `json:"end_time"`
+	UserID                int64    `json:"user_id"`
+	UserIDs               []int64  `json:"user_ids,omitempty"`
+	APIKeyID              int64    `json:"api_key_id"`
+	AccountID             int64    `json:"account_id"`
+	AccountIDs            []int64  `json:"account_ids,omitempty"`
+	GroupID               int64    `json:"group_id"`
+	GroupIDs              []int64  `json:"group_ids,omitempty"`
+	Model                 string   `json:"model"`
+	Models                []string `json:"models,omitempty"`
+	BillingMode           string   `json:"billing_mode"`
+	RequestType           *int16   `json:"request_type"`
+	Stream                *bool    `json:"stream"`
+	BillingType           *int8    `json:"billing_type"`
+	UpstreamModelMismatch *bool    `json:"upstream_model_mismatch"`
 }
 
 func usageStatsCacheKey(filters usagestats.UsageLogFilters) string {
@@ -38,10 +42,14 @@ func usageStatsCacheKey(filters usagestats.UsageLogFilters) string {
 		StartTime:             start,
 		EndTime:               end,
 		UserID:                filters.UserID,
+		UserIDs:               filters.UserIDs,
 		APIKeyID:              filters.APIKeyID,
 		AccountID:             filters.AccountID,
+		AccountIDs:            filters.AccountIDs,
 		GroupID:               filters.GroupID,
+		GroupIDs:              filters.GroupIDs,
 		Model:                 filters.Model,
+		Models:                filters.Models,
 		BillingMode:           filters.BillingMode,
 		RequestType:           filters.RequestType,
 		Stream:                filters.Stream,

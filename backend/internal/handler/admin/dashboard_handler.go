@@ -275,10 +275,20 @@ func (h *DashboardHandler) GetUsageTrend(c *gin.Context) {
 		}
 		includeLatency = value
 	}
+	filters := usagestats.UsageLogFilters{
+		UserID: userID, APIKeyID: apiKeyID, AccountID: accountID, GroupID: groupID,
+		Model: model, ModelFilterSource: usagestats.ModelSourceRequested,
+		RequestType: requestType, Stream: stream, BillingType: billingType,
+		UpstreamModelMismatch: upstreamModelMismatch, IncludeLatency: includeLatency,
+	}
+	if err := applyUsageMultiFilters(c, &filters); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
 
 	// group_by=model 返回按天×模型的明细行(每行带 model),默认行为不变;该路径不走快照缓存。
 	if c.Query("group_by") == "model" {
-		trend, err := h.dashboardService.GetUsageTrendByModelWithFilters(c.Request.Context(), startTime, endTime, granularity, userID, apiKeyID, accountID, groupID, model, requestType, stream, billingType, upstreamModelMismatch)
+		trend, err := h.dashboardService.GetUsageTrendByModelWithUsageFilters(c.Request.Context(), startTime, endTime, granularity, filters)
 		if err != nil {
 			response.Error(c, 500, "Failed to get usage trend")
 			return
@@ -292,7 +302,7 @@ func (h *DashboardHandler) GetUsageTrend(c *gin.Context) {
 		return
 	}
 
-	trend, hit, err := h.getUsageTrendCached(c.Request.Context(), startTime, endTime, granularity, userID, apiKeyID, accountID, groupID, model, requestType, stream, billingType, upstreamModelMismatch, includeLatency)
+	trend, hit, err := h.getUsageTrendCachedWithFilters(c.Request.Context(), startTime, endTime, granularity, filters)
 	if err != nil {
 		response.Error(c, 500, "Failed to get usage trend")
 		return
@@ -499,7 +509,7 @@ func (h *DashboardHandler) GetAPIKeyUsageTrend(c *gin.Context) {
 
 // GetUserUsageTrend handles getting user usage trend data
 // GET /api/v1/admin/dashboard/users-trend
-// Query params: start_date, end_date (YYYY-MM-DD), granularity (day/hour), limit (default 12), sort_by
+// Query params: start_date, end_date (YYYY-MM-DD), granularity (day/hour), limit (default 12), sort_by, user_id, api_key_id, account_id, group_id, model
 func (h *DashboardHandler) GetUserUsageTrend(c *gin.Context) {
 	startTime, endTime := parseTimeRange(c)
 	granularity := c.DefaultQuery("granularity", "day")
@@ -512,8 +522,13 @@ func (h *DashboardHandler) GetUserUsageTrend(c *gin.Context) {
 	if sortBy != "actual_cost" && sortBy != "requests" && sortBy != "total_tokens" {
 		sortBy = "total_tokens"
 	}
+	filters, err := parseUserUsageTrendFilters(c)
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
 
-	trend, hit, err := h.getUserUsageTrendCached(c.Request.Context(), startTime, endTime, granularity, limit, sortBy)
+	trend, hit, err := h.getUserUsageTrendCached(c.Request.Context(), startTime, endTime, granularity, limit, sortBy, filters)
 	if err != nil {
 		response.Error(c, 500, "Failed to get user usage trend")
 		return
@@ -526,6 +541,47 @@ func (h *DashboardHandler) GetUserUsageTrend(c *gin.Context) {
 		"end_date":    endTime.Add(-24 * time.Hour).Format("2006-01-02"),
 		"granularity": granularity,
 	})
+}
+
+func parseUserUsageTrendFilters(c *gin.Context) (usagestats.UsageLogFilters, error) {
+	filters := usagestats.UsageLogFilters{
+		Model:             c.Query("model"),
+		ModelFilterSource: usagestats.ModelSourceRequested,
+	}
+
+	if raw := c.Query("user_id"); raw != "" {
+		id, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil {
+			return filters, err
+		}
+		filters.UserID = id
+	}
+	if raw := c.Query("api_key_id"); raw != "" {
+		id, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil {
+			return filters, err
+		}
+		filters.APIKeyID = id
+	}
+	if raw := c.Query("account_id"); raw != "" {
+		id, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil {
+			return filters, err
+		}
+		filters.AccountID = id
+	}
+	if raw := c.Query("group_id"); raw != "" {
+		id, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil {
+			return filters, err
+		}
+		filters.GroupID = id
+	}
+	if err := applyUsageMultiFilters(c, &filters); err != nil {
+		return filters, err
+	}
+
+	return filters, nil
 }
 
 // BatchUsersUsageRequest represents the request body for batch user usage stats
