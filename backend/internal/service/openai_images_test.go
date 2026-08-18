@@ -1255,7 +1255,7 @@ func TestOpenAIGatewayServiceForwardImages_APIKeyGenerationUsesConfiguredV1BaseU
 					"Content-Type": []string{"application/json"},
 					"X-Request-Id": []string{"req_img_apikey"},
 				},
-				Body: io.NopCloser(strings.NewReader(`{"created":1710000007,"data":[{"b64_json":"aGVsbG8=","revised_prompt":"draw a cat"}]}`)),
+				Body: io.NopCloser(strings.NewReader(`{"created":1710000007,"data":[{"b64_json":"aGVsbG8=","size":"1024x1024","revised_prompt":"draw a cat"},{"b64_json":"d29ybGQ=","size":"2048x2048","revised_prompt":"draw another cat"}]}`)),
 			},
 		},
 	}
@@ -1277,6 +1277,7 @@ func TestOpenAIGatewayServiceForwardImages_APIKeyGenerationUsesConfiguredV1BaseU
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.Equal(t, 1, result.ImageCount)
+	require.Equal(t, []string{"1024x1024"}, result.ImageOutputSizes)
 	require.Equal(t, "b64_json", result.ImageResponseFormat)
 	require.Equal(t, "gpt-image-2", result.Model)
 	require.Equal(t, "gpt-image-2", result.UpstreamModel)
