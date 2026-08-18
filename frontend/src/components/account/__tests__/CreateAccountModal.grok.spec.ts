@@ -14,7 +14,11 @@ describe('CreateAccountModal Grok account types', () => {
     expect(source).toContain("newPlatform === 'grok'")
     expect(source).toContain("? 'https://api.x.ai/v1'")
     expect(source).toContain("form.platform === 'grok'")
-    expect(source).toContain("? 'xai-...'")
+    // API Key 占位符已从模板三元收敛到 apiKeyValuePlaceholder computed，断言随之落到 grok 分支上。
+    expect(source).toContain(':placeholder="apiKeyValuePlaceholder"')
+    expect(source).toMatch(
+      /apiKeyValuePlaceholder = computed\([\s\S]*?case 'grok':\s+return 'xai-\.\.\.'/
+    )
   })
 
   it('exposes custom upstream URL and header override for the OAuth create flow', () => {
