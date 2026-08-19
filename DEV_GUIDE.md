@@ -47,9 +47,35 @@ npm install -g pnpm
 
 | Workflow | 触发条件 | 检查内容 |
 |----------|----------|----------|
-| **backend-ci.yml** | push, pull_request | 单元测试 + 集成测试 + golangci-lint v2.9 |
-| **security-scan.yml** | push, pull_request, 每周一 | govulncheck + gosec + pnpm audit |
+| **backend-ci.yml** | pull_request；push 仅 `release`/`main` | 单元测试 + 集成测试 + golangci-lint v2.9 + deploy 脚本测试 |
+| **security-scan.yml** | pull_request；push 仅 `release`/`main`；每周一 | govulncheck + pnpm audit |
 | **release.yml** | tag `v*` | 构建发布（PR 不触发） |
+
+> **功能分支上 push 不再触发 CI。** 需要早期信号请开 draft PR（draft 一样触发
+> `pull_request`）。这样做是因为裸 `on: push` 会让同一个 commit 被 push 和
+> pull_request 各跑一遍，在同一个 SHA 上留下两份同名 check，分支保护无法据此稳定判定。
+
+### 合并门禁（`release` 分支保护）
+
+合入 `release` 必须通过下面 6 个 GitHub Actions 检查，且已钉死到 GitHub Actions
+应用（app id `15368`），其他来源同名的 legacy status 无法冒充：
+
+`test` · `frontend` · `golangci-lint` · `shell` · `backend-security` · `frontend-security`
+
+- **不要给这些 workflow 加 `paths:` 过滤。** workflow 因路径过滤而不触发时，required
+  check 永远不会出现，PR 会永久卡在 pending —— 这与"检查失败"不同，无法通过重跑解决。
+- `strict`（要求分支与 `release` 同步）保持关闭，否则每次 `release` 有新提交，所有
+  在途 PR 都要 rebase 并重跑约 10 分钟 CI。
+- `enforce_admins` 保持关闭，作为偶发失败时的逃生门。已知负载敏感的偶发测试见下方。
+
+### 已知偶发失败
+
+以下测试断言的是全局分配计数或墙钟超时，会被同机负载影响，遇到时先确认改动无关再重跑，
+不要直接改代码（这些文件与上游同源，改动会在每次上游同步时留下分叉）：
+
+- `TestSanitizeOpenAIResponsesToolParameterTypes_RewriteCountIndependentOfHits`（`testing.AllocsPerRun` 读全局 mallocs）
+- `TestOpenAIWSHTTPBridgeAcceptsFirstFrameAboveLegacy16MiB`（17MB WS 帧 + 10s 硬编码超时）
+- `TestGroupUsageRollupTrigger*`（10s `context.WithTimeout` 覆盖 testcontainers 建库到锁等待）
 
 ### CI 要求
 

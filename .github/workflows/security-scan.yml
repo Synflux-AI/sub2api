@@ -1,10 +1,16 @@
 name: Security Scan
 
 on:
+  # 同 backend-ci.yml：只在主线分支跑 push，避免同一 SHA 上出现两份同名 check。
   push:
+    branches: [release, main]
   pull_request:
   schedule:
     - cron: '0 3 * * 1'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
