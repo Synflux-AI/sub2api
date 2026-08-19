@@ -1,8 +1,19 @@
 name: CI
 
 on:
+  # 只在主线分支上跑 push 事件。功能分支靠 pull_request 触发即可——裸 push 会让
+  # 同一个 commit 被 push 和 pull_request 各跑一遍，在同一个 SHA 上留下两份同名
+  # check（曾出现 push=success / pull_request=failure 的矛盾结果），分支保护无法
+  # 据此稳定判定。裸 push 同时也会在 v* tag 上触发，重复 tag 所指 commit 的 CI。
   push:
+    branches: [release, main]
   pull_request:
+
+# 同一分支/PR 的在途构建只保留最新一次。仅取消 PR 的旧构建：主线分支上每个提交
+# 都要留下完整结论，否则被取消的那个提交引入的问题会被后一个提交掩盖。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
