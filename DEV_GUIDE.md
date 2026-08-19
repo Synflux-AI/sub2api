@@ -87,6 +87,26 @@ npm install -g pnpm
 - `notify` 会多出一个同名 check-run，**不要**把它加进分支保护的必需检查。
 - 纯函数部分有单测：`cd tools/ci && python3 feishu_notify_test.py`，由 `shell` job 执行。
 
+**发版通知**：`release.yml` 的 `notify` job 调用 `tools/ci/feishu_release.py`，在 tag 发版时
+推一张卡片（成功 / 失败都发，`needs: [release]` + `if: always()`）。取代了原先那个 Telegram
+通知步骤 —— 它在 `TELEGRAM_BOT_TOKEN` 为空时 `exit 0`，而仓库从来没配过这个 secret，
+所以从未真正发出过。
+
+卡片内容分两种来源，因为本仓的 tag 有两类：
+
+- **annotated tag**（如 `v0.1.178`）—— `%(contents:body)` 是人工写的发版说明
+  （「## 版本亮点 / ## 新增功能 …」），直接用。
+- **lightweight tag**（如 `v0.1.177`）—— `%(contents:body)` 只是所指提交的消息体，
+  通常是一行 merge commit 标题。**最近 5 个 tag 里有 3 个是这种**，所以脚本会识别出来
+  并回退到按 feat/fix/perf 分组的自动 changelog（移植自原 Jenkinsfile 的
+  `buildChangelogElements`，两列排版、每组上限 15 条、其余折叠成「+N 项杂项」）。
+
+想让卡片带人工发版说明，就用 annotated tag：`git tag -a v0.1.179 -m "..."`。
+
+版本跨度取 `git describe --tags --abbrev=0 <tag>^`，即最近的**可达** tag。本仓 tag 拓扑
+不是线性的（有的发版 tag 打在 sync 线上，例如 `v0.1.177` 并非 `v0.1.178` 的祖先），
+取可达 tag 才能让 `git log PREV..TAG` 有意义。
+
 ### 已知偶发失败
 
 以下测试断言的是全局分配计数或墙钟超时，会被同机负载影响，遇到时先确认改动无关再重跑，
