@@ -1033,9 +1033,7 @@ func buildOpsErrorLogsWhere(filter *service.OpsErrorLogFilter) (string, []any) {
 	// Excluded = business-limited errors (quota/concurrency/billing).
 	// Upstream 429/529 are included in errors view to match SLA calculation.
 	view := ""
-	if filter != nil {
-		view = strings.ToLower(strings.TrimSpace(filter.View))
-	}
+	view = strings.ToLower(strings.TrimSpace(filter.View))
 	switch view {
 	case "", "errors":
 		clauses = append(clauses, "COALESCE(e.is_business_limited,false) = false")
