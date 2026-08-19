@@ -32,7 +32,9 @@ jobs:
           /bin/sh deploy/test-caddyfile-cache.sh
       - name: Check CI helper scripts
         working-directory: tools/ci
-        run: python3 feishu_notify_test.py
+        run: |
+          python3 feishu_notify_test.py
+          python3 feishu_release_test.py
 
   test:
     runs-on: ubuntu-latest

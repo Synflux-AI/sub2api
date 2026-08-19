@@ -198,79 +198,60 @@ jobs:
           short-description: "Sub2API - AI API Gateway Platform"
           readme-filepath: ./deploy/DOCKER.md
 
-      # Send Telegram notification
-      - name: Send Telegram Notification
-        if: ${{ env.SIMPLE_RELEASE != 'true' }}
+  # 发版飞书通知。独立 job + if: always()，这样 release 失败/中断也会推卡片——
+  # 发版失败比 CI 失败更需要立刻有人知道。
+  # 取代了原先的 Telegram 通知步骤：那一步从未真正发出过，它在 TELEGRAM_BOT_TOKEN
+  # 为空时 exit 0，而仓库里从来没配过这个 secret。
+  notify:
+    needs: [release]
+    if: always() && !cancelled()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          # changelog 回退需要完整历史与 tag（lightweight tag 拿不到人工发版说明时用）
+          fetch-depth: 0
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Collect release info
+        id: info
         env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-        continue-on-error: true
+          INPUT_TAG: ${{ github.event.inputs.tag }}
         run: |
-          # 检查必要的环境变量
-          if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
-            echo "Telegram credentials not configured, skipping notification"
-            exit 0
-          fi
+          set -eu
+          git fetch --tags --force --quiet
+          TAG="${INPUT_TAG:-${GITHUB_REF#refs/tags/}}"
+          PREV="$(git describe --tags --abbrev=0 "${TAG}^" 2>/dev/null || true)"
+          echo "tag=$TAG"   >> "$GITHUB_OUTPUT"
+          echo "prev=$PREV" >> "$GITHUB_OUTPUT"
+          # GHCR 仓库名必须小写，GitHub 表达式没有 lowercase 函数，与 release job 一样用 tr
+          echo "ghcr=ghcr.io/$(echo "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')/sub2api" >> "$GITHUB_OUTPUT"
+          # annotated tag 才有人工写的发版说明；lightweight tag 这里拿到的是它所指
+          # 提交的消息体，脚本会识别出来并回退到分组 changelog。
+          {
+            echo "body<<__EOF__"
+            git tag -l --format='%(contents:body)' "$TAG"
+            echo "__EOF__"
+            echo "changelog<<__EOF__"
+            git log --no-merges --pretty=format:'%s%x1f%h' ${PREV:+"$PREV..$TAG"} ${PREV:-"$TAG"}
+            echo ""
+            echo "__EOF__"
+          } >> "$GITHUB_OUTPUT"
 
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            TAG_NAME=${{ github.event.inputs.tag }}
-          else
-            TAG_NAME=${GITHUB_REF#refs/tags/}
-          fi
-          VERSION=${TAG_NAME#v}
-          REPO="${{ github.repository }}"
-          GHCR_IMAGE="ghcr.io/${REPO,,}"  # ${,,} converts to lowercase
-
-          # 获取 tag message 内容并转义 Markdown 特殊字符
-          TAG_MESSAGE='${{ steps.tag_message.outputs.message }}'
-          TAG_MESSAGE=$(echo "$TAG_MESSAGE" | sed 's/\([_*`\[]\)/\\\1/g')
-
-          # 限制消息长度（Telegram 消息限制 4096 字符，预留空间给头尾固定内容）
-          if [ ${#TAG_MESSAGE} -gt 3500 ]; then
-            TAG_MESSAGE="${TAG_MESSAGE:0:3500}..."
-          fi
-
-          # 构建消息内容
-          MESSAGE="🚀 *Sub2API 新版本发布！*"$'\n'$'\n'
-          MESSAGE+="📦 版本号: \`${VERSION}\`"$'\n'$'\n'
-
-          # 添加更新内容
-          if [ -n "$TAG_MESSAGE" ]; then
-            MESSAGE+="${TAG_MESSAGE}"$'\n'$'\n'
-          fi
-
-          MESSAGE+="🐳 *Docker 部署:*"$'\n'
-          MESSAGE+="\`\`\`bash"$'\n'
-          # 根据是否配置 DockerHub 动态生成
-          if [ -n "$DOCKERHUB_USERNAME" ]; then
-            DOCKER_IMAGE="${DOCKERHUB_USERNAME}/sub2api"
-            MESSAGE+="# Docker Hub"$'\n'
-            MESSAGE+="docker pull ${DOCKER_IMAGE}:${VERSION}"$'\n'
-            MESSAGE+="# GitHub Container Registry"$'\n'
-          fi
-          MESSAGE+="docker pull ${GHCR_IMAGE}:${VERSION}"$'\n'
-          MESSAGE+="\`\`\`"$'\n'$'\n'
-          MESSAGE+="🔗 *相关链接:*"$'\n'
-          MESSAGE+="• [GitHub Release](https://github.com/${REPO}/releases/tag/${TAG_NAME})"$'\n'
-          if [ -n "$DOCKERHUB_USERNAME" ]; then
-            MESSAGE+="• [Docker Hub](https://hub.docker.com/r/${DOCKER_IMAGE})"$'\n'
-          fi
-          MESSAGE+="• [GitHub Packages](https://github.com/${REPO}/pkgs/container/sub2api)"$'\n'$'\n'
-          MESSAGE+="#Sub2API #Release #${TAG_NAME//./_}"
-
-          # 发送消息
-          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-            -H "Content-Type: application/json" \
-            -d "$(jq -n \
-              --arg chat_id "${TELEGRAM_CHAT_ID}" \
-              --arg text "${MESSAGE}" \
-              '{
-                chat_id: $chat_id,
-                text: $text,
-                parse_mode: "Markdown",
-                disable_web_page_preview: true
-              }')"
+      - name: Notify Feishu
+        env:
+          FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
+          GH_REPO: ${{ github.repository }}
+          RESULT: ${{ needs.release.result }}
+          TAG: ${{ steps.info.outputs.tag }}
+          PREV_TAG: ${{ steps.info.outputs.prev }}
+          TAG_BODY: ${{ steps.info.outputs.body }}
+          CHANGELOG_RAW: ${{ steps.info.outputs.changelog }}
+          GHCR_IMAGE: ${{ steps.info.outputs.ghcr }}
+          DOCKERHUB_IMAGE: ${{ secrets.DOCKERHUB_USERNAME && format('{0}/sub2api', secrets.DOCKERHUB_USERNAME) || '' }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: python3 tools/ci/feishu_release.py
 
   sync-version-file:
     needs: [release]
