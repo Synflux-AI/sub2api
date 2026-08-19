@@ -369,7 +369,7 @@ func toDTOErrorHandlingRules(rules []service.ErrorHandlingRule) []dto.ErrorHandl
 	out := make([]dto.ErrorHandlingRule, len(rules))
 	for i, rule := range rules {
 		out[i] = dto.ErrorHandlingRule{
-			ID: rule.ID, Name: rule.Name, StatusCodes: rule.StatusCodes, Keywords: rule.Keywords,
+			ID: rule.ID, Name: rule.Name, Enabled: rule.Enabled, StatusCodes: rule.StatusCodes, Keywords: rule.Keywords,
 			Action: rule.Action, RetryCount: rule.RetryCount, ExhaustedAction: rule.ExhaustedAction,
 		}
 	}
@@ -416,7 +416,7 @@ func (h *SettingHandler) UpdateErrorHandlingRuleSettings(c *gin.Context) {
 			}
 		}
 		rules[i] = service.ErrorHandlingRule{
-			ID: id, Name: strings.TrimSpace(rule.Name), StatusCodes: rule.StatusCodes,
+			ID: id, Name: strings.TrimSpace(rule.Name), Enabled: rule.Enabled, StatusCodes: rule.StatusCodes,
 			Keywords: keywords, Action: rule.Action, RetryCount: rule.RetryCount,
 			ExhaustedAction: rule.ExhaustedAction,
 		}

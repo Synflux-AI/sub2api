@@ -20,8 +20,12 @@ const (
 )
 
 type ErrorHandlingRule struct {
-	ID              string   `json:"id"`
-	Name            string   `json:"name"`
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	// Enabled 用指针是为了区分「存量配置没有这个字段」和「管理员显式禁用」：
+	// 存量 JSON 反序列化成 bool 会得到零值 false，等于把线上所有规则静默停用。
+	// nil 一律按启用处理，见 IsEnabled()。
+	Enabled         *bool    `json:"enabled"`
 	StatusCodes     []int    `json:"status_codes"`
 	Keywords        []string `json:"keywords"`
 	Action          string   `json:"action"`
@@ -67,6 +71,22 @@ func (r *ErrorHandlingRule) RetryLimit(defaultRetryCount int) int {
 	return defaultRetryCount
 }
 
+// IsEnabled 报告该规则是否参与匹配。nil 表示存量配置里没有 enabled 字段，按启用处理。
+func (r *ErrorHandlingRule) IsEnabled() bool {
+	return r.Enabled == nil || *r.Enabled
+}
+
+// HasEnabledErrorHandlingRule 报告是否存在至少一条启用的规则。全部规则被禁用时，
+// 热路径没必要为了 decide 一遍而去读错误响应体。
+func HasEnabledErrorHandlingRule(rules []ErrorHandlingRule) bool {
+	for i := range rules {
+		if rules[i].IsEnabled() {
+			return true
+		}
+	}
+	return false
+}
+
 func matchErrorHandlingRule(rules []ErrorHandlingRule, statusCode int, respBody []byte) *ErrorHandlingRule {
 	if len(rules) == 0 {
 		return nil
@@ -76,6 +96,9 @@ func matchErrorHandlingRule(rules []ErrorHandlingRule, statusCode int, respBody 
 	bodyLowered := false
 	for i := range rules {
 		rule := &rules[i]
+		if !rule.IsEnabled() {
+			continue
+		}
 		if len(rule.StatusCodes) == 0 && len(rule.Keywords) == 0 {
 			continue
 		}

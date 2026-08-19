@@ -146,3 +146,37 @@ func TestGetAndUpdateErrorHandlingRuleSettingsRoundTrip(t *testing.T) {
 	require.NoError(t, json.Unmarshal(getRec.Body.Bytes(), &getResp))
 	require.Equal(t, updateResp.Data, getResp.Data)
 }
+
+// enabled 是指针字段，往返里最容易被 DTO 层吃掉：显式 false 必须原样回来，
+// 而存量规则（不带该字段）必须保持 nil，服务层才会按启用处理。
+func TestErrorHandlingRuleSettingsRoundTripsEnabledFlag(t *testing.T) {
+	h := newErrorHandlingRuleTestHandler(t)
+	disabled := false
+	enabled := true
+	rec := doErrorHandlingRulePut(t, h, UpdateErrorHandlingRuleSettingsRequest{
+		Enabled: true, DefaultRetryCount: 1,
+		Rules: []dto.ErrorHandlingRule{
+			{ID: "r1", Enabled: &disabled, StatusCodes: []int{429}, Action: service.ErrorHandlingActionRetry},
+			{ID: "r2", Enabled: &enabled, StatusCodes: []int{500}, Action: service.ErrorHandlingActionFailover},
+			{ID: "r3", StatusCodes: []int{502}, Action: service.ErrorHandlingActionFailover},
+		},
+	})
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	getRec := httptest.NewRecorder()
+	getC, _ := gin.CreateTestContext(getRec)
+	getC.Request = httptest.NewRequest(http.MethodGet, "/admin/settings/error-handling-rules", nil)
+	h.GetErrorHandlingRuleSettings(getC)
+	require.Equal(t, http.StatusOK, getRec.Code)
+
+	var getResp struct {
+		Data dto.ErrorHandlingRuleSettings `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(getRec.Body.Bytes(), &getResp))
+	require.Len(t, getResp.Data.Rules, 3)
+	require.NotNil(t, getResp.Data.Rules[0].Enabled)
+	require.False(t, *getResp.Data.Rules[0].Enabled)
+	require.NotNil(t, getResp.Data.Rules[1].Enabled)
+	require.True(t, *getResp.Data.Rules[1].Enabled)
+	require.Nil(t, getResp.Data.Rules[2].Enabled, "未带 enabled 的规则不能被补成显式值")
+}

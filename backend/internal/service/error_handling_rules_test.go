@@ -231,3 +231,75 @@ func TestGetErrorHandlingRuleSettingsCachedAvoidsRepeatedDBReads(t *testing.T) {
 	}
 	require.Equal(t, before, repo.getValueCalls)
 }
+
+func errorHandlingBoolPtr(b bool) *bool { return &b }
+
+func TestMatchErrorHandlingRuleSkipsDisabledRule(t *testing.T) {
+	rules := []ErrorHandlingRule{
+		{ID: "disabled", Enabled: errorHandlingBoolPtr(false), StatusCodes: []int{500}, Action: ErrorHandlingActionRetry},
+		{ID: "enabled", Enabled: errorHandlingBoolPtr(true), StatusCodes: []int{500}, Action: ErrorHandlingActionFailover},
+	}
+	got := matchErrorHandlingRule(rules, 500, []byte(`{}`))
+	require.NotNil(t, got)
+	require.Equal(t, "enabled", got.ID)
+}
+
+// 存量配置没有 enabled 字段，反序列化后是 nil，必须照常参与匹配 —— 否则线上所有
+// 错误处理规则会在升级瞬间静默失效。
+func TestMatchErrorHandlingRuleTreatsNilEnabledAsEnabled(t *testing.T) {
+	rules := []ErrorHandlingRule{{ID: "legacy", StatusCodes: []int{500}, Action: ErrorHandlingActionRetry}}
+	got := matchErrorHandlingRule(rules, 500, []byte(`{}`))
+	require.NotNil(t, got)
+	require.Equal(t, "legacy", got.ID)
+}
+
+func TestMatchErrorHandlingRuleReturnsNilWhenAllRulesDisabled(t *testing.T) {
+	rules := []ErrorHandlingRule{
+		{ID: "a", Enabled: errorHandlingBoolPtr(false), StatusCodes: []int{500}, Action: ErrorHandlingActionRetry},
+		{ID: "b", Enabled: errorHandlingBoolPtr(false), Keywords: []string{"boom"}, Action: ErrorHandlingActionFailover},
+	}
+	require.Nil(t, matchErrorHandlingRule(rules, 500, []byte(`{"error":"boom"}`)))
+}
+
+// 回归风险在 JSON 层，所以直接喂一段不含 enabled 字段的存量配置走完整反序列化路径。
+func TestGetErrorHandlingRuleSettingsTreatsLegacyRulesAsEnabled(t *testing.T) {
+	repo := &gatewayTTLSettingRepo{data: map[string]string{
+		SettingKeyErrorHandlingRules: `{"enabled":true,"default_retry_count":1,"rules":[{"id":"legacy","name":"Legacy","status_codes":[429],"action":"retry"}]}`,
+	}}
+	svc := NewSettingService(repo, &config.Config{})
+
+	settings, err := svc.GetErrorHandlingRuleSettings(context.Background())
+	require.NoError(t, err)
+	require.Len(t, settings.Rules, 1)
+	require.Nil(t, settings.Rules[0].Enabled)
+	require.True(t, settings.Rules[0].IsEnabled())
+	require.True(t, HasEnabledErrorHandlingRule(settings.Rules))
+}
+
+func TestSetErrorHandlingRuleSettingsRoundTripsDisabledFlag(t *testing.T) {
+	repo := &gatewayTTLSettingRepo{data: map[string]string{}}
+	svc := NewSettingService(repo, &config.Config{})
+	ctx := context.Background()
+
+	require.NoError(t, svc.SetErrorHandlingRuleSettings(ctx, &ErrorHandlingRuleSettings{
+		Enabled: true, DefaultRetryCount: 1,
+		Rules: []ErrorHandlingRule{{ID: "a", Enabled: errorHandlingBoolPtr(false), StatusCodes: []int{500}, Action: ErrorHandlingActionRetry}},
+	}))
+
+	got, err := svc.GetErrorHandlingRuleSettings(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, got.Rules[0].Enabled)
+	require.False(t, *got.Rules[0].Enabled)
+	require.False(t, got.Rules[0].IsEnabled())
+}
+
+func TestHasEnabledErrorHandlingRule(t *testing.T) {
+	require.False(t, HasEnabledErrorHandlingRule(nil))
+	require.False(t, HasEnabledErrorHandlingRule([]ErrorHandlingRule{
+		{ID: "a", Enabled: errorHandlingBoolPtr(false), StatusCodes: []int{500}, Action: ErrorHandlingActionRetry},
+	}))
+	require.True(t, HasEnabledErrorHandlingRule([]ErrorHandlingRule{
+		{ID: "a", Enabled: errorHandlingBoolPtr(false), StatusCodes: []int{500}, Action: ErrorHandlingActionRetry},
+		{ID: "b", StatusCodes: []int{429}, Action: ErrorHandlingActionRetry},
+	}))
+}

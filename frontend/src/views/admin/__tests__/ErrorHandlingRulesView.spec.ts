@@ -53,6 +53,7 @@ vi.mock("vue-i18n", async () => {
 const AppLayoutStub = { template: "<div><slot /></div>" };
 
 const ToggleStub = defineComponent({
+  name: "Toggle",
   props: {
     modelValue: {
       type: Boolean,
@@ -75,17 +76,83 @@ const ToggleStub = defineComponent({
   },
 });
 
+// BaseDialog teleports to body; render inline so the spec can drive it from the wrapper.
+const BaseDialogStub = defineComponent({
+  name: "BaseDialog",
+  props: { show: { type: Boolean, default: false } },
+  template:
+    '<div v-if="show" data-testid="rule-dialog"><slot /><slot name="footer" /></div>',
+});
+
+const ConfirmDialogStub = defineComponent({
+  name: "ConfirmDialog",
+  props: { show: { type: Boolean, default: false } },
+  emits: ["confirm", "cancel"],
+  template:
+    '<div v-if="show" data-testid="delete-dialog">' +
+    '<button data-testid="delete-confirm" @click="$emit(\'confirm\')"></button>' +
+    '<button data-testid="delete-cancel" @click="$emit(\'cancel\')"></button>' +
+    "</div>",
+});
+
 function mountView() {
   return mount(ErrorHandlingRulesView, {
     global: {
       stubs: {
         AppLayout: AppLayoutStub,
         Toggle: ToggleStub,
+        BaseDialog: BaseDialogStub,
+        ConfirmDialog: ConfirmDialogStub,
+        EmptyState: true,
         Icon: true,
       },
     },
   });
 }
+
+type Wrapper = ReturnType<typeof mountView>;
+
+/** DataTable 的空状态也是一个 tr，靠 data-row-id 只挑出真正的数据行 */
+function ruleRows(wrapper: Wrapper) {
+  return wrapper.findAll("tbody tr[data-row-id]");
+}
+
+async function openEditDialog(wrapper: Wrapper, rowIndex: number) {
+  await ruleRows(wrapper)[rowIndex]
+    .get('button[aria-label="common.edit"]')
+    .trigger("click");
+}
+
+function dialog(wrapper: Wrapper) {
+  return wrapper.get('[data-testid="rule-dialog"]');
+}
+
+/**
+ * 确定按钮在 footer 插槽里，靠 form="error-handling-rule-form" 提交（与
+ * RoutingStrategiesPanel 一致）。jsdom 不实现这条隐式提交，所以直接触发 submit。
+ */
+async function submitDialog(wrapper: Wrapper) {
+  await dialog(wrapper).get("form").trigger("submit");
+}
+
+const RULE_A = {
+  id: "rule-a",
+  name: "Rule A",
+  status_codes: [400],
+  keywords: ["first"],
+  action: "retry",
+  retry_count: null,
+  exhausted_action: "default",
+};
+
+const RULE_B = {
+  id: "rule-b",
+  name: "Rule B",
+  status_codes: [422],
+  keywords: ["second"],
+  action: "failover",
+  retry_count: null,
+};
 
 describe("admin ErrorHandlingRulesView", () => {
   beforeEach(() => {
@@ -104,217 +171,337 @@ describe("admin ErrorHandlingRulesView", () => {
     );
   });
 
-  it("loads, reorders, adds, deletes, and saves error handling rules", async () => {
+  it("renders one table row per rule with its matcher summary", async () => {
     getErrorHandlingRuleSettings.mockResolvedValue({
       enabled: true,
       default_retry_count: 2,
       rules: [
-        {
-          id: "rule-a",
-          name: "Rule A",
-          status_codes: [400],
-          keywords: ["first"],
-          action: "retry",
-          retry_count: null,
-          exhausted_action: "default",
-        },
-        {
-          id: "rule-b",
-          name: "Rule B",
-          status_codes: [422],
-          keywords: ["second"],
-          action: "failover",
-          retry_count: null,
-        },
+        { ...RULE_A, keywords: ["k1", "k2", "k3"] },
+        { ...RULE_B, keywords: [] },
       ],
     });
-    updateErrorHandlingRuleSettings.mockImplementation(async (payload) => ({
-      ...payload,
-      rules: payload.rules.map((rule: { id: string }, index: number) => ({
-        ...rule,
-        id: rule.id || `new-rule-${index}`,
-      })),
-    }));
 
     const wrapper = mountView();
     await flushPromises();
 
-    const card = wrapper.get('[data-testid="error-handling-rule-card"]');
-    expect(card.find('icon-stub[name="arrowUp"]').exists()).toBe(true);
-    expect(card.find('icon-stub[name="arrowDown"]').exists()).toBe(true);
-    expect(card.find('icon-stub[name="trash"]').exists()).toBe(true);
-
-    const moveUpButtons = card.findAll(
-      'button[aria-label="admin.settings.errorHandlingRule.moveUp"]',
+    const rows = ruleRows(wrapper);
+    expect(rows).toHaveLength(2);
+    expect(rows[0].text()).toContain("Rule A");
+    expect(rows[0].text()).toContain("400");
+    // 只展示前两条关键字，其余折叠成计数
+    expect(rows[0].text()).toContain("k1");
+    expect(rows[0].text()).toContain("k2");
+    expect(rows[0].text()).not.toContain("k3");
+    expect(rows[0].text()).toContain(
+      "admin.settings.errorHandlingRule.keywordsMore",
     );
-    expect(moveUpButtons).toHaveLength(2);
-    await moveUpButtons[1].trigger("click");
+    // retry_count 为 null 时显示默认值
+    expect(rows[0].text()).toContain(
+      "admin.settings.errorHandlingRule.retryCountDefault",
+    );
+    expect(rows[1].text()).toContain(
+      "admin.settings.errorHandlingRule.anyKeyword",
+    );
+  });
 
-    const addButton = card.get('[data-testid="error-handling-rule-add"]');
-    expect(addButton.find('icon-stub[name="plus"]').exists()).toBe(true);
-    await addButton.trigger("click");
-    await addButton.trigger("click");
+  // 行序即匹配优先级，可排序会让视图顺序和 rules 数组脱钩
+  it("keeps every column unsortable so row order stays the match priority", async () => {
+    getErrorHandlingRuleSettings.mockResolvedValue({
+      enabled: true,
+      default_retry_count: 1,
+      rules: [RULE_A, RULE_B],
+    });
+
+    const wrapper = mountView();
+    await flushPromises();
+
+    expect(wrapper.findAll("thead th[aria-sort]")).toHaveLength(0);
+  });
+
+  // 总开关关掉时恰恰更需要确认配置还在
+  it("keeps the rule table visible when the master switch is off", async () => {
+    getErrorHandlingRuleSettings.mockResolvedValue({
+      enabled: false,
+      default_retry_count: 1,
+      rules: [RULE_A],
+    });
+
+    const wrapper = mountView();
+    await flushPromises();
+
+    expect(ruleRows(wrapper)).toHaveLength(1);
+  });
+
+  it("reorders rules with the row move buttons and submits the new order", async () => {
+    getErrorHandlingRuleSettings.mockResolvedValue({
+      enabled: true,
+      default_retry_count: 2,
+      rules: [RULE_A, RULE_B],
+    });
+
+    const wrapper = mountView();
+    await flushPromises();
+
+    const rows = ruleRows(wrapper);
+    // 首行 ↑ / 末行 ↓ 必须禁用
     expect(
-      card.findAll(
-        'input[placeholder="admin.settings.errorHandlingRule.namePlaceholder"]',
-      ),
-    ).toHaveLength(4);
+      rows[0]
+        .get('button[aria-label="admin.settings.errorHandlingRule.moveUp"]')
+        .attributes("disabled"),
+    ).toBeDefined();
+    expect(
+      rows[1]
+        .get('button[aria-label="admin.settings.errorHandlingRule.moveDown"]')
+        .attributes("disabled"),
+    ).toBeDefined();
 
-    const deleteButtons = card.findAll('button[aria-label="common.delete"]');
-    await deleteButtons[deleteButtons.length - 1].trigger("click");
+    await rows[1]
+      .get('button[aria-label="admin.settings.errorHandlingRule.moveUp"]')
+      .trigger("click");
+    expect(ruleRows(wrapper)[0].text()).toContain("Rule B");
 
-    // 新增的规则必须至少填一个匹配条件，否则会被前端校验拦下
-    const statusCodeInputs = card.findAll(
-      '[data-testid="error-handling-rule-status-codes"]',
-    );
-    expect(statusCodeInputs).toHaveLength(3);
-    await statusCodeInputs[2].setValue("500");
-
-    await card.get('[data-testid="error-handling-rule-save"]').trigger("click");
+    await wrapper
+      .get('[data-testid="error-handling-rule-save"]')
+      .trigger("click");
     await flushPromises();
 
     expect(updateErrorHandlingRuleSettings).toHaveBeenCalledWith({
       enabled: true,
       default_retry_count: 2,
       rules: [
-        expect.objectContaining({ id: "rule-b", name: "Rule B" }),
-        expect.objectContaining({ id: "rule-a", name: "Rule A" }),
-        expect.objectContaining({ id: "", name: "", status_codes: [500] }),
+        expect.objectContaining({ id: "rule-b" }),
+        expect.objectContaining({ id: "rule-a" }),
       ],
     });
-    const payload = updateErrorHandlingRuleSettings.mock.calls[0][0];
-    expect(
-      payload.rules.every(
-        (rule: Record<string, unknown>) =>
-          !("form_key" in rule) &&
-          !("status_codes_text" in rule) &&
-          !("keywords_text" in rule),
-      ),
-    ).toBe(true);
   });
 
-  it("commits status code and keyword edits without a change event", async () => {
+  it("round-trips the per-rule enabled toggle through save", async () => {
     getErrorHandlingRuleSettings.mockResolvedValue({
       enabled: true,
       default_retry_count: 1,
-      rules: [
-        {
-          id: "rule-a",
-          name: "Rule A",
-          status_codes: [400],
-          keywords: ["first"],
-          action: "retry",
-          retry_count: null,
-          exhausted_action: "default",
-        },
-      ],
+      // enabled 缺失代表存量规则，必须显示为已启用
+      rules: [RULE_A, { ...RULE_B, enabled: false }],
     });
 
     const wrapper = mountView();
     await flushPromises();
 
-    const card = wrapper.get('[data-testid="error-handling-rule-card"]');
-    await card
+    const toggles = wrapper.findAll("tbody tr .toggle-stub");
+    expect(
+      (toggles[0].element as HTMLInputElement).checked,
+      "存量规则（无 enabled 字段）必须按启用渲染",
+    ).toBe(true);
+    expect((toggles[1].element as HTMLInputElement).checked).toBe(false);
+
+    await toggles[0].setValue(false);
+    await wrapper
+      .get('[data-testid="error-handling-rule-save"]')
+      .trigger("click");
+    await flushPromises();
+
+    expect(updateErrorHandlingRuleSettings.mock.calls[0][0].rules).toEqual([
+      expect.objectContaining({ id: "rule-a", enabled: false }),
+      expect.objectContaining({ id: "rule-b", enabled: false }),
+    ]);
+  });
+
+  it("creates a rule through the dialog with a stable generated id", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="rule-dialog"]').exists()).toBe(false);
+    await wrapper.get('[data-testid="error-handling-rule-add"]').trigger("click");
+
+    const form = dialog(wrapper);
+    await form
+      .get('[data-testid="error-handling-rule-dialog-name"]')
+      .setValue("New rule");
+    await form
       .get('[data-testid="error-handling-rule-status-codes"]')
-      .setValue("429, 529");
-    await card
+      .setValue("500, 502");
+    await form
       .get('[data-testid="error-handling-rule-keywords"]')
       .setValue("overloaded\n  rate limit  \n\n");
-    await card.get('[data-testid="error-handling-rule-save"]').trigger("click");
+    await submitDialog(wrapper);
+
+    expect(wrapper.find('[data-testid="rule-dialog"]').exists()).toBe(false);
+    expect(ruleRows(wrapper)).toHaveLength(1);
+
+    await wrapper
+      .get('[data-testid="error-handling-rule-save"]')
+      .trigger("click");
     await flushPromises();
 
-    expect(updateErrorHandlingRuleSettings).toHaveBeenCalledWith({
+    const [rule] = updateErrorHandlingRuleSettings.mock.calls[0][0].rules;
+    expect(rule).toMatchObject({
+      name: "New rule",
       enabled: true,
-      default_retry_count: 1,
-      rules: [
-        {
-          id: "rule-a",
-          name: "Rule A",
-          status_codes: [429, 529],
-          keywords: ["overloaded", "rate limit"],
-          action: "retry",
-          retry_count: null,
-          exhausted_action: "default",
-        },
-      ],
+      status_codes: [500, 502],
+      keywords: ["overloaded", "rate limit"],
+      action: "retry",
+      retry_count: null,
+      exhausted_action: "default",
     });
+    // 空 ID 会让后端按下标补 positional ID，排序一变重试计数就串规则
+    expect(rule.id).toBeTruthy();
   });
 
-  it("blocks saving invalid status codes with a localized error", async () => {
+  it("edits an existing rule through the dialog", async () => {
     getErrorHandlingRuleSettings.mockResolvedValue({
       enabled: true,
       default_retry_count: 1,
-      rules: [
-        {
-          id: "rule-a",
-          name: "Rule A",
-          status_codes: [400],
-          keywords: [],
-          action: "retry",
-          retry_count: null,
-        },
-      ],
+      rules: [RULE_A],
     });
 
     const wrapper = mountView();
     await flushPromises();
+    await openEditDialog(wrapper, 0);
 
-    const card = wrapper.get('[data-testid="error-handling-rule-card"]');
-    const statusCodes = card.get(
+    const form = dialog(wrapper);
+    expect(
+      (
+        form.get('[data-testid="error-handling-rule-status-codes"]')
+          .element as HTMLInputElement
+      ).value,
+    ).toBe("400");
+
+    await form
+      .get('[data-testid="error-handling-rule-status-codes"]')
+      .setValue("429, 529");
+    await form
+      .get('[data-testid="error-handling-rule-exhausted-action"]')
+      .setValue("passthrough");
+    await submitDialog(wrapper);
+
+    await wrapper
+      .get('[data-testid="error-handling-rule-save"]')
+      .trigger("click");
+    await flushPromises();
+
+    expect(updateErrorHandlingRuleSettings.mock.calls[0][0].rules[0]).toEqual({
+      id: "rule-a",
+      name: "Rule A",
+      enabled: true,
+      status_codes: [429, 529],
+      keywords: ["first"],
+      action: "retry",
+      retry_count: null,
+      exhausted_action: "passthrough",
+    });
+  });
+
+  it("keeps the dialog open and reports invalid status codes inline", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+    await wrapper.get('[data-testid="error-handling-rule-add"]').trigger("click");
+
+    const statusCodes = dialog(wrapper).get(
       '[data-testid="error-handling-rule-status-codes"]',
     );
+    for (const invalid of ["4e2", "700"]) {
+      await statusCodes.setValue(invalid);
+      await submitDialog(wrapper);
 
-    await statusCodes.setValue("4e2");
-    await card.get('[data-testid="error-handling-rule-save"]').trigger("click");
-    await flushPromises();
-    expect(updateErrorHandlingRuleSettings).not.toHaveBeenCalled();
-    expect(showError).toHaveBeenCalledWith(
-      "admin.settings.errorHandlingRule.invalidStatusCode",
-    );
-
-    showError.mockClear();
-    await statusCodes.setValue("700");
-    await card.get('[data-testid="error-handling-rule-save"]').trigger("click");
-    await flushPromises();
-    expect(updateErrorHandlingRuleSettings).not.toHaveBeenCalled();
-    expect(showError).toHaveBeenCalledWith(
-      "admin.settings.errorHandlingRule.invalidStatusCode",
-    );
+      expect(wrapper.find('[data-testid="rule-dialog"]').exists()).toBe(true);
+      expect(
+        wrapper.get('[data-testid="error-handling-rule-dialog-error"]').text(),
+      ).toBe("admin.settings.errorHandlingRule.invalidStatusCode");
+      expect(ruleRows(wrapper)).toHaveLength(0);
+    }
   });
 
-  it("blocks saving a rule without status codes or keywords", async () => {
+  it("keeps the dialog open when neither status codes nor keywords are set", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+    await wrapper.get('[data-testid="error-handling-rule-add"]').trigger("click");
+
+    await dialog(wrapper)
+      .get('[data-testid="error-handling-rule-keywords"]')
+      .setValue("  \n ");
+    await submitDialog(wrapper);
+
+    expect(wrapper.find('[data-testid="rule-dialog"]').exists()).toBe(true);
+    expect(
+      wrapper.get('[data-testid="error-handling-rule-dialog-error"]').text(),
+    ).toBe("admin.settings.errorHandlingRule.emptyMatcher");
+    expect(ruleRows(wrapper)).toHaveLength(0);
+  });
+
+  it("warns about the raw upstream body when the passthrough action is selected", async () => {
     getErrorHandlingRuleSettings.mockResolvedValue({
       enabled: true,
       default_retry_count: 1,
-      rules: [
-        {
-          id: "rule-a",
-          name: "Rule A",
-          status_codes: [400],
-          keywords: ["first"],
-          action: "retry",
-          retry_count: null,
-        },
-      ],
+      rules: [RULE_A],
+    });
+
+    const wrapper = mountView();
+    await flushPromises();
+    await openEditDialog(wrapper, 0);
+
+    expect(dialog(wrapper).text()).not.toContain(
+      "admin.settings.errorHandlingRule.passthroughWarning",
+    );
+    await dialog(wrapper)
+      .get('[data-testid="error-handling-rule-action"]')
+      .setValue("passthrough");
+    expect(dialog(wrapper).text()).toContain(
+      "admin.settings.errorHandlingRule.passthroughWarning",
+    );
+    // passthrough 不做同账号重试，也没有「全部失败后」可配
+    expect(
+      dialog(wrapper).find('[data-testid="error-handling-rule-retry-count"]')
+        .exists(),
+    ).toBe(false);
+    expect(
+      dialog(wrapper).find(
+        '[data-testid="error-handling-rule-exhausted-action"]',
+      ).exists(),
+    ).toBe(false);
+  });
+
+  it("warns when the exhausted action returns the matched error", async () => {
+    getErrorHandlingRuleSettings.mockResolvedValue({
+      enabled: true,
+      default_retry_count: 1,
+      rules: [RULE_A],
+    });
+
+    const wrapper = mountView();
+    await flushPromises();
+    await openEditDialog(wrapper, 0);
+
+    const exhausted = dialog(wrapper).get(
+      '[data-testid="error-handling-rule-exhausted-action"]',
+    );
+    expect((exhausted.element as HTMLSelectElement).value).toBe("default");
+    await exhausted.setValue("passthrough");
+    expect(dialog(wrapper).text()).toContain(
+      "admin.settings.errorHandlingRule.exhaustedActionWarning",
+    );
+  });
+
+  it("deletes a rule only after the confirmation dialog is accepted", async () => {
+    getErrorHandlingRuleSettings.mockResolvedValue({
+      enabled: true,
+      default_retry_count: 1,
+      rules: [RULE_A, RULE_B],
     });
 
     const wrapper = mountView();
     await flushPromises();
 
-    const card = wrapper.get('[data-testid="error-handling-rule-card"]');
-    await card
-      .get('[data-testid="error-handling-rule-status-codes"]')
-      .setValue("");
-    await card
-      .get('[data-testid="error-handling-rule-keywords"]')
-      .setValue("  \n ");
-    await card.get('[data-testid="error-handling-rule-save"]').trigger("click");
-    await flushPromises();
+    await ruleRows(wrapper)[0]
+      .get('button[aria-label="common.delete"]')
+      .trigger("click");
+    await wrapper.get('[data-testid="delete-cancel"]').trigger("click");
+    expect(ruleRows(wrapper)).toHaveLength(2);
 
-    expect(updateErrorHandlingRuleSettings).not.toHaveBeenCalled();
-    expect(showError).toHaveBeenCalledWith(
-      "admin.settings.errorHandlingRule.emptyMatcher",
-    );
+    await ruleRows(wrapper)[0]
+      .get('button[aria-label="common.delete"]')
+      .trigger("click");
+    await wrapper.get('[data-testid="delete-confirm"]').trigger("click");
+    expect(ruleRows(wrapper)).toHaveLength(1);
+    expect(ruleRows(wrapper)[0].text()).toContain("Rule B");
   });
 
   it("always sends a clamped integer default retry count", async () => {
@@ -327,93 +514,51 @@ describe("admin ErrorHandlingRulesView", () => {
     const wrapper = mountView();
     await flushPromises();
 
-    const card = wrapper.get('[data-testid="error-handling-rule-card"]');
-    const defaultRetry = card.get(
+    const defaultRetry = wrapper.get(
       '[data-testid="error-handling-rule-default-retry"]',
     );
 
     await defaultRetry.setValue("");
-    await card.get('[data-testid="error-handling-rule-save"]').trigger("click");
+    await wrapper
+      .get('[data-testid="error-handling-rule-save"]')
+      .trigger("click");
     await flushPromises();
     expect(updateErrorHandlingRuleSettings.mock.calls[0][0]).toMatchObject({
       default_retry_count: 0,
     });
 
     await defaultRetry.setValue("9");
-    await card.get('[data-testid="error-handling-rule-save"]').trigger("click");
+    await wrapper
+      .get('[data-testid="error-handling-rule-save"]')
+      .trigger("click");
     await flushPromises();
     expect(updateErrorHandlingRuleSettings.mock.calls[1][0]).toMatchObject({
       default_retry_count: 4,
     });
   });
 
-  it("warns about raw upstream body when the passthrough action is selected", async () => {
+  it("never leaks form-only fields into the payload", async () => {
     getErrorHandlingRuleSettings.mockResolvedValue({
       enabled: true,
       default_retry_count: 1,
-      rules: [
-        {
-          id: "rule-a",
-          name: "Rule A",
-          status_codes: [400],
-          keywords: [],
-          action: "retry",
-          retry_count: null,
-        },
-      ],
+      rules: [RULE_A],
     });
 
     const wrapper = mountView();
     await flushPromises();
-
-    const card = wrapper.get('[data-testid="error-handling-rule-card"]');
-    expect(card.text()).not.toContain(
-      "admin.settings.errorHandlingRule.passthroughWarning",
-    );
-
-    await card
-      .get('[data-testid="error-handling-rule-action"]')
-      .setValue("passthrough");
-
-    expect(card.text()).toContain(
-      "admin.settings.errorHandlingRule.passthroughWarning",
-    );
-  });
-
-  it("defaults and saves the exhausted account action for retry and failover rules", async () => {
-    getErrorHandlingRuleSettings.mockResolvedValue({
-      enabled: true,
-      default_retry_count: 1,
-      rules: [
-        {
-          id: "rule-a",
-          name: "Rule A",
-          status_codes: [429],
-          keywords: [],
-          action: "retry",
-          retry_count: 1,
-        },
-      ],
-    });
-
-    const wrapper = mountView();
-    await flushPromises();
-    const card = wrapper.get('[data-testid="error-handling-rule-card"]');
-    const exhaustedAction = card.get(
-      '[data-testid="error-handling-rule-exhausted-action"]',
-    );
-    expect((exhaustedAction.element as HTMLSelectElement).value).toBe("default");
-
-    await exhaustedAction.setValue("passthrough");
-    expect(card.text()).toContain(
-      "admin.settings.errorHandlingRule.exhaustedActionWarning",
-    );
-    await card.get('[data-testid="error-handling-rule-save"]').trigger("click");
+    await wrapper
+      .get('[data-testid="error-handling-rule-save"]')
+      .trigger("click");
     await flushPromises();
 
-    expect(updateErrorHandlingRuleSettings.mock.calls[0][0].rules[0]).toMatchObject({
-      id: "rule-a",
-      exhausted_action: "passthrough",
-    });
+    const payload = updateErrorHandlingRuleSettings.mock.calls[0][0];
+    expect(
+      payload.rules.every(
+        (rule: Record<string, unknown>) =>
+          !("form_key" in rule) &&
+          !("status_codes_text" in rule) &&
+          !("keywords_text" in rule),
+      ),
+    ).toBe(true);
   });
 });

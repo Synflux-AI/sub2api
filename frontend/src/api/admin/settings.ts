@@ -1479,6 +1479,8 @@ export type ErrorHandlingRuleExhaustedAction = "default" | "passthrough";
 export interface ErrorHandlingRule {
   id: string;
   name: string;
+  /** null/undefined on legacy settings; the backend treats both as enabled. */
+  enabled?: boolean | null;
   status_codes: number[];
   keywords: string[];
   action: ErrorHandlingRuleAction;

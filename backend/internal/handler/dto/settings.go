@@ -490,8 +490,10 @@ type RectifierSettings struct {
 }
 
 type ErrorHandlingRule struct {
-	ID              string   `json:"id"`
-	Name            string   `json:"name"`
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	// nil 表示存量配置没有这个字段，服务层按启用处理。
+	Enabled         *bool    `json:"enabled"`
 	StatusCodes     []int    `json:"status_codes"`
 	Keywords        []string `json:"keywords"`
 	Action          string   `json:"action"`
