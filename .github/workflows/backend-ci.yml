@@ -30,6 +30,9 @@ jobs:
           /bin/sh deploy/tests/docker-compose-security-test.sh
           /bin/sh deploy/tests/docker-runtime-resources-test.sh
           /bin/sh deploy/test-caddyfile-cache.sh
+      - name: Check CI helper scripts
+        working-directory: tools/ci
+        run: python3 feishu_notify_test.py
 
   test:
     runs-on: ubuntu-latest
@@ -90,3 +93,43 @@ jobs:
           version: v2.9
           args: --timeout=30m
           working-directory: backend
+
+  # 整体 CI 结果的飞书通知。必需检查分散在本 workflow 与 Security Scan 两处，脚本
+  # 直接读 head SHA 上的 check-runs 做聚合，凑齐六项后才发——任一 workflow 单独发卡
+  # 都会在「CI 绿 + Security Scan 红」时误报成绿。
+  # 没用 on: workflow_run（GitHub 的标准聚合做法）是因为它只从默认分支读 workflow
+  # 文件，而本仓默认分支是 main（上游同步分支）、主线是 release，只合进 release 会
+  # 静默永不触发。详见 tools/ci/feishu_notify.py 的模块注释。
+  notify:
+    needs: [shell, test, frontend, golangci-lint]
+    # always() 才能在失败时也发；!cancelled() 是因为 PR 启用了 cancel-in-progress，
+    # 被新提交顶掉的旧 run 不该推通知。
+    if: always() && !cancelled()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v6
+      - name: Notify Feishu
+        # PR 标题/分支名等不可信输入一律走 env 传入，不插值进 run: 里，避免脚本注入。
+        env:
+          FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          # pull_request 事件里 github.sha 是合并提交，check-runs 挂在 PR head 上。
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          EVENT_NAME: ${{ github.event_name }}
+          RUN_NUMBER: ${{ github.run_number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_HEAD: ${{ github.event.pull_request.head.ref }}
+          PR_BASE: ${{ github.event.pull_request.base.ref }}
+          BRANCH: ${{ github.ref_name }}
+          COMMIT_AUTHOR: ${{ github.event.head_commit.author.name }}
+          COMMIT_SHA: ${{ github.sha }}
+          COMMIT_SUBJECT: ${{ github.event.head_commit.message }}
+        run: python3 tools/ci/feishu_notify.py
