@@ -161,6 +161,20 @@ func (s *DashboardService) GetUsageTrendByModelWithFilters(ctx context.Context, 
 	return trend, nil
 }
 
+func (s *DashboardService) GetUsageTrendByModelWithUsageFilters(ctx context.Context, startTime, endTime time.Time, granularity string, filters usagestats.UsageLogFilters) ([]usagestats.TrendModelDataPoint, error) {
+	type usageTrendByModelWithFiltersRepo interface {
+		GetUsageTrendByModelWithUsageFilters(context.Context, time.Time, time.Time, string, usagestats.UsageLogFilters) ([]usagestats.TrendModelDataPoint, error)
+	}
+	if repo, ok := s.usageRepo.(usageTrendByModelWithFiltersRepo); ok {
+		trend, err := repo.GetUsageTrendByModelWithUsageFilters(ctx, startTime, endTime, granularity, filters)
+		if err != nil {
+			return nil, fmt.Errorf("get usage trend by model with usage filters: %w", err)
+		}
+		return trend, nil
+	}
+	return s.GetUsageTrendByModelWithFilters(ctx, startTime, endTime, granularity, filters.UserID, filters.APIKeyID, filters.AccountID, filters.GroupID, filters.Model, filters.RequestType, filters.Stream, filters.BillingType, filters.UpstreamModelMismatch)
+}
+
 func (s *DashboardService) GetUsageTrendWithUsageFilters(ctx context.Context, startTime, endTime time.Time, granularity string, filters usagestats.UsageLogFilters) ([]usagestats.TrendDataPoint, error) {
 	type usageTrendWithFiltersRepo interface {
 		GetUsageTrendWithUsageFilters(context.Context, time.Time, time.Time, string, usagestats.UsageLogFilters) ([]usagestats.TrendDataPoint, error)
@@ -425,6 +439,21 @@ func (s *DashboardService) GetUserUsageTrend(ctx context.Context, startTime, end
 	trend, err := s.usageRepo.GetUserUsageTrend(ctx, startTime, endTime, granularity, limit, sortBy)
 	if err != nil {
 		return nil, fmt.Errorf("get user usage trend: %w", err)
+	}
+	return trend, nil
+}
+
+func (s *DashboardService) GetUserUsageTrendWithUsageFilters(ctx context.Context, startTime, endTime time.Time, granularity string, limit int, sortBy string, filters usagestats.UsageLogFilters) ([]usagestats.UserUsageTrendPoint, error) {
+	type filteredUserTrendRepository interface {
+		GetUserUsageTrendWithUsageFilters(context.Context, time.Time, time.Time, string, int, string, usagestats.UsageLogFilters) ([]usagestats.UserUsageTrendPoint, error)
+	}
+	repo, ok := s.usageRepo.(filteredUserTrendRepository)
+	if !ok {
+		return s.GetUserUsageTrend(ctx, startTime, endTime, granularity, limit, sortBy)
+	}
+	trend, err := repo.GetUserUsageTrendWithUsageFilters(ctx, startTime, endTime, granularity, limit, sortBy, filters)
+	if err != nil {
+		return nil, fmt.Errorf("get user usage trend with filters: %w", err)
 	}
 	return trend, nil
 }

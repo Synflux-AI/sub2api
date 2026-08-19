@@ -17,10 +17,8 @@ import (
 // status>=400 由调用方按需追加（与 buildErrorWhere 保持一致，不在此写死）。
 func buildErrorEntityWhere(filter *service.OpsDashboardFilter, start, end time.Time, startIndex int) (where string, args []any, nextIndex int) {
 	platform := ""
-	groupID := (*int64)(nil)
 	if filter != nil {
 		platform = strings.TrimSpace(strings.ToLower(filter.Platform))
-		groupID = filter.GroupID
 	}
 
 	idx := startIndex
@@ -36,10 +34,8 @@ func buildErrorEntityWhere(filter *service.OpsDashboardFilter, start, end time.T
 
 	clauses = append(clauses, "is_count_tokens = FALSE")
 
-	if groupID != nil && *groupID > 0 {
-		args = append(args, *groupID)
-		clauses = append(clauses, fmt.Sprintf("group_id = $%d", idx))
-		idx++
+	if filter != nil {
+		clauses, args, idx = appendOpsIDWhereCondition(clauses, args, "group_id", filter.GroupID, filter.GroupIDs, idx)
 	}
 	if platform != "" {
 		args = append(args, platform)
@@ -47,26 +43,10 @@ func buildErrorEntityWhere(filter *service.OpsDashboardFilter, start, end time.T
 		idx++
 	}
 	if filter != nil {
-		if filter.UserID != nil && *filter.UserID > 0 {
-			args = append(args, *filter.UserID)
-			clauses = append(clauses, fmt.Sprintf("user_id = $%d", idx))
-			idx++
-		}
-		if filter.AccountID != nil && *filter.AccountID > 0 {
-			args = append(args, *filter.AccountID)
-			clauses = append(clauses, fmt.Sprintf("account_id = $%d", idx))
-			idx++
-		}
-		if filter.APIKeyID != nil && *filter.APIKeyID > 0 {
-			args = append(args, *filter.APIKeyID)
-			clauses = append(clauses, fmt.Sprintf("api_key_id = $%d", idx))
-			idx++
-		}
-		if m := strings.TrimSpace(filter.Model); m != "" {
-			args = append(args, m)
-			clauses = append(clauses, fmt.Sprintf("COALESCE(requested_model, model, '') = $%d", idx))
-			idx++
-		}
+		clauses, args, idx = appendOpsIDWhereCondition(clauses, args, "user_id", filter.UserID, filter.UserIDs, idx)
+		clauses, args, idx = appendOpsIDWhereCondition(clauses, args, "account_id", filter.AccountID, filter.AccountIDs, idx)
+		clauses, args, idx = appendOpsIDWhereCondition(clauses, args, "api_key_id", filter.APIKeyID, filter.APIKeyIDs, idx)
+		clauses, args, idx = appendOpsRequestedModelWhereConditions(clauses, args, filter.Model, filter.Models, "", idx)
 	}
 
 	where = "WHERE " + strings.Join(clauses, " AND ")
@@ -79,10 +59,8 @@ func buildErrorEntityWhere(filter *service.OpsDashboardFilter, start, end time.T
 // 使分母成功侧随实体下钻同步缩小，与错误侧口径对齐。否则分母偏大、错误率偏低。
 func buildUsageEntityWhere(filter *service.OpsDashboardFilter, start, end time.Time, startIndex int) (join string, where string, args []any, nextIndex int) {
 	platform := ""
-	groupID := (*int64)(nil)
 	if filter != nil {
 		platform = strings.TrimSpace(strings.ToLower(filter.Platform))
-		groupID = filter.GroupID
 	}
 
 	idx := startIndex
@@ -96,10 +74,8 @@ func buildUsageEntityWhere(filter *service.OpsDashboardFilter, start, end time.T
 	clauses = append(clauses, fmt.Sprintf("ul.created_at < $%d", idx))
 	idx++
 
-	if groupID != nil && *groupID > 0 {
-		args = append(args, *groupID)
-		clauses = append(clauses, fmt.Sprintf("ul.group_id = $%d", idx))
-		idx++
+	if filter != nil {
+		clauses, args, idx = appendOpsIDWhereCondition(clauses, args, "ul.group_id", filter.GroupID, filter.GroupIDs, idx)
 	}
 	if platform != "" {
 		// 与 buildUsageWhere 一致：优先 group.platform，回退 account.platform，避免漏掉 group_id 为 NULL 的行。
@@ -109,26 +85,10 @@ func buildUsageEntityWhere(filter *service.OpsDashboardFilter, start, end time.T
 		idx++
 	}
 	if filter != nil {
-		if filter.UserID != nil && *filter.UserID > 0 {
-			args = append(args, *filter.UserID)
-			clauses = append(clauses, fmt.Sprintf("ul.user_id = $%d", idx))
-			idx++
-		}
-		if filter.AccountID != nil && *filter.AccountID > 0 {
-			args = append(args, *filter.AccountID)
-			clauses = append(clauses, fmt.Sprintf("ul.account_id = $%d", idx))
-			idx++
-		}
-		if filter.APIKeyID != nil && *filter.APIKeyID > 0 {
-			args = append(args, *filter.APIKeyID)
-			clauses = append(clauses, fmt.Sprintf("ul.api_key_id = $%d", idx))
-			idx++
-		}
-		if m := strings.TrimSpace(filter.Model); m != "" {
-			args = append(args, m)
-			clauses = append(clauses, fmt.Sprintf("COALESCE(ul.requested_model, ul.model, '') = $%d", idx))
-			idx++
-		}
+		clauses, args, idx = appendOpsIDWhereCondition(clauses, args, "ul.user_id", filter.UserID, filter.UserIDs, idx)
+		clauses, args, idx = appendOpsIDWhereCondition(clauses, args, "ul.account_id", filter.AccountID, filter.AccountIDs, idx)
+		clauses, args, idx = appendOpsIDWhereCondition(clauses, args, "ul.api_key_id", filter.APIKeyID, filter.APIKeyIDs, idx)
+		clauses, args, idx = appendOpsRequestedModelWhereConditions(clauses, args, filter.Model, filter.Models, "ul", idx)
 	}
 
 	where = "WHERE " + strings.Join(clauses, " AND ")

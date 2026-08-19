@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/usagestats"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
@@ -80,7 +81,7 @@ var opsErrorBreakdownDims = map[string]opsBreakdownDim{
 	"account":      {keyExpr: "account_id", joinSQL: "LEFT JOIN accounts a ON a.id = g.k", labelExpr: "a.name"},
 	"api_key":      {keyExpr: "api_key_id", joinSQL: "LEFT JOIN api_keys ak ON ak.id = g.k", labelExpr: "ak.name"},
 	"group":        {keyExpr: "group_id", joinSQL: "LEFT JOIN groups grp ON grp.id = g.k", labelExpr: "grp.name"},
-	"model":        {keyExpr: "COALESCE(requested_model, model, '')"},
+	"model":        {keyExpr: resolveModelDimensionExpression(usagestats.ModelSourceRequested)},
 	"status_code":  {keyExpr: "COALESCE(upstream_status_code, status_code, 0)"},
 	"error_type":   {keyExpr: "error_type"},
 	"error_owner":  {keyExpr: "error_owner"},

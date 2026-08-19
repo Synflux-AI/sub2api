@@ -16,9 +16,11 @@ import (
 
 type dashboardUsageRepoCacheProbe struct {
 	service.UsageLogRepository
-	trendCalls      atomic.Int32
-	usersTrendCalls atomic.Int32
-	usersTrendSorts []string
+	trendCalls        atomic.Int32
+	trendFilters      []usagestats.UsageLogFilters
+	usersTrendCalls   atomic.Int32
+	usersTrendSorts   []string
+	usersTrendFilters []usagestats.UsageLogFilters
 }
 
 func (r *dashboardUsageRepoCacheProbe) GetUsageTrendWithUsageFilters(
@@ -27,6 +29,7 @@ func (r *dashboardUsageRepoCacheProbe) GetUsageTrendWithUsageFilters(
 	granularity string,
 	filters usagestats.UsageLogFilters,
 ) ([]usagestats.TrendDataPoint, error) {
+	r.trendFilters = append(r.trendFilters, filters)
 	return r.GetUsageTrendWithFilters(ctx, startTime, endTime, granularity, filters.UserID, filters.APIKeyID, filters.AccountID, filters.GroupID, filters.Model, filters.RequestType, filters.Stream, filters.BillingType)
 }
 
@@ -68,6 +71,18 @@ func (r *dashboardUsageRepoCacheProbe) GetUserUsageTrend(
 		Cost:       2,
 		ActualCost: 1,
 	}}, nil
+}
+
+func (r *dashboardUsageRepoCacheProbe) GetUserUsageTrendWithUsageFilters(
+	ctx context.Context,
+	startTime, endTime time.Time,
+	granularity string,
+	limit int,
+	sortBy string,
+	filters usagestats.UsageLogFilters,
+) ([]usagestats.UserUsageTrendPoint, error) {
+	r.usersTrendFilters = append(r.usersTrendFilters, filters)
+	return r.GetUserUsageTrend(ctx, startTime, endTime, granularity, limit, sortBy)
 }
 
 func resetDashboardReadCachesForTest() {
@@ -128,6 +143,26 @@ func TestDashboardHandler_GetUsageTrend_CachesLatencySeparately(t *testing.T) {
 	require.Equal(t, int32(2), repo.trendCalls.Load())
 }
 
+func TestDashboardHandler_GetUsageTrend_CachedModelUsesRequestedSource(t *testing.T) {
+	t.Cleanup(resetDashboardReadCachesForTest)
+	resetDashboardReadCachesForTest()
+
+	gin.SetMode(gin.TestMode)
+	repo := &dashboardUsageRepoCacheProbe{}
+	handler := NewDashboardHandler(service.NewDashboardService(repo, nil, nil, nil), nil)
+	router := gin.New()
+	router.GET("/admin/dashboard/trend", handler.GetUsageTrend)
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/dashboard/trend?start_date=2026-03-01&end_date=2026-03-07&model=public-model", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Len(t, repo.trendFilters, 1)
+	require.Equal(t, "public-model", repo.trendFilters[0].Model)
+	require.Equal(t, usagestats.ModelSourceRequested, repo.trendFilters[0].ModelFilterSource)
+}
+
 func TestDashboardHandler_GetUserUsageTrend_UsesCache(t *testing.T) {
 	t.Cleanup(resetDashboardReadCachesForTest)
 	resetDashboardReadCachesForTest()
@@ -172,4 +207,29 @@ func TestDashboardHandler_GetUserUsageTrend_CachesSortSeparately(t *testing.T) {
 	}
 	require.Equal(t, int32(2), repo.usersTrendCalls.Load())
 	require.Equal(t, []string{"actual_cost", "total_tokens"}, repo.usersTrendSorts)
+}
+
+func TestDashboardHandler_GetUserUsageTrend_AppliesFiltersAndNormalizesCacheKey(t *testing.T) {
+	t.Cleanup(resetDashboardReadCachesForTest)
+	resetDashboardReadCachesForTest()
+
+	gin.SetMode(gin.TestMode)
+	repo := &dashboardUsageRepoCacheProbe{}
+	handler := NewDashboardHandler(service.NewDashboardService(repo, nil, nil, nil), nil)
+	router := gin.New()
+	router.GET("/admin/dashboard/users-trend", handler.GetUserUsageTrend)
+
+	for _, users := range []string{"7,2", "2,7"} {
+		req := httptest.NewRequest(http.MethodGet, "/admin/dashboard/users-trend?start_date=2026-03-01&end_date=2026-03-07&user_id="+users+"&group_id=4&model=public-model", nil)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		require.Equal(t, http.StatusOK, rec.Code)
+	}
+
+	require.Equal(t, int32(1), repo.usersTrendCalls.Load())
+	require.Len(t, repo.usersTrendFilters, 1)
+	require.Equal(t, []int64{7, 2}, repo.usersTrendFilters[0].UserIDs)
+	require.Equal(t, int64(4), repo.usersTrendFilters[0].GroupID)
+	require.Equal(t, "public-model", repo.usersTrendFilters[0].Model)
+	require.Equal(t, usagestats.ModelSourceRequested, repo.usersTrendFilters[0].ModelFilterSource)
 }

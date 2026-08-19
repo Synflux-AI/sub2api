@@ -484,3 +484,18 @@ func (s *UsageService) GetStatsWithFilters(ctx context.Context, filters usagesta
 	}
 	return stats, nil
 }
+
+func (s *UsageService) GetUsageFilterOptions(ctx context.Context, startTime, endTime time.Time, filters usagestats.UsageLogFilters) (*usagestats.UsageFilterOptions, error) {
+	type filterOptionsRepo interface {
+		GetUsageFilterOptions(context.Context, time.Time, time.Time, usagestats.UsageLogFilters) (*usagestats.UsageFilterOptions, error)
+	}
+	repo, ok := s.usageRepo.(filterOptionsRepo)
+	if !ok {
+		return nil, fmt.Errorf("usage filter options unavailable")
+	}
+	options, err := repo.GetUsageFilterOptions(ctx, startTime, endTime, filters)
+	if err != nil {
+		return nil, fmt.Errorf("get usage filter options: %w", err)
+	}
+	return options, nil
+}

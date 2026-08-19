@@ -298,13 +298,18 @@ type PlatformDashboardStats struct {
 
 // UsageLogFilters represents filters for usage log queries
 type UsageLogFilters struct {
-	UserID    int64
-	APIKeyID  int64
-	AccountID int64
-	GroupID   int64
-	RequestID string
-	TraceID   string
-	Model     string
+	UserID     int64
+	UserIDs    []int64
+	APIKeyID   int64
+	APIKeyIDs  []int64
+	AccountID  int64
+	AccountIDs []int64
+	GroupID    int64
+	GroupIDs   []int64
+	RequestID  string
+	TraceID    string
+	Model      string
+	Models     []string
 	// ModelFilterSource controls how Model is matched. Empty preserves raw usage_logs.model semantics.
 	ModelFilterSource     string
 	RequestType           *int16
@@ -318,6 +323,27 @@ type UsageLogFilters struct {
 	IncludeLatency bool
 	// ExactTotal requests exact COUNT(*) for pagination. Default false for fast large-table paging.
 	ExactTotal bool
+}
+
+// UsageFilterOptions are the dimensions present in the current usage window
+// after applying the supplied filters.
+type UsageFilterOptions struct {
+	Users    []UsageFilterUser   `json:"users"`
+	Models   []string            `json:"models"`
+	Groups   []UsageFilterEntity `json:"groups"`
+	Accounts []UsageFilterEntity `json:"accounts"`
+}
+
+type UsageFilterUser struct {
+	ID    int64  `json:"id"`
+	Email string `json:"email"`
+	Notes string `json:"notes,omitempty"`
+}
+
+type UsageFilterEntity struct {
+	ID       int64  `json:"id"`
+	Name     string `json:"name"`
+	Platform string `json:"platform,omitempty"`
 }
 
 // UsageStats represents usage statistics

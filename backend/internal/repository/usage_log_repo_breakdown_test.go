@@ -95,7 +95,7 @@ func TestGetUserUsageTrendSort(t *testing.T) {
 			end := start.Add(24 * time.Hour)
 
 			mock.ExpectQuery(regexp.QuoteMeta("ORDER BY "+tc.orderBy+" DESC, user_id ASC")).
-				WithArgs(start, end, 8, start, end).
+				WithArgs(start, end, 8).
 				WillReturnRows(sqlmock.NewRows([]string{
 					"date", "user_id", "email", "username", "notes", "requests", "tokens", "cost", "actual_cost",
 				}))
@@ -115,7 +115,7 @@ func TestGetUserUsageTrendIncludesOthers(t *testing.T) {
 	end := start.Add(24 * time.Hour)
 
 	mock.ExpectQuery("__others__").
-		WithArgs(start, end, 8, start, end).
+		WithArgs(start, end, 8).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"date", "user_id", "key", "label", "email", "username", "notes", "requests", "tokens", "cost", "actual_cost",
 		}).AddRow("2026-07-01", 0, "__others__", "其他", "", "", "", 3, 300, 1.5, 1.2))

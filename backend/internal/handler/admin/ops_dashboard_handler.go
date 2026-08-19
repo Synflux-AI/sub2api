@@ -432,6 +432,14 @@ func (h *OpsHandler) GetDashboardErrorTrendByDim(c *gin.Context) {
 
 // parseOpsDashboardErrorFilter 解析 error 类 dashboard 接口的过滤参数（trend/distribution/breakdown 共用）。
 // 返回的 filter 已含时间窗 + platform/query_mode/group_id + 各维度过滤；非法入参返回 error。
+func parseOpsIDFilter(c *gin.Context, name string) (*int64, []int64, error) {
+	scalar, values, err := parseUsageIDFilter(c, name)
+	if err != nil || scalar == 0 {
+		return nil, values, err
+	}
+	return &scalar, nil, nil
+}
+
 func parseOpsDashboardErrorFilter(c *gin.Context, start, end time.Time) (*service.OpsDashboardFilter, error) {
 	filter := &service.OpsDashboardFilter{
 		StartTime: start,
@@ -439,31 +447,20 @@ func parseOpsDashboardErrorFilter(c *gin.Context, start, end time.Time) (*servic
 		Platform:  strings.TrimSpace(c.Query("platform")),
 		QueryMode: parseOpsQueryMode(c),
 	}
-	parseID := func(name string) (*int64, error) {
-		v := strings.TrimSpace(c.Query(name))
-		if v == "" {
-			return nil, nil
-		}
-		id, err := strconv.ParseInt(v, 10, 64)
-		if err != nil || id <= 0 {
-			return nil, fmt.Errorf("invalid %s", name)
-		}
-		return &id, nil
-	}
 	var err error
-	if filter.GroupID, err = parseID("group_id"); err != nil {
+	if filter.GroupID, filter.GroupIDs, err = parseOpsIDFilter(c, "group_id"); err != nil {
 		return nil, err
 	}
-	if filter.UserID, err = parseID("user_id"); err != nil {
+	if filter.UserID, filter.UserIDs, err = parseOpsIDFilter(c, "user_id"); err != nil {
 		return nil, err
 	}
-	if filter.AccountID, err = parseID("account_id"); err != nil {
+	if filter.AccountID, filter.AccountIDs, err = parseOpsIDFilter(c, "account_id"); err != nil {
 		return nil, err
 	}
-	if filter.APIKeyID, err = parseID("api_key_id"); err != nil {
+	if filter.APIKeyID, filter.APIKeyIDs, err = parseOpsIDFilter(c, "api_key_id"); err != nil {
 		return nil, err
 	}
-	filter.Model = strings.TrimSpace(c.Query("model"))
+	filter.Model, filter.Models = parseUsageModelFilter(c)
 	filter.ErrorOwner = strings.TrimSpace(c.Query("error_owner"))
 	filter.ErrorSource = strings.TrimSpace(c.Query("error_source"))
 	filter.ErrorType = strings.TrimSpace(c.Query("error_type"))
