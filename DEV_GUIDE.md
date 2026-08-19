@@ -68,6 +68,25 @@ npm install -g pnpm
   在途 PR 都要 rebase 并重跑约 10 分钟 CI。
 - `enforce_admins` 保持关闭，作为偶发失败时的逃生门。已知负载敏感的偶发测试见下方。
 
+### 飞书通知
+
+`CI` workflow 末尾的 `notify` job 调用 `tools/ci/feishu_notify.py`，把**整体 CI 结果**
+推一张飞书卡片（成功绿卡 / 失败红卡 / 有检查未报告则橙卡），成功与失败都会发。
+
+- 六项必需检查分散在 `CI` 与 `Security Scan` 两个 workflow，所以脚本不看当前 workflow
+  的结果，而是直接读 head SHA 上的 check-runs 做聚合，凑齐六项才发。任一 workflow
+  单独发卡都会在「CI 绿 + Security Scan 红」时误报成绿。
+- 没有用 `on: workflow_run`（GitHub 的标准聚合做法）：它**只从默认分支读取 workflow
+  文件**，而本仓默认分支是 `main`（上游同步分支）、主线是 `release`，只合进 `release`
+  会静默永不触发。
+- 失败卡片列出失败的 job 与**具体失败的 step** —— check-run 的 `id` 就是 Actions 的
+  job id，`GET /actions/jobs/{id}` 直接返回 `steps[].conclusion`，不必下载日志。
+- 需要仓库 secret `FEISHU_WEBHOOK`。缺这个 secret 时脚本静默跳过，所以 fork PR
+  （GitHub 不给 fork 传 secret）不会报错，只是没有通知。
+- 通知本身永不让 CI 失败：脚本顶层兜底所有异常并 `exit 0`。
+- `notify` 会多出一个同名 check-run，**不要**把它加进分支保护的必需检查。
+- 纯函数部分有单测：`cd tools/ci && python3 feishu_notify_test.py`，由 `shell` job 执行。
+
 ### 已知偶发失败
 
 以下测试断言的是全局分配计数或墙钟超时，会被同机负载影响，遇到时先确认改动无关再重跑，
