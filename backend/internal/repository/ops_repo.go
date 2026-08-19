@@ -974,6 +974,9 @@ func appendOpsRequestedModelWhereConditions(clauses []string, args []any, model 
 }
 
 func buildOpsErrorLogsWhere(filter *service.OpsErrorLogFilter) (string, []any) {
+	if filter == nil {
+		filter = &service.OpsErrorLogFilter{}
+	}
 	clauses := make([]string, 0, 12)
 	args := make([]any, 0, 12)
 	clauses = append(clauses, "1=1")

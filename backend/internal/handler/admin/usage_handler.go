@@ -68,7 +68,7 @@ func parseUsageIDFilter(c *gin.Context, key string) (int64, []int64, error) {
 	for _, part := range parts {
 		value, err := strconv.ParseInt(strings.TrimSpace(part), 10, 64)
 		if err != nil || value <= 0 {
-			return 0, nil, fmt.Errorf("Invalid %s", key)
+			return 0, nil, fmt.Errorf("invalid %s", key)
 		}
 		values = append(values, value)
 	}
@@ -404,11 +404,11 @@ func parseUsageFilterOptionsTimeRange(c *gin.Context) (time.Time, time.Time, err
 		}
 		start, err := time.Parse(time.RFC3339, startRaw)
 		if err != nil {
-			return time.Time{}, time.Time{}, fmt.Errorf("Invalid start_time format, use RFC3339")
+			return time.Time{}, time.Time{}, fmt.Errorf("invalid start_time format, use RFC3339")
 		}
 		end, err := time.Parse(time.RFC3339, endRaw)
 		if err != nil {
-			return time.Time{}, time.Time{}, fmt.Errorf("Invalid end_time format, use RFC3339")
+			return time.Time{}, time.Time{}, fmt.Errorf("invalid end_time format, use RFC3339")
 		}
 		if !start.Before(end) {
 			return time.Time{}, time.Time{}, fmt.Errorf("start_time must be before end_time")

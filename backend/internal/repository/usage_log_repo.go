@@ -52,18 +52,6 @@ func safeDateFormat(granularity string) string {
 	return "YYYY-MM-DD"
 }
 
-// appendRawUsageLogModelWhereCondition keeps direct model filters on the raw model column for backward
-// compatibility with historical rows. Requested/upstream analytics must use
-// resolveModelDimensionExpression instead.
-func appendRawUsageLogModelWhereCondition(conditions []string, args []any, model string) ([]string, []any) {
-	if strings.TrimSpace(model) == "" {
-		return conditions, args
-	}
-	conditions = append(conditions, fmt.Sprintf("%s = $%d", rawUsageLogModelColumn, len(args)+1))
-	args = append(args, model)
-	return conditions, args
-}
-
 func appendUsageLogBillingModeWhereCondition(conditions []string, args []any, billingMode string) ([]string, []any) {
 	return appendUsageLogBillingModeWhereConditionWithAlias(conditions, args, billingMode, "")
 }
@@ -100,10 +88,6 @@ func appendUsageLogBillingModeQueryFilter(query string, args []any, billingMode 
 		return query, args
 	}
 	return query + " AND " + conditions[0], args
-}
-
-func appendUsageLogModelWhereCondition(conditions []string, args []any, model string, source string) ([]string, []any) {
-	return appendUsageLogModelWhereConditionWithAlias(conditions, args, model, source, "")
 }
 
 func appendUsageLogModelWhereConditionWithAlias(conditions []string, args []any, model string, source, alias string) ([]string, []any) {
@@ -178,30 +162,6 @@ func appendUsageLogModelWhereConditionsWithAlias(conditions []string, args []any
 	return append(conditions, fmt.Sprintf("%s IN (%s)", expression, strings.Join(places, ", "))), args
 }
 
-// appendRawUsageLogModelQueryFilter keeps direct model filters on the raw model column for backward
-// compatibility with historical rows. Requested/upstream analytics must use
-// resolveModelDimensionExpression instead.
-func appendRawUsageLogModelQueryFilter(query string, args []any, model string) (string, []any) {
-	if strings.TrimSpace(model) == "" {
-		return query, args
-	}
-	query += fmt.Sprintf(" AND %s = $%d", rawUsageLogModelColumn, len(args)+1)
-	args = append(args, model)
-	return query, args
-}
-
-func appendUsageLogModelQueryFilter(query string, args []any, model string, source string) (string, []any) {
-	if strings.TrimSpace(source) == "" {
-		return appendRawUsageLogModelQueryFilter(query, args, model)
-	}
-	if strings.TrimSpace(model) == "" {
-		return query, args
-	}
-	query += fmt.Sprintf(" AND %s = $%d", resolveModelDimensionExpression(source), len(args)+1)
-	args = append(args, model)
-	return query, args
-}
-
 type usageLogRepository struct {
 	client *dbent.Client
 	sql    sqlExecutor
@@ -247,20 +207,6 @@ func appendRequestTypeOrStreamWhereCondition(conditions []string, args []any, re
 		args = append(args, *stream)
 	}
 	return conditions, args
-}
-
-func appendRequestTypeOrStreamQueryFilter(query string, args []any, requestType *int16, stream *bool) (string, []any) {
-	if requestType != nil {
-		condition, conditionArgs := buildRequestTypeFilterCondition(len(args)+1, *requestType)
-		query += " AND " + condition
-		args = append(args, conditionArgs...)
-		return query, args
-	}
-	if stream != nil {
-		query += fmt.Sprintf(" AND stream = $%d", len(args)+1)
-		args = append(args, *stream)
-	}
-	return query, args
 }
 
 // buildRequestTypeFilterCondition 在 request_type 过滤时兼容 legacy 字段，避免历史数据漏查。

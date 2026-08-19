@@ -24,13 +24,13 @@ func (r *usageLogRepository) GetUsageFilterOptions(ctx context.Context, startTim
 	for rows.Next() {
 		var item usagestats.UsageFilterUser
 		if err := rows.Scan(&item.ID, &item.Email, &item.Notes); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		result.Users = append(result.Users, item)
 	}
 	if err := rows.Err(); err != nil {
-		rows.Close()
+		_ = rows.Close()
 		return nil, err
 	}
 	if err := rows.Close(); err != nil {
@@ -46,13 +46,13 @@ func (r *usageLogRepository) GetUsageFilterOptions(ctx context.Context, startTim
 	for rows.Next() {
 		var model string
 		if err := rows.Scan(&model); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		result.Models = append(result.Models, model)
 	}
 	if err := rows.Err(); err != nil {
-		rows.Close()
+		_ = rows.Close()
 		return nil, err
 	}
 	if err := rows.Close(); err != nil {
@@ -67,13 +67,13 @@ func (r *usageLogRepository) GetUsageFilterOptions(ctx context.Context, startTim
 	for rows.Next() {
 		var item usagestats.UsageFilterEntity
 		if err := rows.Scan(&item.ID, &item.Name, &item.Platform); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		result.Groups = append(result.Groups, item)
 	}
 	if err := rows.Err(); err != nil {
-		rows.Close()
+		_ = rows.Close()
 		return nil, err
 	}
 	if err := rows.Close(); err != nil {
@@ -88,13 +88,13 @@ func (r *usageLogRepository) GetUsageFilterOptions(ctx context.Context, startTim
 	for rows.Next() {
 		var item usagestats.UsageFilterEntity
 		if err := rows.Scan(&item.ID, &item.Name, &item.Platform); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		result.Accounts = append(result.Accounts, item)
 	}
 	if err := rows.Err(); err != nil {
-		rows.Close()
+		_ = rows.Close()
 		return nil, err
 	}
 	if err := rows.Close(); err != nil {

@@ -907,14 +907,6 @@ func (r *usageLogRepository) getEndpointStatsByColumnWithUsageFilters(ctx contex
 	return results, nil
 }
 
-func (r *usageLogRepository) getEndpointPathStatsWithFilters(ctx context.Context, startTime, endTime time.Time, userID, apiKeyID, accountID, groupID int64, model string, modelSource string, requestType *int16, stream *bool, billingType *int8, billingMode string) (results []EndpointStat, err error) {
-	return r.getEndpointPathStatsWithUsageFilters(ctx, startTime, endTime, UsageLogFilters{
-		UserID: userID, APIKeyID: apiKeyID, AccountID: accountID, GroupID: groupID,
-		Model: model, ModelFilterSource: modelSource, RequestType: requestType, Stream: stream,
-		BillingType: billingType, BillingMode: billingMode,
-	})
-}
-
 func (r *usageLogRepository) getEndpointPathStatsWithUsageFilters(ctx context.Context, startTime, endTime time.Time, filters UsageLogFilters) (results []EndpointStat, err error) {
 	actualCostExpr := "COALESCE(SUM(actual_cost), 0) as actual_cost"
 	if filters.AccountID > 0 && filters.UserID == 0 && len(filters.UserIDs) == 0 && filters.APIKeyID == 0 && len(filters.APIKeyIDs) == 0 {
