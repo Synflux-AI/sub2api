@@ -2,6 +2,7 @@ package admin
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -57,6 +58,44 @@ type CreateUsageCleanupTaskRequest struct {
 	Timezone    string  `json:"timezone"`
 }
 
+func parseUsageIDFilter(c *gin.Context, key string) (int64, []int64, error) {
+	raw := strings.TrimSpace(c.Query(key))
+	if raw == "" {
+		return 0, nil, nil
+	}
+	parts := strings.Split(raw, ",")
+	values := make([]int64, 0, len(parts))
+	for _, part := range parts {
+		value, err := strconv.ParseInt(strings.TrimSpace(part), 10, 64)
+		if err != nil || value <= 0 {
+			return 0, nil, fmt.Errorf("Invalid %s", key)
+		}
+		values = append(values, value)
+	}
+	if len(values) == 1 {
+		return values[0], nil, nil
+	}
+	return 0, values, nil
+}
+
+func parseUsageModelFilter(c *gin.Context) (string, []string) {
+	raw := strings.TrimSpace(c.Query("model"))
+	if raw == "" {
+		return "", nil
+	}
+	parts := strings.Split(raw, ",")
+	if len(parts) == 1 {
+		return raw, nil
+	}
+	models := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if value := strings.TrimSpace(part); value != "" {
+			models = append(models, value)
+		}
+	}
+	return "", models
+}
+
 // List handles listing all usage records with filters
 // GET /api/v1/admin/usage
 func (h *UsageHandler) List(c *gin.Context) {
@@ -72,44 +111,28 @@ func (h *UsageHandler) List(c *gin.Context) {
 	}
 
 	// Parse filters
-	var userID, apiKeyID, accountID, groupID int64
-	if userIDStr := c.Query("user_id"); userIDStr != "" {
-		id, err := strconv.ParseInt(userIDStr, 10, 64)
-		if err != nil {
-			response.BadRequest(c, "Invalid user_id")
-			return
-		}
-		userID = id
+	userID, userIDs, err := parseUsageIDFilter(c, "user_id")
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	apiKeyID, apiKeyIDs, err := parseUsageIDFilter(c, "api_key_id")
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	accountID, accountIDs, err := parseUsageIDFilter(c, "account_id")
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	groupID, groupIDs, err := parseUsageIDFilter(c, "group_id")
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
 	}
 
-	if apiKeyIDStr := c.Query("api_key_id"); apiKeyIDStr != "" {
-		id, err := strconv.ParseInt(apiKeyIDStr, 10, 64)
-		if err != nil {
-			response.BadRequest(c, "Invalid api_key_id")
-			return
-		}
-		apiKeyID = id
-	}
-
-	if accountIDStr := c.Query("account_id"); accountIDStr != "" {
-		id, err := strconv.ParseInt(accountIDStr, 10, 64)
-		if err != nil {
-			response.BadRequest(c, "Invalid account_id")
-			return
-		}
-		accountID = id
-	}
-
-	if groupIDStr := c.Query("group_id"); groupIDStr != "" {
-		id, err := strconv.ParseInt(groupIDStr, 10, 64)
-		if err != nil {
-			response.BadRequest(c, "Invalid group_id")
-			return
-		}
-		groupID = id
-	}
-
-	model := c.Query("model")
+	model, models := parseUsageModelFilter(c)
 	requestID := strings.TrimSpace(c.Query("request_id"))
 	traceID := strings.TrimSpace(c.Query("trace_id"))
 	billingMode := strings.TrimSpace(c.Query("billing_mode"))
@@ -185,12 +208,17 @@ func (h *UsageHandler) List(c *gin.Context) {
 	}
 	filters := usagestats.UsageLogFilters{
 		UserID:                userID,
+		UserIDs:               userIDs,
 		APIKeyID:              apiKeyID,
+		APIKeyIDs:             apiKeyIDs,
 		AccountID:             accountID,
+		AccountIDs:            accountIDs,
 		GroupID:               groupID,
+		GroupIDs:              groupIDs,
 		RequestID:             requestID,
 		TraceID:               traceID,
 		Model:                 model,
+		Models:                models,
 		ModelFilterSource:     usagestats.ModelSourceRequested,
 		RequestType:           requestType,
 		Stream:                stream,
@@ -219,44 +247,28 @@ func (h *UsageHandler) List(c *gin.Context) {
 // GET /api/v1/admin/usage/stats
 func (h *UsageHandler) Stats(c *gin.Context) {
 	// Parse filters - same as List endpoint
-	var userID, apiKeyID, accountID, groupID int64
-	if userIDStr := c.Query("user_id"); userIDStr != "" {
-		id, err := strconv.ParseInt(userIDStr, 10, 64)
-		if err != nil {
-			response.BadRequest(c, "Invalid user_id")
-			return
-		}
-		userID = id
+	userID, userIDs, err := parseUsageIDFilter(c, "user_id")
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	apiKeyID, apiKeyIDs, err := parseUsageIDFilter(c, "api_key_id")
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	accountID, accountIDs, err := parseUsageIDFilter(c, "account_id")
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	groupID, groupIDs, err := parseUsageIDFilter(c, "group_id")
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
 	}
 
-	if apiKeyIDStr := c.Query("api_key_id"); apiKeyIDStr != "" {
-		id, err := strconv.ParseInt(apiKeyIDStr, 10, 64)
-		if err != nil {
-			response.BadRequest(c, "Invalid api_key_id")
-			return
-		}
-		apiKeyID = id
-	}
-
-	if accountIDStr := c.Query("account_id"); accountIDStr != "" {
-		id, err := strconv.ParseInt(accountIDStr, 10, 64)
-		if err != nil {
-			response.BadRequest(c, "Invalid account_id")
-			return
-		}
-		accountID = id
-	}
-
-	if groupIDStr := c.Query("group_id"); groupIDStr != "" {
-		id, err := strconv.ParseInt(groupIDStr, 10, 64)
-		if err != nil {
-			response.BadRequest(c, "Invalid group_id")
-			return
-		}
-		groupID = id
-	}
-
-	model := c.Query("model")
+	model, models := parseUsageModelFilter(c)
 	billingMode := strings.TrimSpace(c.Query("billing_mode"))
 
 	var requestType *int16
@@ -339,10 +351,15 @@ func (h *UsageHandler) Stats(c *gin.Context) {
 	// Build filters and call GetStatsWithFilters
 	filters := usagestats.UsageLogFilters{
 		UserID:                userID,
+		UserIDs:               userIDs,
 		APIKeyID:              apiKeyID,
+		APIKeyIDs:             apiKeyIDs,
 		AccountID:             accountID,
+		AccountIDs:            accountIDs,
 		GroupID:               groupID,
+		GroupIDs:              groupIDs,
 		Model:                 model,
+		Models:                models,
 		ModelFilterSource:     usagestats.ModelSourceRequested,
 		RequestType:           requestType,
 		Stream:                stream,
@@ -374,6 +391,97 @@ func (h *UsageHandler) Stats(c *gin.Context) {
 	}
 
 	response.Success(c, stats)
+}
+
+// FilterOptions returns only dimension values that occur in the selected
+// time window and filter intersection.
+func parseUsageFilterOptionsTimeRange(c *gin.Context) (time.Time, time.Time, error) {
+	startRaw := strings.TrimSpace(c.Query("start_time"))
+	endRaw := strings.TrimSpace(c.Query("end_time"))
+	if startRaw != "" || endRaw != "" {
+		if startRaw == "" || endRaw == "" {
+			return time.Time{}, time.Time{}, fmt.Errorf("start_time and end_time are required together")
+		}
+		start, err := time.Parse(time.RFC3339, startRaw)
+		if err != nil {
+			return time.Time{}, time.Time{}, fmt.Errorf("Invalid start_time format, use RFC3339")
+		}
+		end, err := time.Parse(time.RFC3339, endRaw)
+		if err != nil {
+			return time.Time{}, time.Time{}, fmt.Errorf("Invalid end_time format, use RFC3339")
+		}
+		if !start.Before(end) {
+			return time.Time{}, time.Time{}, fmt.Errorf("start_time must be before end_time")
+		}
+		return start, end, nil
+	}
+
+	userTZ := c.Query("timezone")
+	startTime, endTime := time.Time{}, time.Time{}
+	var err error
+	if raw := c.Query("start_date"); raw != "" {
+		startTime, err = timezone.ParseInUserLocation("2006-01-02", raw, userTZ)
+		if err != nil {
+			return time.Time{}, time.Time{}, fmt.Errorf("Invalid start_date format, use YYYY-MM-DD")
+		}
+	}
+	if raw := c.Query("end_date"); raw != "" {
+		endTime, err = timezone.ParseInUserLocation("2006-01-02", raw, userTZ)
+		if err != nil {
+			return time.Time{}, time.Time{}, fmt.Errorf("Invalid end_date format, use YYYY-MM-DD")
+		}
+		endTime = endTime.AddDate(0, 0, 1)
+	}
+	if startTime.IsZero() || endTime.IsZero() {
+		now := timezone.NowInUserLocation(userTZ)
+		if startTime.IsZero() {
+			startTime = timezone.StartOfDayInUserLocation(now, userTZ)
+		}
+		if endTime.IsZero() {
+			endTime = now
+		}
+	}
+	return startTime, endTime, nil
+}
+
+func (h *UsageHandler) FilterOptions(c *gin.Context) {
+	userID, userIDs, err := parseUsageIDFilter(c, "user_id")
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	apiKeyID, apiKeyIDs, err := parseUsageIDFilter(c, "api_key_id")
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	accountID, accountIDs, err := parseUsageIDFilter(c, "account_id")
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	groupID, groupIDs, err := parseUsageIDFilter(c, "group_id")
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	model, models := parseUsageModelFilter(c)
+	startTime, endTime, err := parseUsageFilterOptionsTimeRange(c)
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	options, err := h.usageService.GetUsageFilterOptions(c.Request.Context(), startTime, endTime, usagestats.UsageLogFilters{
+		UserID: userID, UserIDs: userIDs, APIKeyID: apiKeyID, APIKeyIDs: apiKeyIDs,
+		AccountID: accountID, AccountIDs: accountIDs, GroupID: groupID, GroupIDs: groupIDs,
+		Model: model, Models: models, ModelFilterSource: usagestats.ModelSourceRequested,
+		StartTime: &startTime, EndTime: &endTime,
+	})
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, options)
 }
 
 // SearchUsers handles searching users by email keyword

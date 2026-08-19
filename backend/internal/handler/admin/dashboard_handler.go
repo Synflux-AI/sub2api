@@ -22,6 +22,10 @@ type DashboardHandler struct {
 	startTime          time.Time // Server start time for uptime calculation
 }
 
+func hasUsageFilterLists(filters usagestats.UsageLogFilters) bool {
+	return len(filters.UserIDs) > 0 || len(filters.APIKeyIDs) > 0 || len(filters.AccountIDs) > 0 || len(filters.GroupIDs) > 0 || len(filters.Models) > 0
+}
+
 // NewDashboardHandler creates a new admin dashboard handler
 func NewDashboardHandler(dashboardService *service.DashboardService, aggregationService *service.DashboardAggregationService) *DashboardHandler {
 	return &DashboardHandler{
@@ -207,36 +211,33 @@ func (h *DashboardHandler) GetUsageTrend(c *gin.Context) {
 	granularity := c.DefaultQuery("granularity", "day")
 
 	// Parse optional filter params
-	var userID, apiKeyID, accountID, groupID int64
-	var model string
+	userID, userIDs, err := parseUsageIDFilter(c, "user_id")
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	apiKeyID, apiKeyIDs, err := parseUsageIDFilter(c, "api_key_id")
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	accountID, accountIDs, err := parseUsageIDFilter(c, "account_id")
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	groupID, groupIDs, err := parseUsageIDFilter(c, "group_id")
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	model, models := parseUsageModelFilter(c)
 	var requestType *int16
 	var stream *bool
 	var billingType *int8
+	var upstreamModelMismatch *bool
 	includeLatency := false
 
-	if userIDStr := c.Query("user_id"); userIDStr != "" {
-		if id, err := strconv.ParseInt(userIDStr, 10, 64); err == nil {
-			userID = id
-		}
-	}
-	if apiKeyIDStr := c.Query("api_key_id"); apiKeyIDStr != "" {
-		if id, err := strconv.ParseInt(apiKeyIDStr, 10, 64); err == nil {
-			apiKeyID = id
-		}
-	}
-	if accountIDStr := c.Query("account_id"); accountIDStr != "" {
-		if id, err := strconv.ParseInt(accountIDStr, 10, 64); err == nil {
-			accountID = id
-		}
-	}
-	if groupIDStr := c.Query("group_id"); groupIDStr != "" {
-		if id, err := strconv.ParseInt(groupIDStr, 10, 64); err == nil {
-			groupID = id
-		}
-	}
-	if modelStr := c.Query("model"); modelStr != "" {
-		model = modelStr
-	}
 	if requestTypeStr := strings.TrimSpace(c.Query("request_type")); requestTypeStr != "" {
 		parsed, err := service.ParseUsageRequestType(requestTypeStr)
 		if err != nil {
@@ -262,7 +263,7 @@ func (h *DashboardHandler) GetUsageTrend(c *gin.Context) {
 			return
 		}
 	}
-	upstreamModelMismatch, err := parseOptionalBoolDashboardFilter(c, "upstream_model_mismatch")
+	upstreamModelMismatch, err = parseOptionalBoolDashboardFilter(c, "upstream_model_mismatch")
 	if err != nil {
 		response.BadRequest(c, "Invalid upstream_model_mismatch value, use true or false")
 		return
@@ -278,7 +279,13 @@ func (h *DashboardHandler) GetUsageTrend(c *gin.Context) {
 
 	// group_by=model 返回按天×模型的明细行(每行带 model),默认行为不变;该路径不走快照缓存。
 	if c.Query("group_by") == "model" {
-		trend, err := h.dashboardService.GetUsageTrendByModelWithFilters(c.Request.Context(), startTime, endTime, granularity, userID, apiKeyID, accountID, groupID, model, requestType, stream, billingType, upstreamModelMismatch)
+		filters := usagestats.UsageLogFilters{UserID: userID, UserIDs: userIDs, APIKeyID: apiKeyID, APIKeyIDs: apiKeyIDs, AccountID: accountID, AccountIDs: accountIDs, GroupID: groupID, GroupIDs: groupIDs, Model: model, Models: models, ModelFilterSource: usagestats.ModelSourceRequested, RequestType: requestType, Stream: stream, BillingType: billingType, UpstreamModelMismatch: upstreamModelMismatch}
+		var trend []usagestats.TrendModelDataPoint
+		if hasUsageFilterLists(filters) {
+			trend, err = h.dashboardService.GetUsageTrendByModelWithUsageFilters(c.Request.Context(), startTime, endTime, granularity, filters)
+		} else {
+			trend, err = h.dashboardService.GetUsageTrendByModelWithFilters(c.Request.Context(), startTime, endTime, granularity, userID, apiKeyID, accountID, groupID, model, requestType, stream, billingType, upstreamModelMismatch)
+		}
 		if err != nil {
 			response.Error(c, 500, "Failed to get usage trend")
 			return
@@ -292,7 +299,14 @@ func (h *DashboardHandler) GetUsageTrend(c *gin.Context) {
 		return
 	}
 
-	trend, hit, err := h.getUsageTrendCached(c.Request.Context(), startTime, endTime, granularity, userID, apiKeyID, accountID, groupID, model, requestType, stream, billingType, upstreamModelMismatch, includeLatency)
+	filters := usagestats.UsageLogFilters{UserID: userID, UserIDs: userIDs, APIKeyID: apiKeyID, APIKeyIDs: apiKeyIDs, AccountID: accountID, AccountIDs: accountIDs, GroupID: groupID, GroupIDs: groupIDs, Model: model, Models: models, ModelFilterSource: usagestats.ModelSourceRequested, RequestType: requestType, Stream: stream, BillingType: billingType, UpstreamModelMismatch: upstreamModelMismatch, IncludeLatency: includeLatency}
+	var trend []usagestats.TrendDataPoint
+	var hit bool
+	if hasUsageFilterLists(filters) {
+		trend, err = h.dashboardService.GetUsageTrendWithUsageFilters(c.Request.Context(), startTime, endTime, granularity, filters)
+	} else {
+		trend, hit, err = h.getUsageTrendCached(c.Request.Context(), startTime, endTime, granularity, userID, apiKeyID, accountID, groupID, model, requestType, stream, billingType, upstreamModelMismatch, includeLatency)
+	}
 	if err != nil {
 		response.Error(c, 500, "Failed to get usage trend")
 		return
@@ -314,33 +328,33 @@ func (h *DashboardHandler) GetModelStats(c *gin.Context) {
 	startTime, endTime := parseTimeRange(c)
 
 	// Parse optional filter params
-	var userID, apiKeyID, accountID, groupID int64
+	userID, userIDs, err := parseUsageIDFilter(c, "user_id")
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	apiKeyID, apiKeyIDs, err := parseUsageIDFilter(c, "api_key_id")
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	accountID, accountIDs, err := parseUsageIDFilter(c, "account_id")
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	groupID, groupIDs, err := parseUsageIDFilter(c, "group_id")
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	model, models := parseUsageModelFilter(c)
 	modelSource := usagestats.ModelSourceRequested
 	var requestType *int16
 	var stream *bool
 	var billingType *int8
 	var upstreamModelMismatch *bool
 
-	if userIDStr := c.Query("user_id"); userIDStr != "" {
-		if id, err := strconv.ParseInt(userIDStr, 10, 64); err == nil {
-			userID = id
-		}
-	}
-	if apiKeyIDStr := c.Query("api_key_id"); apiKeyIDStr != "" {
-		if id, err := strconv.ParseInt(apiKeyIDStr, 10, 64); err == nil {
-			apiKeyID = id
-		}
-	}
-	if accountIDStr := c.Query("account_id"); accountIDStr != "" {
-		if id, err := strconv.ParseInt(accountIDStr, 10, 64); err == nil {
-			accountID = id
-		}
-	}
-	if groupIDStr := c.Query("group_id"); groupIDStr != "" {
-		if id, err := strconv.ParseInt(groupIDStr, 10, 64); err == nil {
-			groupID = id
-		}
-	}
 	if rawModelSource := strings.TrimSpace(c.Query("model_source")); rawModelSource != "" {
 		if !usagestats.IsValidModelSource(rawModelSource) {
 			response.BadRequest(c, "Invalid model_source, use requested/upstream/mapping")
@@ -373,13 +387,20 @@ func (h *DashboardHandler) GetModelStats(c *gin.Context) {
 			return
 		}
 	}
-	upstreamModelMismatch, err := parseOptionalBoolDashboardFilter(c, "upstream_model_mismatch")
+	upstreamModelMismatch, err = parseOptionalBoolDashboardFilter(c, "upstream_model_mismatch")
 	if err != nil {
 		response.BadRequest(c, "Invalid upstream_model_mismatch value, use true or false")
 		return
 	}
 
-	stats, hit, err := h.getModelStatsCached(c.Request.Context(), startTime, endTime, userID, apiKeyID, accountID, groupID, modelSource, requestType, stream, billingType, upstreamModelMismatch)
+	filters := usagestats.UsageLogFilters{UserID: userID, UserIDs: userIDs, APIKeyID: apiKeyID, APIKeyIDs: apiKeyIDs, AccountID: accountID, AccountIDs: accountIDs, GroupID: groupID, GroupIDs: groupIDs, Model: model, Models: models, ModelFilterSource: modelSource, RequestType: requestType, Stream: stream, BillingType: billingType, UpstreamModelMismatch: upstreamModelMismatch}
+	var stats []usagestats.ModelStat
+	var hit bool
+	if hasUsageFilterLists(filters) || model != "" {
+		stats, err = h.dashboardService.GetModelStatsWithUsageFiltersBySource(c.Request.Context(), startTime, endTime, filters, modelSource)
+	} else {
+		stats, hit, err = h.getModelStatsCached(c.Request.Context(), startTime, endTime, userID, apiKeyID, accountID, groupID, modelSource, requestType, stream, billingType, upstreamModelMismatch)
+	}
 	if err != nil {
 		response.Error(c, 500, "Failed to get model statistics")
 		return
@@ -399,32 +420,32 @@ func (h *DashboardHandler) GetModelStats(c *gin.Context) {
 func (h *DashboardHandler) GetGroupStats(c *gin.Context) {
 	startTime, endTime := parseTimeRange(c)
 
-	var userID, apiKeyID, accountID, groupID int64
+	userID, userIDs, err := parseUsageIDFilter(c, "user_id")
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	apiKeyID, apiKeyIDs, err := parseUsageIDFilter(c, "api_key_id")
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	accountID, accountIDs, err := parseUsageIDFilter(c, "account_id")
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	groupID, groupIDs, err := parseUsageIDFilter(c, "group_id")
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	model, models := parseUsageModelFilter(c)
 	var requestType *int16
 	var stream *bool
 	var billingType *int8
 	var upstreamModelMismatch *bool
 
-	if userIDStr := c.Query("user_id"); userIDStr != "" {
-		if id, err := strconv.ParseInt(userIDStr, 10, 64); err == nil {
-			userID = id
-		}
-	}
-	if apiKeyIDStr := c.Query("api_key_id"); apiKeyIDStr != "" {
-		if id, err := strconv.ParseInt(apiKeyIDStr, 10, 64); err == nil {
-			apiKeyID = id
-		}
-	}
-	if accountIDStr := c.Query("account_id"); accountIDStr != "" {
-		if id, err := strconv.ParseInt(accountIDStr, 10, 64); err == nil {
-			accountID = id
-		}
-	}
-	if groupIDStr := c.Query("group_id"); groupIDStr != "" {
-		if id, err := strconv.ParseInt(groupIDStr, 10, 64); err == nil {
-			groupID = id
-		}
-	}
 	if requestTypeStr := strings.TrimSpace(c.Query("request_type")); requestTypeStr != "" {
 		parsed, err := service.ParseUsageRequestType(requestTypeStr)
 		if err != nil {
@@ -450,13 +471,20 @@ func (h *DashboardHandler) GetGroupStats(c *gin.Context) {
 			return
 		}
 	}
-	upstreamModelMismatch, err := parseOptionalBoolDashboardFilter(c, "upstream_model_mismatch")
+	upstreamModelMismatch, err = parseOptionalBoolDashboardFilter(c, "upstream_model_mismatch")
 	if err != nil {
 		response.BadRequest(c, "Invalid upstream_model_mismatch value, use true or false")
 		return
 	}
 
-	stats, hit, err := h.getGroupStatsCached(c.Request.Context(), startTime, endTime, userID, apiKeyID, accountID, groupID, requestType, stream, billingType, upstreamModelMismatch)
+	filters := usagestats.UsageLogFilters{UserID: userID, UserIDs: userIDs, APIKeyID: apiKeyID, APIKeyIDs: apiKeyIDs, AccountID: accountID, AccountIDs: accountIDs, GroupID: groupID, GroupIDs: groupIDs, Model: model, Models: models, ModelFilterSource: usagestats.ModelSourceRequested, RequestType: requestType, Stream: stream, BillingType: billingType, UpstreamModelMismatch: upstreamModelMismatch}
+	var stats []usagestats.GroupStat
+	var hit bool
+	if hasUsageFilterLists(filters) || model != "" {
+		stats, err = h.dashboardService.GetGroupStatsWithUsageFilters(c.Request.Context(), startTime, endTime, filters)
+	} else {
+		stats, hit, err = h.getGroupStatsCached(c.Request.Context(), startTime, endTime, userID, apiKeyID, accountID, groupID, requestType, stream, billingType, upstreamModelMismatch)
+	}
 	if err != nil {
 		response.Error(c, 500, "Failed to get group statistics")
 		return
@@ -512,8 +540,34 @@ func (h *DashboardHandler) GetUserUsageTrend(c *gin.Context) {
 	if sortBy != "actual_cost" && sortBy != "requests" && sortBy != "total_tokens" {
 		sortBy = "total_tokens"
 	}
+	userID, userIDs, err := parseUsageIDFilter(c, "user_id")
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	apiKeyID, apiKeyIDs, err := parseUsageIDFilter(c, "api_key_id")
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	accountID, accountIDs, err := parseUsageIDFilter(c, "account_id")
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	groupID, groupIDs, err := parseUsageIDFilter(c, "group_id")
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	model, models := parseUsageModelFilter(c)
+	filters := usagestats.UsageLogFilters{
+		UserID: userID, UserIDs: userIDs, APIKeyID: apiKeyID, APIKeyIDs: apiKeyIDs,
+		AccountID: accountID, AccountIDs: accountIDs, GroupID: groupID, GroupIDs: groupIDs,
+		Model: model, Models: models, ModelFilterSource: usagestats.ModelSourceRequested,
+	}
 
-	trend, hit, err := h.getUserUsageTrendCached(c.Request.Context(), startTime, endTime, granularity, limit, sortBy)
+	trend, hit, err := h.getUserUsageTrendCached(c.Request.Context(), startTime, endTime, granularity, limit, sortBy, filters)
 	if err != nil {
 		response.Error(c, 500, "Failed to get user usage trend")
 		return

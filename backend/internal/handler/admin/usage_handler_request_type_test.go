@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/usagestats"
@@ -155,6 +156,37 @@ func TestAdminUsageStatsUsesRequestedModelForDisplayModelFilter(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "grok-imagine-video-1.5", repo.statsFilters.Model)
 	require.Equal(t, usagestats.ModelSourceRequested, repo.statsFilters.ModelFilterSource)
+}
+
+func TestAdminUsageStatsParsesMultiDimensionalFilters(t *testing.T) {
+	repo := &adminUsageRepoCapture{}
+	router := newAdminUsageRequestTypeTestRouter(repo)
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/usage/stats?user_id=2,7&api_key_id=11,12&group_id=4,5&model=gpt-4o,claude-3", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, []int64{2, 7}, repo.statsFilters.UserIDs)
+	require.Equal(t, []int64{11, 12}, repo.statsFilters.APIKeyIDs)
+	require.Equal(t, []int64{4, 5}, repo.statsFilters.GroupIDs)
+	require.Equal(t, []string{"gpt-4o", "claude-3"}, repo.statsFilters.Models)
+}
+
+func TestParseUsageFilterOptionsTimeRangePrefersRFC3339(t *testing.T) {
+	c := newTestCtx("start_time=2026-08-19T02:14:00.000Z&end_time=2026-08-20T02:14:00.000Z&start_date=2020-01-01&end_date=2020-01-02&timezone=Pacific%2FAuckland")
+	start, end, err := parseUsageFilterOptionsTimeRange(c)
+	require.NoError(t, err)
+	require.Equal(t, "2026-08-19T02:14:00Z", start.UTC().Format(time.RFC3339))
+	require.Equal(t, "2026-08-20T02:14:00Z", end.UTC().Format(time.RFC3339))
+}
+
+func TestParseUsageFilterOptionsTimeRangeKeepsDateCompatibility(t *testing.T) {
+	c := newTestCtx("start_date=2026-08-19&end_date=2026-08-20&timezone=UTC")
+	start, end, err := parseUsageFilterOptionsTimeRange(c)
+	require.NoError(t, err)
+	require.Equal(t, time.Date(2026, 8, 19, 0, 0, 0, 0, time.UTC), start)
+	require.Equal(t, time.Date(2026, 8, 21, 0, 0, 0, 0, time.UTC), end)
 }
 
 func TestAdminUsageStatsInvalidRequestType(t *testing.T) {

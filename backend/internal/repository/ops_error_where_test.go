@@ -39,7 +39,7 @@ func TestBuildOpsErrorLogsWhere_UserScopedFilters(t *testing.T) {
 	for _, want := range []string{
 		"e.user_id = $",
 		"e.api_key_id = $",
-		"COALESCE(e.requested_model, e.model, '') = $",
+		"COALESCE(NULLIF(TRIM(e.requested_model), ''), e.model) = $",
 		"COALESCE(e.is_count_tokens, false) = false",
 		"e.error_phase = ANY($",
 		"e.error_type = ANY($",
@@ -53,18 +53,43 @@ func TestBuildOpsErrorLogsWhere_UserScopedFilters(t *testing.T) {
 	}
 }
 
+func TestBuildOpsErrorLogsWhere_AppliesEntityLists(t *testing.T) {
+	filter := &service.OpsErrorLogFilter{
+		UserIDs:    []int64{7, 8},
+		AccountIDs: []int64{3, 4},
+		GroupIDs:   []int64{5, 6},
+		Models:     []string{"public-a", "public-b"},
+		View:       "all",
+	}
+	where, args := buildOpsErrorLogsWhere(filter)
+
+	for _, want := range []string{
+		"e.user_id IN ($",
+		"e.account_id IN ($",
+		"e.group_id IN ($",
+		"COALESCE(NULLIF(TRIM(e.requested_model), ''), e.model) IN ($",
+	} {
+		if !strings.Contains(where, want) {
+			t.Fatalf("where missing %q\nfull: %s", want, where)
+		}
+	}
+	if len(args) != 8 {
+		t.Fatalf("args len = %d, want 8: %#v", len(args), args)
+	}
+}
+
 func TestBuildOpsErrorLogsWhere_ModelFuzzy(t *testing.T) {
 	// 默认（ModelFuzzy=false）保持精确匹配
 	exact := &service.OpsErrorLogFilter{Model: "claude"}
 	whereExact, _ := buildOpsErrorLogsWhere(exact)
-	if !strings.Contains(whereExact, "COALESCE(e.requested_model, e.model, '') = $") {
+	if !strings.Contains(whereExact, "COALESCE(NULLIF(TRIM(e.requested_model), ''), e.model) = $") {
 		t.Fatalf("default should be exact match, got: %s", whereExact)
 	}
 
 	// ModelFuzzy=true → ILIKE
 	fuzzy := &service.OpsErrorLogFilter{Model: "claude", ModelFuzzy: true}
 	whereFuzzy, args := buildOpsErrorLogsWhere(fuzzy)
-	if !strings.Contains(whereFuzzy, "COALESCE(e.requested_model, e.model, '') ILIKE $") {
+	if !strings.Contains(whereFuzzy, "COALESCE(NULLIF(TRIM(e.requested_model), ''), e.model) ILIKE $") {
 		t.Fatalf("ModelFuzzy should use ILIKE, got: %s", whereFuzzy)
 	}
 	if len(args) != 1 || args[0] != "%claude%" {

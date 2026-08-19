@@ -103,15 +103,79 @@ func appendUsageLogBillingModeQueryFilter(query string, args []any, billingMode 
 }
 
 func appendUsageLogModelWhereCondition(conditions []string, args []any, model string, source string) ([]string, []any) {
+	return appendUsageLogModelWhereConditionWithAlias(conditions, args, model, source, "")
+}
+
+func appendUsageLogModelWhereConditionWithAlias(conditions []string, args []any, model string, source, alias string) ([]string, []any) {
 	if strings.TrimSpace(source) == "" {
-		return appendRawUsageLogModelWhereCondition(conditions, args, model)
+		if strings.TrimSpace(model) == "" {
+			return conditions, args
+		}
+		column := rawUsageLogModelColumn
+		if alias != "" {
+			column = alias + "." + column
+		}
+		conditions = append(conditions, fmt.Sprintf("%s = $%d", column, len(args)+1))
+		args = append(args, model)
+		return conditions, args
 	}
 	if strings.TrimSpace(model) == "" {
 		return conditions, args
 	}
-	conditions = append(conditions, fmt.Sprintf("%s = $%d", resolveModelDimensionExpression(source), len(args)+1))
+	conditions = append(conditions, fmt.Sprintf("%s = $%d", resolveModelDimensionExpressionWithAlias(source, alias), len(args)+1))
 	args = append(args, model)
 	return conditions, args
+}
+
+func appendUsageLogIDWhereCondition(conditions []string, args []any, column string, scalar int64, values []int64) ([]string, []any) {
+	if len(values) > 0 {
+		placeholders := make([]string, 0, len(values))
+		for _, value := range values {
+			if value <= 0 {
+				continue
+			}
+			placeholders = append(placeholders, fmt.Sprintf("$%d", len(args)+1))
+			args = append(args, value)
+		}
+		if len(placeholders) > 0 {
+			return append(conditions, fmt.Sprintf("%s IN (%s)", column, strings.Join(placeholders, ", "))), args
+		}
+		return conditions, args
+	}
+	if scalar > 0 {
+		conditions = append(conditions, fmt.Sprintf("%s = $%d", column, len(args)+1))
+		args = append(args, scalar)
+	}
+	return conditions, args
+}
+
+func appendUsageLogModelWhereConditions(conditions []string, args []any, model string, models []string, source string) ([]string, []any) {
+	return appendUsageLogModelWhereConditionsWithAlias(conditions, args, model, models, source, "")
+}
+
+func appendUsageLogModelWhereConditionsWithAlias(conditions []string, args []any, model string, models []string, source, alias string) ([]string, []any) {
+	if len(models) == 0 {
+		return appendUsageLogModelWhereConditionWithAlias(conditions, args, model, source, alias)
+	}
+	expression := rawUsageLogModelColumn
+	if alias != "" {
+		expression = alias + "." + expression
+	}
+	if strings.TrimSpace(source) != "" {
+		expression = resolveModelDimensionExpressionWithAlias(source, alias)
+	}
+	places := make([]string, 0, len(models))
+	for _, value := range models {
+		if strings.TrimSpace(value) == "" {
+			continue
+		}
+		places = append(places, fmt.Sprintf("$%d", len(args)+1))
+		args = append(args, value)
+	}
+	if len(places) == 0 {
+		return conditions, args
+	}
+	return append(conditions, fmt.Sprintf("%s IN (%s)", expression, strings.Join(places, ", "))), args
 }
 
 // appendRawUsageLogModelQueryFilter keeps direct model filters on the raw model column for backward

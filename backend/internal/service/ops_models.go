@@ -107,9 +107,11 @@ type OpsErrorLogFilter struct {
 	StartTime *time.Time
 	EndTime   *time.Time
 
-	Platform  string
-	GroupID   *int64
-	AccountID *int64
+	Platform   string
+	GroupID    *int64
+	GroupIDs   []int64
+	AccountID  *int64
+	AccountIDs []int64
 
 	StatusCodes      []int
 	StatusCodesOther bool
@@ -127,11 +129,14 @@ type OpsErrorLogFilter struct {
 
 	// User-scoped filters (used by the user-facing error requests endpoint and
 	// by admin drill-down from the usage page).
-	UserID   *int64
-	APIKeyID *int64
+	UserID    *int64
+	UserIDs   []int64
+	APIKeyID  *int64
+	APIKeyIDs []int64
 
 	// Model matches against requested_model first, then model.
-	Model string
+	Model  string
+	Models []string
 	// ModelFuzzy 为 true 时 Model 走 ILIKE 模糊匹配（仅用户端启用）；false（默认）保持精确 =，管理端语义不变。
 	ModelFuzzy bool
 

@@ -128,9 +128,8 @@ func (h *OpsHandler) GetErrorLogs(c *gin.Context) {
 	if et := strings.TrimSpace(c.Query("error_type")); et != "" {
 		filter.ErrorTypesAny = []string{et}
 	}
-	// Model 过滤：admin 走精确匹配（ModelFuzzy 默认 false，保持管理端语义）。
-	// buildOpsErrorLogsWhere 以 COALESCE(requested_model, model) 比对。
-	filter.Model = strings.TrimSpace(c.Query("model"))
+	// Model 过滤：admin 走 requested-model 精确匹配（ModelFuzzy 默认 false）。
+	filter.Model, filter.Models = parseUsageModelFilter(c)
 
 	// 请求错误语义:client-visible status>=400 守卫恒生效（未设
 	// IncludeRecoveredUpstream 时 phase=upstream 不再绕过守卫），故
@@ -148,38 +147,22 @@ func (h *OpsHandler) GetErrorLogs(c *gin.Context) {
 	if platform := strings.TrimSpace(c.Query("platform")); platform != "" {
 		filter.Platform = platform
 	}
-	if v := strings.TrimSpace(c.Query("group_id")); v != "" {
-		id, err := strconv.ParseInt(v, 10, 64)
-		if err != nil || id <= 0 {
-			response.BadRequest(c, "Invalid group_id")
-			return
-		}
-		filter.GroupID = &id
+	if filter.GroupID, filter.GroupIDs, err = parseOpsIDFilter(c, "group_id"); err != nil {
+		response.BadRequest(c, err.Error())
+		return
 	}
-	if v := strings.TrimSpace(c.Query("account_id")); v != "" {
-		id, err := strconv.ParseInt(v, 10, 64)
-		if err != nil || id <= 0 {
-			response.BadRequest(c, "Invalid account_id")
-			return
-		}
-		filter.AccountID = &id
+	if filter.AccountID, filter.AccountIDs, err = parseOpsIDFilter(c, "account_id"); err != nil {
+		response.BadRequest(c, err.Error())
+		return
 	}
 
-	if v := strings.TrimSpace(c.Query("user_id")); v != "" {
-		id, err := strconv.ParseInt(v, 10, 64)
-		if err != nil || id <= 0 {
-			response.BadRequest(c, "Invalid user_id")
-			return
-		}
-		filter.UserID = &id
+	if filter.UserID, filter.UserIDs, err = parseOpsIDFilter(c, "user_id"); err != nil {
+		response.BadRequest(c, err.Error())
+		return
 	}
-	if v := strings.TrimSpace(c.Query("api_key_id")); v != "" {
-		id, err := strconv.ParseInt(v, 10, 64)
-		if err != nil || id <= 0 {
-			response.BadRequest(c, "Invalid api_key_id")
-			return
-		}
-		filter.APIKeyID = &id
+	if filter.APIKeyID, filter.APIKeyIDs, err = parseOpsIDFilter(c, "api_key_id"); err != nil {
+		response.BadRequest(c, err.Error())
+		return
 	}
 	if v := strings.TrimSpace(c.Query("resolved")); v != "" {
 		switch strings.ToLower(v) {

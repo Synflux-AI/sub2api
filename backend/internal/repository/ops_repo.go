@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/usagestats"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/lib/pq"
 )
@@ -922,6 +923,56 @@ func opsErrorLogSearchClause(placeholder string) string {
 	return "(" + strings.Join(parts, " OR ") + ")"
 }
 
+func appendOpsIDWhereCondition(clauses []string, args []any, column string, scalar *int64, values []int64, index int) ([]string, []any, int) {
+	if len(values) > 0 {
+		placeholders := make([]string, 0, len(values))
+		for _, value := range values {
+			if value <= 0 {
+				continue
+			}
+			args = append(args, value)
+			placeholders = append(placeholders, fmt.Sprintf("$%d", index))
+			index++
+		}
+		if len(placeholders) > 0 {
+			clauses = append(clauses, column+" IN ("+strings.Join(placeholders, ", ")+")")
+		}
+		return clauses, args, index
+	}
+	if scalar != nil && *scalar > 0 {
+		args = append(args, *scalar)
+		clauses = append(clauses, fmt.Sprintf("%s = $%d", column, index))
+		index++
+	}
+	return clauses, args, index
+}
+
+func appendOpsRequestedModelWhereConditions(clauses []string, args []any, model string, models []string, alias string, index int) ([]string, []any, int) {
+	expression := resolveModelDimensionExpressionWithAlias(usagestats.ModelSourceRequested, alias)
+	if len(models) > 0 {
+		placeholders := make([]string, 0, len(models))
+		for _, value := range models {
+			value = strings.TrimSpace(value)
+			if value == "" {
+				continue
+			}
+			args = append(args, value)
+			placeholders = append(placeholders, fmt.Sprintf("$%d", index))
+			index++
+		}
+		if len(placeholders) > 0 {
+			clauses = append(clauses, expression+" IN ("+strings.Join(placeholders, ", ")+")")
+		}
+		return clauses, args, index
+	}
+	if model = strings.TrimSpace(model); model != "" {
+		args = append(args, model)
+		clauses = append(clauses, fmt.Sprintf("%s = $%d", expression, index))
+		index++
+	}
+	return clauses, args, index
+}
+
 func buildOpsErrorLogsWhere(filter *service.OpsErrorLogFilter) (string, []any) {
 	clauses := make([]string, 0, 12)
 	args := make([]any, 0, 12)
@@ -962,14 +1013,8 @@ func buildOpsErrorLogsWhere(filter *service.OpsErrorLogFilter) (string, []any) {
 		args = append(args, p)
 		clauses = append(clauses, "e.platform = $"+itoa(len(args)))
 	}
-	if filter.GroupID != nil && *filter.GroupID > 0 {
-		args = append(args, *filter.GroupID)
-		clauses = append(clauses, "e.group_id = $"+itoa(len(args)))
-	}
-	if filter.AccountID != nil && *filter.AccountID > 0 {
-		args = append(args, *filter.AccountID)
-		clauses = append(clauses, "e.account_id = $"+itoa(len(args)))
-	}
+	clauses, args, _ = appendOpsIDWhereCondition(clauses, args, "e.group_id", filter.GroupID, filter.GroupIDs, len(args)+1)
+	clauses, args, _ = appendOpsIDWhereCondition(clauses, args, "e.account_id", filter.AccountID, filter.AccountIDs, len(args)+1)
 	if phase := phaseFilter; phase != "" {
 		args = append(args, phase)
 		clauses = append(clauses, "e.error_phase = $"+itoa(len(args)))
@@ -1044,23 +1089,15 @@ func buildOpsErrorLogsWhere(filter *service.OpsErrorLogFilter) (string, []any) {
 		clauses = append(clauses, "EXISTS (SELECT 1 FROM users u WHERE u.id = e.user_id AND u.email ILIKE $"+n+")")
 	}
 
-	if filter.UserID != nil && *filter.UserID > 0 {
-		args = append(args, *filter.UserID)
-		n := itoa(len(args))
-		clauses = append(clauses, "e.user_id = $"+n)
-	}
-	if filter.APIKeyID != nil && *filter.APIKeyID > 0 {
-		args = append(args, *filter.APIKeyID)
-		clauses = append(clauses, "e.api_key_id = $"+itoa(len(args)))
-	}
-	if m := strings.TrimSpace(filter.Model); m != "" {
-		if filter.ModelFuzzy {
+	clauses, args, _ = appendOpsIDWhereCondition(clauses, args, "e.user_id", filter.UserID, filter.UserIDs, len(args)+1)
+	clauses, args, _ = appendOpsIDWhereCondition(clauses, args, "e.api_key_id", filter.APIKeyID, filter.APIKeyIDs, len(args)+1)
+	if filter.ModelFuzzy && len(filter.Models) == 0 {
+		if m := strings.TrimSpace(filter.Model); m != "" {
 			args = append(args, "%"+escapeLikePattern(m)+"%")
-			clauses = append(clauses, "COALESCE(e.requested_model, e.model, '') ILIKE $"+itoa(len(args)))
-		} else {
-			args = append(args, m)
-			clauses = append(clauses, "COALESCE(e.requested_model, e.model, '') = $"+itoa(len(args)))
+			clauses = append(clauses, resolveModelDimensionExpressionWithAlias(usagestats.ModelSourceRequested, "e")+" ILIKE $"+itoa(len(args)))
 		}
+	} else {
+		clauses, args, _ = appendOpsRequestedModelWhereConditions(clauses, args, filter.Model, filter.Models, "e", len(args)+1)
 	}
 	if filter.ExcludeCountTokens {
 		clauses = append(clauses, "COALESCE(e.is_count_tokens, false) = false")

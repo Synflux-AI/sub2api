@@ -33,7 +33,7 @@ func TestBuildErrorWhere_AppliesNewDimensionFilters(t *testing.T) {
 		"user_id = $",
 		"account_id = $",
 		"api_key_id = $",
-		"COALESCE(requested_model, model, '') = $",
+		"COALESCE(NULLIF(TRIM(requested_model), ''), model) = $",
 		"LOWER(COALESCE(error_owner,'')) = $",
 		"LOWER(COALESCE(error_source,'')) = $",
 		"error_type = $",
@@ -75,6 +75,30 @@ func TestBuildErrorWhere_AppliesNewDimensionFilters(t *testing.T) {
 	}
 }
 
+func TestBuildErrorWhere_AppliesEntityListsWithRequestedModels(t *testing.T) {
+	filter := &service.OpsDashboardFilter{
+		UserIDs:    []int64{7, 8},
+		AccountIDs: []int64{3, 4},
+		GroupIDs:   []int64{5, 6},
+		Models:     []string{"public-a", "public-b"},
+	}
+	where, args, _ := buildErrorWhere(filter, time.Unix(0, 0).UTC(), time.Unix(3600, 0).UTC(), 1)
+
+	for _, want := range []string{
+		"group_id IN ($3, $4)",
+		"user_id IN ($5, $6)",
+		"account_id IN ($7, $8)",
+		"COALESCE(NULLIF(TRIM(requested_model), ''), model) IN ($9, $10)",
+	} {
+		if !strings.Contains(where, want) {
+			t.Fatalf("where missing %q\nfull: %s", want, where)
+		}
+	}
+	if len(args) != 10 {
+		t.Fatalf("args len = %d, want 10: %#v", len(args), args)
+	}
+}
+
 func TestBuildOpsErrorLogsWhere_QueryUsesQualifiedColumns(t *testing.T) {
 	filter := &service.OpsErrorLogFilter{
 		Query: "ACCESS_DENIED",
@@ -112,5 +136,15 @@ func TestBuildOpsErrorLogsWhere_UserQueryUsesExistsSubquery(t *testing.T) {
 	}
 	if !strings.Contains(where, "EXISTS (SELECT 1 FROM users u WHERE u.id = e.user_id AND u.email ILIKE $") {
 		t.Fatalf("where should include EXISTS user email condition: %s", where)
+	}
+}
+
+func TestBuildOpsErrorLogsWhere_AppliesAPIKeyList(t *testing.T) {
+	where, args := buildOpsErrorLogsWhere(&service.OpsErrorLogFilter{APIKeyIDs: []int64{9, 10}})
+	if !strings.Contains(where, "e.api_key_id IN ($") {
+		t.Fatalf("where should include api key list: %s", where)
+	}
+	if len(args) != 2 || args[0] != int64(9) || args[1] != int64(10) {
+		t.Fatalf("unexpected args: %#v", args)
 	}
 }

@@ -8,6 +8,7 @@ type OpsDashboardFilter struct {
 
 	Platform string
 	GroupID  *int64
+	GroupIDs []int64
 
 	// QueryMode controls whether dashboard queries should use raw logs or pre-aggregated tables.
 	// Expected values: auto/raw/preagg (see OpsQueryMode).
@@ -15,9 +16,13 @@ type OpsDashboardFilter struct {
 
 	// Error-stats 过滤维度（与明细列表对齐）。零值表示不过滤。
 	UserID      *int64
+	UserIDs     []int64
 	AccountID   *int64
+	AccountIDs  []int64
 	APIKeyID    *int64
-	Model       string // 比对 COALESCE(requested_model, model, '')，精确
+	APIKeyIDs   []int64
+	Model       string
+	Models      []string
 	ErrorOwner  string // 比对 LOWER(COALESCE(error_owner,''))，库内小写
 	ErrorType   string
 	ErrorPhase  string

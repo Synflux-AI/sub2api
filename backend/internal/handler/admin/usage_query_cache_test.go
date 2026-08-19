@@ -26,3 +26,12 @@ func TestUsageStatsCacheKey_StableAndDistinct(t *testing.T) {
 	withUser.UserID = 7
 	require.NotEqual(t, k1, usageStatsCacheKey(withUser), "different user must change key")
 }
+
+func TestUsageStatsCacheKey_NormalizesListsWithoutMutation(t *testing.T) {
+	left := usagestats.UsageLogFilters{UserIDs: []int64{7, 2, 7}, Models: []string{"gpt-4o", "claude-3", "gpt-4o"}}
+	right := usagestats.UsageLogFilters{UserIDs: []int64{2, 7}, Models: []string{"claude-3", "gpt-4o"}}
+
+	require.Equal(t, usageStatsCacheKey(left), usageStatsCacheKey(right))
+	require.Equal(t, []int64{7, 2, 7}, left.UserIDs)
+	require.Equal(t, []string{"gpt-4o", "claude-3", "gpt-4o"}, left.Models)
+}

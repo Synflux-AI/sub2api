@@ -44,7 +44,7 @@ func TestBuildErrorEntityWhere_KeepsEntityDropsErrorDims(t *testing.T) {
 		"user_id = $",
 		"account_id = $",
 		"api_key_id = $",
-		"COALESCE(requested_model, model, '') = $",
+		"COALESCE(NULLIF(TRIM(requested_model), ''), model) = $",
 	} {
 		if !strings.Contains(where, want) {
 			t.Errorf("entity where missing %q\nfull: %s", want, where)
@@ -100,7 +100,7 @@ func TestBuildUsageEntityWhere_AddsEntityFilters(t *testing.T) {
 		"ul.user_id = $",
 		"ul.account_id = $",
 		"ul.api_key_id = $",
-		"COALESCE(ul.requested_model, ul.model, '') = $",
+		"COALESCE(NULLIF(TRIM(ul.requested_model), ''), ul.model) = $",
 	} {
 		if !strings.Contains(where, want) {
 			t.Errorf("usage entity where missing %q\nfull: %s", want, where)
@@ -120,5 +120,30 @@ func TestBuildUsageEntityWhere_AddsEntityFilters(t *testing.T) {
 	}
 	if len(args) == 0 {
 		t.Errorf("expected some args, got none")
+	}
+}
+
+func TestRequestTotalEntityWhere_AppliesListsOnBothSources(t *testing.T) {
+	filter := &service.OpsDashboardFilter{
+		UserIDs:    []int64{7, 8},
+		AccountIDs: []int64{3, 4},
+		GroupIDs:   []int64{5, 6},
+		APIKeyIDs:  []int64{9, 10},
+		Models:     []string{"public-a", "public-b"},
+	}
+	start := time.Unix(0, 0).UTC()
+	end := time.Unix(3600, 0).UTC()
+
+	_, usageWhere, _, next := buildUsageEntityWhere(filter, start, end, 1)
+	errorWhere, _, _ := buildErrorEntityWhere(filter, start, end, next)
+	for _, want := range []string{"ul.user_id IN", "ul.account_id IN", "ul.group_id IN", "ul.api_key_id IN", "COALESCE(NULLIF(TRIM(ul.requested_model), ''), ul.model) IN"} {
+		if !strings.Contains(usageWhere, want) {
+			t.Fatalf("usage where missing %q: %s", want, usageWhere)
+		}
+	}
+	for _, want := range []string{"user_id IN", "account_id IN", "group_id IN", "api_key_id IN", "COALESCE(NULLIF(TRIM(requested_model), ''), model) IN"} {
+		if !strings.Contains(errorWhere, want) {
+			t.Fatalf("error where missing %q: %s", want, errorWhere)
+		}
 	}
 }
