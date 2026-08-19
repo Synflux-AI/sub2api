@@ -981,17 +981,11 @@ func buildOpsErrorLogsWhere(filter *service.OpsErrorLogFilter) (string, []any) {
 	args := make([]any, 0, 12)
 	clauses = append(clauses, "1=1")
 
-	phaseFilter := ""
-	if filter != nil {
-		phaseFilter = strings.TrimSpace(strings.ToLower(filter.Phase))
-	}
+	phaseFilter := strings.TrimSpace(strings.ToLower(filter.Phase))
 	// ops_error_logs stores client-visible error requests (status>=400),
 	// but we also persist "recovered" upstream errors (status<400) for upstream health visibility.
 	// If Resolved is not specified, do not filter by resolved state (backward-compatible).
-	resolvedFilter := (*bool)(nil)
-	if filter != nil {
-		resolvedFilter = filter.Resolved
-	}
+	resolvedFilter := filter.Resolved
 	// Keep list endpoints scoped to client errors unless the caller explicitly opts
 	// into recovered provider-health rows (upstream/account_auth). Request-error
 	// endpoints never set the opt-in and retain this guard.
@@ -1022,15 +1016,13 @@ func buildOpsErrorLogsWhere(filter *service.OpsErrorLogFilter) (string, []any) {
 		args = append(args, phase)
 		clauses = append(clauses, "e.error_phase = $"+itoa(len(args)))
 	}
-	if filter != nil {
-		if owner := strings.TrimSpace(strings.ToLower(filter.Owner)); owner != "" {
-			args = append(args, owner)
-			clauses = append(clauses, "LOWER(COALESCE(e.error_owner,'')) = $"+itoa(len(args)))
-		}
-		if source := strings.TrimSpace(strings.ToLower(filter.Source)); source != "" {
-			args = append(args, source)
-			clauses = append(clauses, "LOWER(COALESCE(e.error_source,'')) = $"+itoa(len(args)))
-		}
+	if owner := strings.TrimSpace(strings.ToLower(filter.Owner)); owner != "" {
+		args = append(args, owner)
+		clauses = append(clauses, "LOWER(COALESCE(e.error_owner,'')) = $"+itoa(len(args)))
+	}
+	if source := strings.TrimSpace(strings.ToLower(filter.Source)); source != "" {
+		args = append(args, source)
+		clauses = append(clauses, "LOWER(COALESCE(e.error_source,'')) = $"+itoa(len(args)))
 	}
 	if resolvedFilter != nil {
 		args = append(args, *resolvedFilter)

@@ -422,13 +422,13 @@ func parseUsageFilterOptionsTimeRange(c *gin.Context) (time.Time, time.Time, err
 	if raw := c.Query("start_date"); raw != "" {
 		startTime, err = timezone.ParseInUserLocation("2006-01-02", raw, userTZ)
 		if err != nil {
-			return time.Time{}, time.Time{}, fmt.Errorf("Invalid start_date format, use YYYY-MM-DD")
+			return time.Time{}, time.Time{}, fmt.Errorf("invalid start_date format, use YYYY-MM-DD")
 		}
 	}
 	if raw := c.Query("end_date"); raw != "" {
 		endTime, err = timezone.ParseInUserLocation("2006-01-02", raw, userTZ)
 		if err != nil {
-			return time.Time{}, time.Time{}, fmt.Errorf("Invalid end_date format, use YYYY-MM-DD")
+			return time.Time{}, time.Time{}, fmt.Errorf("invalid end_date format, use YYYY-MM-DD")
 		}
 		endTime = endTime.AddDate(0, 0, 1)
 	}
