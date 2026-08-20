@@ -1,7 +1,6 @@
 package service
 
 import (
-	"bytes"
 	"sort"
 
 	"github.com/tidwall/gjson"
@@ -116,12 +115,15 @@ func collectOpenAIResponsesToolSchemaNullTypes(
 func appendOpenAIResponsesToolSchemaNullType(
 	body []byte, typ gjson.Result, hits *[]openAIResponsesToolSchemaNullType,
 ) {
-	end := typ.Index + len(typ.Raw)
-	if typ.Index <= 0 || end > len(body) {
+	// The caller already checked Raw, and the only accepted JSON literal is the
+	// fixed four-byte token below. Compare bytes directly so this hot path does
+	// not create a temporary []byte for every matching schema.
+	const nullLength = len(openAIResponsesToolSchemaNullLiteral)
+	if typ.Index <= 0 || typ.Raw != openAIResponsesToolSchemaNullLiteral || typ.Index+nullLength > len(body) {
 		return
 	}
-	if !bytes.Equal(body[typ.Index:end], []byte(typ.Raw)) {
+	if body[typ.Index] != 'n' || body[typ.Index+1] != 'u' || body[typ.Index+2] != 'l' || body[typ.Index+3] != 'l' {
 		return
 	}
-	*hits = append(*hits, openAIResponsesToolSchemaNullType{offset: typ.Index, length: len(typ.Raw)})
+	*hits = append(*hits, openAIResponsesToolSchemaNullType{offset: typ.Index, length: nullLength})
 }
