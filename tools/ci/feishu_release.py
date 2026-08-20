@@ -86,42 +86,25 @@ def group_commits(raw, cap=15):
 
 
 def _changelog_elements(groups, misc):
-    """按原 Jenkins 卡片的两列排版渲染 changelog：左栏短 sha，右栏消息，逐行对齐。"""
+    """渲染自动 changelog。
+
+    提交使用单列列表而不是固定宽度的双栏。飞书在窄屏上会压缩固定列，导致
+    短 SHA 被拆成多行；行内代码可以保持 SHA 完整，同时让提交说明自然换行。
+    """
     elements = []
     for key, title in SECTIONS:
         items = groups.get(key) or []
         if not items:
             continue
-        left = [f"**{title}**"] + [f"**{it['sha']}**" for it in items]
-        right = ["　"] + [it["msg"] for it in items]
+        lines = [f"**{title}**"]
+        lines.extend(f"- `{it['sha']}` {it['msg']}" for it in items)
         extra = (groups.get("extra") or {}).get(key, 0)
         if extra:
-            left.append("　")
-            right.append(f"…还有 {extra} 条")
-        elements.append(
-            {
-                "tag": "column_set",
-                "flex_mode": "none",
-                "columns": [
-                    {
-                        "tag": "column",
-                        "width": "72px",
-                        "vertical_align": "top",
-                        "elements": [{"tag": "div", "text": {"tag": "lark_md", "content": "\n".join(left)}}],
-                    },
-                    {
-                        "tag": "column",
-                        "width": "weighted",
-                        "weight": 1,
-                        "vertical_align": "top",
-                        "elements": [{"tag": "div", "text": {"tag": "lark_md", "content": "\n".join(right)}}],
-                    },
-                ],
-            }
-        )
+            lines.append(f"- …还有 {extra} 条")
+        elements.append(_div("\n".join(lines)))
     if misc:
         elements.append(
-            {"tag": "div", "text": {"tag": "lark_md", "content": f"+ {misc} 项杂项(docs·chore·ci 等)"}}
+            _div(f"**其他变更** · {misc} 项（docs / chore / ci 等）")
         )
     return elements
 
@@ -135,7 +118,7 @@ def build_release_card(ctx, result, notes, groups, misc):
     tag = ctx["tag"]
     version = tag[1:] if tag.startswith("v") else tag
     color = COLOR.get(result, "grey")
-    title = f"sub2api  {tag}  ·  {STATUS.get(result, result)} {EMOJI.get(result, '🔔')}"
+    title = f"sub2api {tag} · {STATUS.get(result, result)} {EMOJI.get(result, '🔔')}"
 
     elements = []
     if notes:
@@ -150,22 +133,22 @@ def build_release_card(ctx, result, notes, groups, misc):
 
     meta = []
     span = f"{ctx['prev_tag']} → " if ctx.get("prev_tag") else ""
-    meta.append(f"🏷️ **版本**: {span}**{tag}**")
+    meta.append(f"🏷️ **版本**\n{span}**{tag}**")
     if result == "success":
-        pulls = []
+        pulls = ["🐳 **镜像**"]
         if ctx.get("dockerhub_image"):
-            pulls.append(f"# Docker Hub\ndocker pull {ctx['dockerhub_image']}:{version}")
-            pulls.append(f"# GitHub Container Registry\ndocker pull {ctx['ghcr_image']}:{version}")
+            pulls.append(f"- Docker Hub: `docker pull {ctx['dockerhub_image']}:{version}`")
+            pulls.append(f"- GHCR: `docker pull {ctx['ghcr_image']}:{version}`")
         else:
-            pulls.append(f"docker pull {ctx['ghcr_image']}:{version}")
-        meta.append("🐳 **镜像**\n```bash\n" + "\n".join(pulls) + "\n```")
-    elements.append(_div("\n".join(meta)))
+            pulls.append(f"- GHCR: `docker pull {ctx['ghcr_image']}:{version}`")
+        meta.append("\n".join(pulls))
+    elements.append(_div("\n\n".join(meta)))
 
     repo = ctx["repo"]
-    links = [f"• [GitHub Release](https://github.com/{repo}/releases/tag/{tag})"]
+    links = [f"- [GitHub Release](https://github.com/{repo}/releases/tag/{tag})"]
     if ctx.get("dockerhub_image"):
-        links.append(f"• [Docker Hub](https://hub.docker.com/r/{ctx['dockerhub_image']})")
-    links.append(f"• [GitHub Packages](https://github.com/{repo}/pkgs/container/sub2api)")
+        links.append(f"- [Docker Hub](https://hub.docker.com/r/{ctx['dockerhub_image']})")
+    links.append(f"- [GitHub Packages](https://github.com/{repo}/pkgs/container/sub2api)")
     elements.append({"tag": "hr"})
     elements.append(_div("🔗 **相关链接**\n" + "\n".join(links)))
 
