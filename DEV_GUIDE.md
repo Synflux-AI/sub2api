@@ -66,7 +66,9 @@ npm install -g pnpm
   check 永远不会出现，PR 会永久卡在 pending —— 这与"检查失败"不同，无法通过重跑解决。
 - `strict`（要求分支与 `release` 同步）保持关闭，否则每次 `release` 有新提交，所有
   在途 PR 都要 rebase 并重跑约 10 分钟 CI。
-- `enforce_admins` 保持关闭，作为偶发失败时的逃生门。已知负载敏感的偶发测试见下方。
+- `enforce_admins` 必须开启，管理员也不能绕过保护规则。`release` 必须通过 PR 合并，直接
+  push 白名单保持为空；当前不额外要求人工审批，6 个 required checks 是合并门禁。已知负载
+  敏感的偶发测试见下方。
 
 ### 飞书通知
 
