@@ -23,6 +23,13 @@ func usageTraceID(ctx context.Context) *string {
 	return optionalTrimmedStringPtr(traceID)
 }
 
+func optionalStringValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return strings.TrimSpace(*value)
+}
+
 func forwardResultBillingModel(requestedModel, upstreamModel string) string {
 	if trimmed := strings.TrimSpace(requestedModel); trimmed != "" {
 		return trimmed
