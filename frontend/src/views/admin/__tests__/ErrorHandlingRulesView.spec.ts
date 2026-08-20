@@ -84,6 +84,15 @@ const BaseDialogStub = defineComponent({
     '<div v-if="show" data-testid="rule-dialog"><slot /><slot name="footer" /></div>',
 });
 
+// HelpTooltip teleports its bubble to body; render it inline so the spec can read
+// the hover content straight off the row.
+const HelpTooltipStub = defineComponent({
+  name: "HelpTooltip",
+  template:
+    '<span data-testid="keywords-tooltip"><slot name="trigger" />' +
+    '<span data-testid="keywords-tooltip-content"><slot /></span></span>',
+});
+
 const ConfirmDialogStub = defineComponent({
   name: "ConfirmDialog",
   props: { show: { type: Boolean, default: false } },
@@ -103,6 +112,7 @@ function mountView() {
         Toggle: ToggleStub,
         BaseDialog: BaseDialogStub,
         ConfirmDialog: ConfirmDialogStub,
+        HelpTooltip: HelpTooltipStub,
         EmptyState: true,
         Icon: true,
       },
@@ -115,6 +125,11 @@ type Wrapper = ReturnType<typeof mountView>;
 /** DataTable 的空状态也是一个 tr，靠 data-row-id 只挑出真正的数据行 */
 function ruleRows(wrapper: Wrapper) {
   return wrapper.findAll("tbody tr[data-row-id]");
+}
+
+/** 关键字 badge 用 badge-gray，状态码用 badge-danger，靠这个把两者分开断言 */
+function keywordBadges(row: ReturnType<typeof ruleRows>[number]) {
+  return row.findAll(".badge-gray").map((badge) => badge.text());
 }
 
 async function openEditDialog(wrapper: Wrapper, rowIndex: number) {
@@ -188,10 +203,8 @@ describe("admin ErrorHandlingRulesView", () => {
     expect(rows).toHaveLength(2);
     expect(rows[0].text()).toContain("Rule A");
     expect(rows[0].text()).toContain("400");
-    // 只展示前两条关键字，其余折叠成计数
-    expect(rows[0].text()).toContain("k1");
-    expect(rows[0].text()).toContain("k2");
-    expect(rows[0].text()).not.toContain("k3");
+    // 只有前两条关键字渲染成 badge，其余折叠成计数（完整清单在悬浮气泡里）
+    expect(keywordBadges(rows[0])).toEqual(['"k1"', '"k2"']);
     expect(rows[0].text()).toContain(
       "admin.settings.errorHandlingRule.keywordsMore",
     );
@@ -201,6 +214,45 @@ describe("admin ErrorHandlingRulesView", () => {
     );
     expect(rows[1].text()).toContain(
       "admin.settings.errorHandlingRule.anyKeyword",
+    );
+  });
+
+  // 折叠掉的关键字在表格里本来完全看不到，只能进弹窗才知道匹配的是什么
+  it("lists every keyword in the hover tooltip when some are collapsed", async () => {
+    getErrorHandlingRuleSettings.mockResolvedValue({
+      enabled: true,
+      default_retry_count: 2,
+      rules: [{ ...RULE_A, keywords: ["k1", "k2", "k3", "k4"] }],
+    });
+
+    const wrapper = mountView();
+    await flushPromises();
+
+    const content = ruleRows(wrapper)[0].get(
+      '[data-testid="keywords-tooltip-content"]',
+    );
+    // 气泡给的是完整清单，含已经渲染成 badge 的前两条
+    for (const keyword of ["k1", "k2", "k3", "k4"]) {
+      expect(content.text()).toContain(keyword);
+    }
+  });
+
+  // 没有东西被折叠时挂个只显示已有内容的气泡纯属噪音
+  it("omits the keyword tooltip when no keyword is collapsed", async () => {
+    getErrorHandlingRuleSettings.mockResolvedValue({
+      enabled: true,
+      default_retry_count: 2,
+      rules: [
+        { ...RULE_A, keywords: ["k1", "k2"] },
+        { ...RULE_B, keywords: [] },
+      ],
+    });
+
+    const wrapper = mountView();
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="keywords-tooltip"]').exists()).toBe(
+      false,
     );
   });
 

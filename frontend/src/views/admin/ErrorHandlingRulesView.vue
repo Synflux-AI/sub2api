@@ -139,16 +139,43 @@
                         >
                           "{{ keyword }}"
                         </span>
-                        <span
+                        <!-- 折叠掉的关键字只在弹窗里才能看到，所以计数本身做成悬浮气泡，
+                             给出完整清单。HelpTooltip 会 Teleport 到 body，不会被表格
+                             那层 overflow-x:auto 的横滚容器裁掉 -->
+                        <HelpTooltip
                           v-if="row.keywords.length > 2"
-                          class="text-xs text-gray-500 dark:text-gray-400"
+                          width-class="w-72"
                         >
-                          {{
-                            t("admin.settings.errorHandlingRule.keywordsMore", {
-                              count: row.keywords.length - 2,
-                            })
-                          }}
-                        </span>
+                          <template #trigger>
+                            <span
+                              class="cursor-help text-xs text-gray-500 underline decoration-dotted underline-offset-2 dark:text-gray-400"
+                            >
+                              {{
+                                t(
+                                  "admin.settings.errorHandlingRule.keywordsMore",
+                                  { count: row.keywords.length - 2 },
+                                )
+                              }}
+                            </span>
+                          </template>
+                          <p class="mb-1 font-medium">
+                            {{
+                              t(
+                                "admin.settings.errorHandlingRule.keywordsTooltipTitle",
+                              )
+                            }}
+                          </p>
+                          <ul class="space-y-0.5">
+                            <!-- 关键字没有去重约束，用下标做 key 免得重复值撞车 -->
+                            <li
+                              v-for="(keyword, index) in row.keywords"
+                              :key="`kw-${index}`"
+                              class="break-all"
+                            >
+                              • {{ keyword }}
+                            </li>
+                          </ul>
+                        </HelpTooltip>
                         <span
                           v-if="row.keywords.length === 0"
                           class="text-xs text-gray-400 dark:text-dark-500"
@@ -477,6 +504,7 @@ import DataTable from "@/components/common/DataTable.vue";
 import BaseDialog from "@/components/common/BaseDialog.vue";
 import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import EmptyState from "@/components/common/EmptyState.vue";
+import HelpTooltip from "@/components/common/HelpTooltip.vue";
 import type { Column } from "@/components/common/types";
 import { adminAPI } from "@/api";
 import type {

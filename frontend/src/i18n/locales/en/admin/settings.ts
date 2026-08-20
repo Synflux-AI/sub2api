@@ -1170,6 +1170,7 @@ export default {
         anyStatusCode: 'Any status code',
         anyKeyword: 'Any keyword',
         keywordsMore: '+{count} more',
+        keywordsTooltipTitle: 'Matches any of these keywords:',
         ruleStatus: 'Status',
         ruleEnabled: 'Enabled',
         ruleDisabled: 'Disabled',

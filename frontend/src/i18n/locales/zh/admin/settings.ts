@@ -1164,6 +1164,7 @@ export default {
         anyStatusCode: '不限状态码',
         anyKeyword: '不限关键字',
         keywordsMore: '等 {count} 个关键字',
+        keywordsTooltipTitle: '匹配以下任一关键字：',
         ruleStatus: '状态',
         ruleEnabled: '已启用',
         ruleDisabled: '已禁用',
