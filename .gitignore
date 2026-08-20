@@ -118,7 +118,6 @@ backend/.installed
 tests
 !deploy/tests/
 !deploy/tests/**
-CLAUDE.md
 .claude
 scripts
 !backend/scripts/
@@ -126,7 +125,6 @@ scripts
 .code-review-state
 #openspec/
 code-reviews/
-AGENTS.md
 backend/cmd/server/server
 deploy/docker-compose.override.yml
 .gocache/

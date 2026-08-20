@@ -7,7 +7,7 @@
 | 项目 | 说明 |
 |------|------|
 | **上游仓库** | Wei-Shaw/sub2api |
-| **Fork 仓库** | bayma888/sub2api-bmai |
+| **Fork 仓库** | Synflux-AI/sub2api |
 | **技术栈** | Go 后端 (Ent ORM + Gin) + Vue3 前端 (pnpm) |
 | **数据库** | PostgreSQL 16 + Redis |
 | **包管理** | 后端: go modules, 前端: **pnpm**（不是 npm） |
@@ -49,7 +49,7 @@ npm install -g pnpm
 |----------|----------|----------|
 | **backend-ci.yml** | pull_request；push 仅 `release`/`main` | 单元测试 + 集成测试 + golangci-lint v2.9 + deploy 脚本测试 |
 | **security-scan.yml** | pull_request；push 仅 `release`/`main`；每周一 | govulncheck + pnpm audit |
-| **release.yml** | tag `v*` | 构建发布（PR 不触发） |
+| **release.yml** | tag `v*` | 构建并发布单架构 Linux amd64 GHCR 镜像（PR 不触发） |
 
 > **功能分支上 push 不再触发 CI。** 需要早期信号请开 draft PR（draft 一样触发
 > `pull_request`）。这样做是因为裸 `on: push` 会让同一个 commit 被 push 和
@@ -69,6 +69,10 @@ npm install -g pnpm
 - `enforce_admins` 保持关闭，作为偶发失败时的逃生门。已知负载敏感的偶发测试见下方。
 
 ### 飞书通知
+
+发版只发布 `ghcr.io/synflux-ai/sub2api:<version>` 的 Linux `amd64` 镜像，不发布二进制包、arm64
+或 Docker Hub 镜像。`VERSION` 只作为本次构建的临时 artifact 使用，Actions 不会提交或推送任何
+版本变更到 `main`；`main` 始终只同步 Wei-Shaw 上游。
 
 `CI` workflow 末尾的 `notify` job 调用 `tools/ci/feishu_notify.py`，把**整体 CI 结果**
 推一张飞书卡片（成功绿卡 / 失败红卡 / 有检查未报告则橙卡），成功与失败都会发。
@@ -329,18 +333,25 @@ psql -U sub2api -h 127.0.0.1 -d sub2api -f migration.sql
 ### Git 操作
 
 ```bash
-# 同步上游
+# 同步 Wei-Shaw 上游的 main（upstream 只读）
 git fetch upstream
-git checkout main
-git merge upstream/main
+git switch main
+git merge --ff-only upstream/main
+
+# 将上游同步合并到本项目 release
+git switch release
+git merge --no-ff main
+
+# 按需更新本项目远端镜像
 git push origin main
+git push origin release
 
-# 创建功能分支
-git checkout -b feature/xxx
+# 从 release 创建功能分支
+git switch release
+git switch -c feat/xxx
 
-# Rebase 到最新 main
-git fetch upstream
-git rebase upstream/main
+# upstream 只允许拉取，不向 Wei-Shaw 反向推送
+git remote -v
 ```
 
 ### 前端操作
