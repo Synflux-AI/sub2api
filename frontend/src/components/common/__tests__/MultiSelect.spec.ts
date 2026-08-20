@@ -163,6 +163,30 @@ describe('MultiSelect search filtering', () => {
     expect(dropdown.querySelector('.select-search-input')).toBeNull()
   })
 
+  it('defaults the empty-results placeholder to the literal "No results"', async () => {
+    const wrapper = mountMultiSelect({ modelValue: [], searchable: true })
+    const dropdown = await openDropdown(wrapper)
+
+    const input = dropdown.querySelector<HTMLInputElement>('.select-search-input')!
+    input.value = 'nothing-matches'
+    input.dispatchEvent(new Event('input'))
+    await nextTick()
+
+    expect(dropdown.querySelector('.select-empty')?.textContent).toBe('No results')
+  })
+
+  it('uses the noResultsText prop for the empty-results placeholder when provided', async () => {
+    const wrapper = mountMultiSelect({ modelValue: [], searchable: true, noResultsText: '无匹配选项' })
+    const dropdown = await openDropdown(wrapper)
+
+    const input = dropdown.querySelector<HTMLInputElement>('.select-search-input')!
+    input.value = 'nothing-matches'
+    input.dispatchEvent(new Event('input'))
+    await nextTick()
+
+    expect(dropdown.querySelector('.select-empty')?.textContent).toBe('无匹配选项')
+  })
+
   it('defaults to auto: no search box for a short option list', async () => {
     const wrapper = mountMultiSelect({ modelValue: [] })
     const dropdown = await openDropdown(wrapper)

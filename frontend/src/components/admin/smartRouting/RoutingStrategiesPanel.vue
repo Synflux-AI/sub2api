@@ -35,7 +35,7 @@
           <template #cell-scope="{ row }">
             <div class="text-sm text-gray-600 dark:text-gray-300">
               <div>{{ row.platform ? row.platform : t('admin.routingStrategies.anyPlatform') }}</div>
-              <div class="text-xs text-gray-400">{{ groupLabel(row.group_id) }}</div>
+              <div class="text-xs text-gray-400" :title="groupsLabel(row.group_ids)">{{ groupsScopeText(row.group_ids) }}</div>
             </div>
           </template>
 
@@ -120,7 +120,14 @@
           </div>
           <div>
             <label class="input-label">{{ t('admin.routingStrategies.group') }}</label>
-            <Select v-model="form.group_id" :options="groupOptions" />
+            <MultiSelect
+              v-model="form.group_ids"
+              :options="groupOptions"
+              :exclusive-empty-label="t('admin.routingStrategies.globalScope')"
+              :no-results-text="t('common.noOptionsFound')"
+              searchable
+            />
+            <p class="input-hint">{{ t('admin.routingStrategies.groupHint') }}</p>
           </div>
           <div>
             <label class="input-label">{{ t('admin.routingStrategies.action') }}</label>
@@ -260,7 +267,7 @@
           </div>
           <div>
             <label class="input-label">{{ t('admin.routingStrategies.group') }}</label>
-            <Select v-model="testForm.group_id" :options="groupOptions" />
+            <Select v-model="testForm.group_id" :options="testGroupOptions" />
           </div>
         </div>
         <div>
@@ -320,7 +327,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { adminAPI } from '@/api/admin'
@@ -339,6 +346,7 @@ import DataTable from '@/components/common/DataTable.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import Select from '@/components/common/Select.vue'
+import MultiSelect from '@/components/common/MultiSelect.vue'
 import Toggle from '@/components/common/Toggle.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import Icon from '@/components/icons/Icon.vue'
@@ -370,7 +378,17 @@ const platformOptions = computed(() => [
   { value: 'antigravity', label: 'antigravity' }
 ])
 
-const groupOptions = computed(() => [
+// 分组多选可选项：按 form.platform 过滤（非空时取同 platform 或 composite），
+// 规则参照 GroupSelector.vue:101。互斥的「全局」项由 MultiSelect 组件自己渲染，不放进 options。
+const groupOptions = computed(() => {
+  const list = form.platform
+    ? groups.value.filter((g) => g.platform === form.platform || g.platform === 'composite')
+    : groups.value
+  return list.map((g) => ({ value: g.id, label: g.name }))
+})
+
+// dry-run 表单保持单选，需要「全局」项表示未分组请求，因此单独维护一份含 value: null 的选项。
+const testGroupOptions = computed(() => [
   { value: null as number | null, label: t('admin.routingStrategies.globalScope') },
   ...groups.value.map((g) => ({ value: g.id, label: g.name }))
 ])
@@ -419,10 +437,24 @@ function conditionValuePlaceholder(type: RoutingConditionType) {
   return ''
 }
 
-function groupLabel(groupId: number | null) {
-  if (groupId == null) return t('admin.routingStrategies.globalScope')
+function resolveGroupName(groupId: number): string {
   const g = groups.value.find((x) => x.id === groupId)
   return g ? g.name : `#${groupId}`
+}
+
+// 完整分组清单：空 → 全局；否则名称拼接（查不到名字的显示 #id）。用作折叠文案的 title。
+function groupsLabel(groupIds: number[]): string {
+  if (!groupIds || groupIds.length === 0) return t('admin.routingStrategies.globalScope')
+  return groupIds.map(resolveGroupName).join('、')
+}
+
+// 列表作用域列展示文案：超过两个分组时折叠成「ccmax、codex +2」，完整清单交给 title（见 groupsLabel）。
+function groupsScopeText(groupIds: number[]): string {
+  if (!groupIds || groupIds.length === 0) return t('admin.routingStrategies.globalScope')
+  const names = groupIds.map(resolveGroupName)
+  if (names.length <= 2) return names.join('、')
+  const visible = names.slice(0, 2).join('、')
+  return `${visible} ${t('admin.routingStrategies.groupsMore', { count: names.length - 2 })}`
 }
 
 function conditionsSummary(row: RoutingStrategy) {
@@ -511,7 +543,7 @@ const form = reactive<{
   enabled: boolean
   priority: number
   platform: string
-  group_id: number | null
+  group_ids: number[]
   match_mode: 'all' | 'any'
   conditions: RoutingCondition[]
   action: 'restrict' | 'prefer'
@@ -523,7 +555,7 @@ const form = reactive<{
   enabled: true,
   priority: 100,
   platform: 'anthropic',
-  group_id: null,
+  group_ids: [],
   match_mode: 'all',
   conditions: [],
   action: 'restrict',
@@ -537,7 +569,7 @@ function resetForm() {
   form.enabled = true
   form.priority = 100
   form.platform = 'anthropic'
-  form.group_id = null
+  form.group_ids = []
   form.match_mode = 'all'
   form.conditions = []
   form.action = 'restrict'
@@ -545,6 +577,15 @@ function resetForm() {
   form.account_priorities = []
   accountSearch.value = ''
 }
+
+// platform 变更时剔除已选中的、在新 platform 下不再可选的分组（groupOptions 已按 platform 过滤）。
+watch(
+  () => form.platform,
+  () => {
+    const allowed = new Set(groupOptions.value.map((o) => o.value))
+    form.group_ids = form.group_ids.filter((id) => allowed.has(id))
+  }
+)
 
 function openCreateDialog() {
   editing.value = null
@@ -559,7 +600,7 @@ function openEditDialog(row: RoutingStrategy) {
   form.enabled = row.enabled
   form.priority = row.priority
   form.platform = row.platform || ''
-  form.group_id = row.group_id
+  form.group_ids = [...(row.group_ids || [])]
   form.match_mode = row.match_mode || 'all'
   form.conditions = (row.conditions || []).map((c) => ({ ...c }))
   form.action = row.action || 'restrict'
@@ -616,7 +657,7 @@ function buildPayload(): SaveRoutingStrategyRequest {
     enabled: form.enabled,
     priority: form.priority,
     platform: form.platform,
-    group_id: form.group_id,
+    group_ids: form.group_ids,
     match_mode: form.match_mode,
     conditions: form.conditions.map((c) => ({
       type: c.type,

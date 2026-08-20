@@ -101,11 +101,14 @@ const props = withDefaults(
     searchable?: boolean | 'auto'
     /** 首项互斥选项的文案；勾选它等价于清空 modelValue（空数组）。 */
     exclusiveEmptyLabel?: string
+    /** 搜索无匹配结果时的占位文案；未传时保持组件原有的字面量默认值，不影响其它消费者。 */
+    noResultsText?: string
   }>(),
   {
     placeholder: '',
     searchable: 'auto',
     exclusiveEmptyLabel: '',
+    noResultsText: 'No results',
   },
 )
 
@@ -132,8 +135,6 @@ const filteredOptions = computed(() => {
   const query = searchQuery.value.trim().toLowerCase()
   return props.options.filter((option) => option.label.toLowerCase().includes(query))
 })
-
-const noResultsText = 'No results'
 
 const selectedLabels = computed(() =>
   props.options.filter((option) => props.modelValue.includes(option.value)).map((option) => option.label),
