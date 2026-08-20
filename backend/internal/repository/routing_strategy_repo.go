@@ -29,9 +29,12 @@ func (r *routingStrategyRepository) Create(ctx context.Context, s *service.Routi
 		SetConditions(s.Conditions).
 		SetAction(s.Action).
 		SetAccountIds(s.AccountIDs).
-		SetAccountPriorities(s.AccountPriorities)
-	if s.GroupID != nil {
-		builder.SetGroupID(*s.GroupID)
+		SetAccountPriorities(s.AccountPriorities).
+		SetGroupIds(s.GroupIDs)
+	// group_id 为回滚窗口保留，随 group_id 列一起删除：按不变量与 group_ids 同步（首元素或 NULL）。
+	// Create 的 group_id 字段可空，不设置即为 NULL，因此空数组时无需显式清空。
+	if len(s.GroupIDs) > 0 {
+		builder.SetGroupID(s.GroupIDs[0])
 	}
 
 	created, err := builder.Save(ctx)
@@ -64,9 +67,11 @@ func (r *routingStrategyRepository) Update(ctx context.Context, s *service.Routi
 		SetConditions(s.Conditions).
 		SetAction(s.Action).
 		SetAccountIds(s.AccountIDs).
-		SetAccountPriorities(s.AccountPriorities)
-	if s.GroupID != nil {
-		builder.SetGroupID(*s.GroupID)
+		SetAccountPriorities(s.AccountPriorities).
+		SetGroupIds(s.GroupIDs)
+	// group_id 为回滚窗口保留，随 group_id 列一起删除：按不变量与 group_ids 同步（首元素或 NULL）。
+	if len(s.GroupIDs) > 0 {
+		builder.SetGroupID(s.GroupIDs[0])
 	} else {
 		builder.ClearGroupID()
 	}
@@ -126,7 +131,7 @@ func routingStrategyEntityToService(m *dbent.RoutingStrategy) *service.RoutingSt
 		Enabled:           m.Enabled,
 		Priority:          m.Priority,
 		Platform:          m.Platform,
-		GroupID:           m.GroupID,
+		GroupIDs:          m.GroupIds,
 		MatchMode:         m.MatchMode,
 		Conditions:        m.Conditions,
 		Action:            m.Action,

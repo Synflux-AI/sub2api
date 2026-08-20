@@ -53,7 +53,7 @@ type RoutingStrategy struct {
 	Enabled     bool               `json:"enabled"`
 	Priority    int                `json:"priority"`
 	Platform    string             `json:"platform"`
-	GroupID     *int64             `json:"group_id"`
+	GroupIDs    []int64            `json:"group_ids"`
 	MatchMode   string             `json:"match_mode"`
 	Conditions  []RoutingCondition `json:"conditions"`
 	Action      string             `json:"action"`

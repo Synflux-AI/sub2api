@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -127,8 +128,11 @@ func strategyAppliesToScope(st *RoutingStrategy, mc RoutingMatchContext) bool {
 	if st.Platform != "" && st.Platform != mc.Platform {
 		return false
 	}
-	if st.GroupID != nil {
-		if mc.GroupID == nil || *st.GroupID != *mc.GroupID {
+	if len(st.GroupIDs) > 0 {
+		if mc.GroupID == nil {
+			return false
+		}
+		if !slices.Contains(st.GroupIDs, *mc.GroupID) {
 			return false
 		}
 	}
@@ -260,4 +264,25 @@ func dedupIDsWithPriorities(ids []int64, prios []int) ([]int64, map[int64]int) {
 		prioByID[v] = p
 	}
 	return out, prioByID
+}
+
+// dedupPositiveInt64 保序去重 ids：剔除 <= 0 的元素，重复元素只保留首次出现的位置。
+// 是 dedupIDsWithPriorities 的无优先级版本，用于路由策略的 group_ids 归一化。
+// 与 dedupIDsWithPriorities 不同的一点：即便输入为空也返回非 nil 的空切片（而非 nil）——
+// group_ids 是可以合法为空的字段（表示全局生效），nil 切片经 JSON 序列化会写成 `null`
+// 而不是 `[]`，会破坏「group_ids 恒为数组」的契约与不变量，因此这里必须显式区分。
+func dedupPositiveInt64(ids []int64) []int64 {
+	out := make([]int64, 0, len(ids))
+	seen := make(map[int64]struct{}, len(ids))
+	for _, v := range ids {
+		if v <= 0 {
+			continue
+		}
+		if _, ok := seen[v]; ok {
+			continue
+		}
+		seen[v] = struct{}{}
+		out = append(out, v)
+	}
+	return out
 }

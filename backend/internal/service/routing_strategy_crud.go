@@ -14,7 +14,7 @@ type SaveRoutingStrategyInput struct {
 	Enabled     bool
 	Priority    int
 	Platform    string
-	GroupID     *int64
+	GroupIDs    []int64
 	MatchMode   string
 	Conditions  []RoutingCondition
 	Action      string
@@ -130,11 +130,7 @@ func normalizeAndValidateRoutingStrategy(input *SaveRoutingStrategyInput) (*Rout
 		priority = 0
 	}
 
-	var groupID *int64
-	if input.GroupID != nil && *input.GroupID > 0 {
-		v := *input.GroupID
-		groupID = &v
-	}
+	groupIDs := dedupPositiveInt64(input.GroupIDs) // 保序、剔除 <= 0、去重；空数组合法（= 全局）
 
 	return &RoutingStrategy{
 		Name:              name,
@@ -142,7 +138,7 @@ func normalizeAndValidateRoutingStrategy(input *SaveRoutingStrategyInput) (*Rout
 		Enabled:           input.Enabled,
 		Priority:          priority,
 		Platform:          strings.TrimSpace(input.Platform),
-		GroupID:           groupID,
+		GroupIDs:          groupIDs,
 		MatchMode:         matchMode,
 		Conditions:        conditions,
 		Action:            action,

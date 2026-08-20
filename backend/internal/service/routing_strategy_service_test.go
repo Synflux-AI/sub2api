@@ -210,7 +210,7 @@ func TestRoutingEvaluate_FirstMatchWins(t *testing.T) {
 
 func TestRoutingEvaluate_PlatformAndGroupScope(t *testing.T) {
 	svc := newTestRoutingService(RoutingStrategy{
-		ID: 9, Name: "group-scoped", Enabled: true, Priority: 10, Platform: PlatformAnthropic, GroupID: ptrInt64(42),
+		ID: 9, Name: "group-scoped", Enabled: true, Priority: 10, Platform: PlatformAnthropic, GroupIDs: []int64{42},
 		Action: RoutingActionRestrict, MatchMode: RoutingMatchModeAll,
 		Conditions: []RoutingCondition{{Type: RoutingConditionTypeModel, Op: RoutingConditionOpWildcard, Value: "claude-*"}},
 		AccountIDs: []int64{901},
@@ -230,6 +230,46 @@ func TestRoutingEvaluate_PlatformAndGroupScope(t *testing.T) {
 	// 命中
 	if !svc.Evaluate(context.Background(), RoutingMatchContext{Platform: PlatformAnthropic, Model: "claude-opus", GroupID: ptrInt64(42)}).HasMatch() {
 		t.Fatal("should match when platform+group match")
+	}
+}
+
+func TestRoutingEvaluate_MultiGroupScope(t *testing.T) {
+	svc := newTestRoutingService(RoutingStrategy{
+		ID: 11, Name: "multi-group-scoped", Enabled: true, Priority: 10, Platform: PlatformAnthropic, GroupIDs: []int64{10, 20, 30},
+		Action: RoutingActionRestrict, MatchMode: RoutingMatchModeAll,
+		Conditions: []RoutingCondition{{Type: RoutingConditionTypeModel, Op: RoutingConditionOpWildcard, Value: "claude-*"}},
+		AccountIDs: []int64{1101},
+	})
+	// 组内命中（任一元素）
+	for _, gid := range []int64{10, 20, 30} {
+		if !svc.Evaluate(context.Background(), RoutingMatchContext{Platform: PlatformAnthropic, Model: "claude-opus", GroupID: ptrInt64(gid)}).HasMatch() {
+			t.Fatalf("expected match for group %d in GroupIDs", gid)
+		}
+	}
+	// 组外不命中
+	if svc.Evaluate(context.Background(), RoutingMatchContext{Platform: PlatformAnthropic, Model: "claude-opus", GroupID: ptrInt64(40)}).HasMatch() {
+		t.Fatal("should not match for group not in GroupIDs")
+	}
+	// 分组缺失（mc.GroupID == nil）不命中
+	if svc.Evaluate(context.Background(), RoutingMatchContext{Platform: PlatformAnthropic, Model: "claude-opus"}).HasMatch() {
+		t.Fatal("should not match when request has no group but strategy is group-scoped")
+	}
+}
+
+func TestRoutingEvaluate_EmptyGroupIDsMatchesAnyOrNoGroup(t *testing.T) {
+	svc := newTestRoutingService(RoutingStrategy{
+		ID: 12, Name: "global-scoped", Enabled: true, Priority: 10, Platform: PlatformAnthropic, GroupIDs: nil,
+		Action: RoutingActionRestrict, MatchMode: RoutingMatchModeAll,
+		Conditions: []RoutingCondition{{Type: RoutingConditionTypeModel, Op: RoutingConditionOpWildcard, Value: "claude-*"}},
+		AccountIDs: []int64{1201},
+	})
+	// 空 GroupIDs 命中任意分组请求
+	if !svc.Evaluate(context.Background(), RoutingMatchContext{Platform: PlatformAnthropic, Model: "claude-opus", GroupID: ptrInt64(999)}).HasMatch() {
+		t.Fatal("empty GroupIDs should match any group request")
+	}
+	// 空 GroupIDs 命中未分组请求
+	if !svc.Evaluate(context.Background(), RoutingMatchContext{Platform: PlatformAnthropic, Model: "claude-opus"}).HasMatch() {
+		t.Fatal("empty GroupIDs should match request with no group")
 	}
 }
 
