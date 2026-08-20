@@ -176,6 +176,20 @@ class TestBuildReleaseCard(unittest.TestCase):
         self.assertIn("a1", body)
         self.assertIn("3", body)          # 杂项计数
 
+    def test_changelog_使用响应式单列并保护短_sha(self):
+        groups = {
+            "feat": [{"sha": "85051616f", "msg": "新增自适应协议路由"}],
+            "fix": [],
+            "perf": [],
+            "extra": {},
+        }
+        card = build_release_card(self.BASE, "success", notes="", groups=groups, misc=0)
+        elements = card["card"]["elements"]
+        self.assertFalse(any(element.get("tag") == "column_set" for element in elements))
+        body = self._text(card)
+        self.assertIn("- `85051616f` 新增自适应协议路由", body)
+        self.assertNotIn("```", body)
+
     def test_人工说明优先于自动_changelog(self):
         groups = {"feat": [{"sha": "a1", "msg": "自动条目"}], "fix": [], "perf": [], "extra": {}}
         card = build_release_card(self.BASE, "success", notes="人工写的说明", groups=groups, misc=0)
@@ -188,6 +202,11 @@ class TestBuildReleaseCard(unittest.TestCase):
         body = self._text(build_release_card(ctx, "success", notes="x", groups=None, misc=0))
         self.assertIn("hedeqiang/sub2api", body)
         self.assertIn("ghcr.io/synflux-ai/sub2api", body)
+
+    def test_镜像命令使用行内代码(self):
+        body = self._text(build_release_card(self.BASE, "success", notes="x", groups=None, misc=0))
+        self.assertIn("- GHCR: `docker pull ghcr.io/synflux-ai/sub2api:0.1.178`", body)
+        self.assertNotIn("```bash", body)
 
     def test_无_dockerhub_时不出现空镜像名(self):
         body = self._text(build_release_card(self.BASE, "success", notes="x", groups=None, misc=0))
