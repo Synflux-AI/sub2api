@@ -10,6 +10,9 @@ const props = withDefaults(defineProps<{
   widthClass: 'w-64',
 })
 
+// 气泡底边与触发点之间留出的间距（含箭头）
+const TOOLTIP_GAP = 8
+
 const show = ref(false)
 const triggerRef = useTemplateRef<HTMLElement>('trigger')
 const tooltipRef = useTemplateRef<HTMLElement>('tooltip')
@@ -64,13 +67,17 @@ function onViewportChange() {
   updatePosition()
 }
 
+// 气泡是 position:fixed，getBoundingClientRect() 给的已经是视口坐标，绝不能再叠
+// window.scrollY/scrollX：页面滚动后气泡会整体下移一个滚动距离，压住鼠标所在的触发点，
+// trigger 立刻收到 mouseleave → 隐藏 → 鼠标又落回 trigger → 一闪一闪的死循环。
+// 8px 的上移间距直接算进 top，别用 calc() 拼字符串。
 function updatePosition() {
   const el = triggerRef.value
   if (!el) return
   const rect = el.getBoundingClientRect()
   tooltipStyle.value = {
-    top: `${rect.top + window.scrollY}px`,
-    left: `${rect.left + rect.width / 2 + window.scrollX}px`,
+    top: `${rect.top - TOOLTIP_GAP}px`,
+    left: `${rect.left + rect.width / 2}px`,
   }
 }
 
@@ -124,7 +131,7 @@ onBeforeUnmount(() => {
           'fixed z-[99999] -translate-x-1/2 -translate-y-full rounded-lg bg-gray-900 p-3 text-xs leading-relaxed text-white shadow-xl ring-1 ring-white/10 dark:bg-gray-800',
           props.widthClass,
         ]"
-        :style="{ top: `calc(${tooltipStyle.top} - 8px)`, left: tooltipStyle.left }"
+        :style="tooltipStyle"
       >
         <button
           v-if="props.trigger === 'click'"

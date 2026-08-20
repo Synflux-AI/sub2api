@@ -14,6 +14,9 @@ function getTooltipElement(): HTMLDivElement {
 describe('HelpTooltip', () => {
   afterEach(() => {
     document.body.innerHTML = ''
+    // jsdom 没实现 scrollTo，直接还原被本文件改写过的滚动位移
+    Object.defineProperty(window, 'scrollY', { value: 0, configurable: true })
+    Object.defineProperty(window, 'scrollX', { value: 0, configurable: true })
   })
 
   it('keeps the existing hover interaction by default', async () => {
@@ -36,6 +39,33 @@ describe('HelpTooltip', () => {
     await trigger.trigger('mouseleave')
     await nextTick()
     expect(tooltip.style.display).toBe('none')
+
+    wrapper.unmount()
+  })
+
+  // 气泡是 position:fixed，getBoundingClientRect 已经是视口坐标；再叠 scrollY 会把气泡
+  // 整体下移一个滚动距离，正好压住鼠标所在的触发点 → trigger 收到 mouseleave 立刻隐藏，
+  // 隐藏后鼠标又落回 trigger → 一闪一闪的死循环。
+  it('positions the fixed tooltip in viewport coordinates when the page is scrolled', async () => {
+    const wrapper = mount(HelpTooltip, {
+      attachTo: document.body,
+      props: {
+        content: 'scrolled details',
+      },
+    })
+
+    const trigger = wrapper.get('.group')
+    trigger.element.getBoundingClientRect = () =>
+      ({ top: 500, left: 200, width: 40, height: 20, bottom: 520, right: 240, x: 200, y: 500 }) as DOMRect
+    Object.defineProperty(window, 'scrollY', { value: 400, configurable: true })
+    Object.defineProperty(window, 'scrollX', { value: 30, configurable: true })
+
+    await trigger.trigger('mouseenter')
+    await nextTick()
+
+    const tooltip = getTooltipElement()
+    expect(tooltip.style.top).toBe('492px')
+    expect(tooltip.style.left).toBe('220px')
 
     wrapper.unmount()
   })
