@@ -33,6 +33,13 @@ func (r *routingStrategyRepository) Create(ctx context.Context, s *service.Routi
 		SetGroupIds(s.GroupIDs)
 	// group_id 为回滚窗口保留，随 group_id 列一起删除：按不变量与 group_ids 同步（首元素或 NULL）。
 	// Create 的 group_id 字段可空，不设置即为 NULL，因此空数组时无需显式清空。
+	//
+	// 注意（未来 DROP group_id 列时必读）：migrations_runner 会跳过 schema_migrations 里已记录的
+	// 迁移，229 永不重跑。若曾回滚到 229 之前的镜像，旧代码只写 group_id、group_ids 停在列默认值
+	// '[]'，而读路径按设计只信 group_ids（不做旧列兜底，这是绑定决策），这些行会变成「全局生效」。
+	// 因此负责 DROP group_id 的那个迁移，必须在 DROP 之前先重跑一次回填：
+	//   UPDATE routing_strategies SET group_ids = jsonb_build_array(group_id)
+	//    WHERE group_id IS NOT NULL AND group_ids = '[]'::jsonb;
 	if len(s.GroupIDs) > 0 {
 		builder.SetGroupID(s.GroupIDs[0])
 	}
