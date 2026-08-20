@@ -493,7 +493,9 @@ type ErrorHandlingRule struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
 	// nil 表示存量配置没有这个字段，服务层按启用处理。
-	Enabled         *bool    `json:"enabled"`
+	Enabled *bool `json:"enabled"`
+	// Priority 数字越小越先匹配。0 表示前端没传，服务层按数组下标补 1..N。
+	Priority        int      `json:"priority"`
 	StatusCodes     []int    `json:"status_codes"`
 	Keywords        []string `json:"keywords"`
 	Action          string   `json:"action"`

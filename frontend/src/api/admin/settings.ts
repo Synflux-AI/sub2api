@@ -1481,6 +1481,8 @@ export interface ErrorHandlingRule {
   name: string;
   /** null/undefined on legacy settings; the backend treats both as enabled. */
   enabled?: boolean | null;
+  /** Match order, 1-999; lower matches first. Missing on legacy settings, backfilled by index on the backend. */
+  priority?: number;
   status_codes: number[];
   keywords: string[];
   action: ErrorHandlingRuleAction;

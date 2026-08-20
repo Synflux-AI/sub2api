@@ -1155,8 +1155,9 @@ export default {
         enabledHint: '独立开关，不受「启用请求整流器」总开关影响',
         defaultRetryCount: '默认原地重试次数',
         defaultRetryCountHint: '规则未单独配置时使用；0 表示命中即切换账号；最大 {max}',
-        orderHint: '规则自上而下依次匹配，命中第一条即生效，可用 ↑ ↓ 调整优先级',
+        orderHint: '按优先级从小到大依次匹配，命中第一条即生效；数值越小越先匹配',
         priority: '优先级',
+        priorityHint: '数值越小优先级越高，优先匹配',
         name: '名称',
         namePlaceholder: '规则备注（选填）',
         unnamedRule: '未命名规则',
@@ -1192,11 +1193,10 @@ export default {
         exhaustedActionPassthrough: '返回命中的错误类型和消息',
         exhaustedActionWarning:
           '仅返回解析出的错误类型和消息，不会暴露上游响应中的其他字段。',
-        moveUp: '上移规则',
-        moveDown: '下移规则',
         addRule: '添加规则',
         emptyMatcher: '至少要填写一个状态码或关键字',
         invalidStatusCode: '状态码「{value}」无效，请填写 100–599 之间的整数',
+        invalidPriority: '优先级必须是 {min}–{max} 之间的整数',
         saved: '错误处理规则保存成功',
         saveFailed: '保存错误处理规则失败'
       },

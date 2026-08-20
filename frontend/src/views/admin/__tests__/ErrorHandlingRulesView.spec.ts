@@ -150,6 +150,26 @@ async function submitDialog(wrapper: Wrapper) {
   await dialog(wrapper).get("form").trigger("submit");
 }
 
+/**
+ * 行内优先级输入刻意用 change 而不是 input 提交：打字过程中实时重排会让
+ * "12" 在敲到 "1" 时就把行甩走。测试也必须走 change 才是真实交互。
+ */
+async function setRowPriority(wrapper: Wrapper, ruleId: string, value: string) {
+  const input = wrapper.get(
+    `[data-testid="error-handling-rule-priority-${ruleId}"]`,
+  );
+  (input.element as HTMLInputElement).value = value;
+  await input.trigger("change");
+  return input;
+}
+
+function rowPriorities(wrapper: Wrapper) {
+  return ruleRows(wrapper).map(
+    (row) =>
+      (row.get('input[type="number"]').element as HTMLInputElement).value,
+  );
+}
+
 const RULE_A = {
   id: "rule-a",
   name: "Rule A",
@@ -256,7 +276,7 @@ describe("admin ErrorHandlingRulesView", () => {
     );
   });
 
-  // 行序即匹配优先级，可排序会让视图顺序和 rules 数组脱钩
+  // 行序完全由 priority 决定，任何一列可排序都会让视图顺序和优先级脱钩
   it("keeps every column unsortable so row order stays the match priority", async () => {
     getErrorHandlingRuleSettings.mockResolvedValue({
       enabled: true,
@@ -284,33 +304,36 @@ describe("admin ErrorHandlingRulesView", () => {
     expect(ruleRows(wrapper)).toHaveLength(1);
   });
 
-  it("reorders rules with the row move buttons and submits the new order", async () => {
+  // 行内优先级数字取代了 ↑↓ 按钮：改完数字失焦，行要立刻按新优先级重排，
+  // 保存时提交的也必须是排序后的数组（后端对相同 priority 按数组顺序稳定排序）
+  it("reorders rules when a row priority changes and submits the sorted array", async () => {
     getErrorHandlingRuleSettings.mockResolvedValue({
       enabled: true,
       default_retry_count: 2,
-      rules: [RULE_A, RULE_B],
+      rules: [
+        { ...RULE_A, priority: 1 },
+        { ...RULE_B, priority: 2 },
+      ],
     });
 
     const wrapper = mountView();
     await flushPromises();
 
-    const rows = ruleRows(wrapper);
-    // 首行 ↑ / 末行 ↓ 必须禁用
+    // ↑↓ 按钮已删除，行内数字是唯一的调序入口
     expect(
-      rows[0]
-        .get('button[aria-label="admin.settings.errorHandlingRule.moveUp"]')
-        .attributes("disabled"),
-    ).toBeDefined();
+      wrapper
+        .find('button[aria-label="admin.settings.errorHandlingRule.moveUp"]')
+        .exists(),
+    ).toBe(false);
     expect(
-      rows[1]
-        .get('button[aria-label="admin.settings.errorHandlingRule.moveDown"]')
-        .attributes("disabled"),
-    ).toBeDefined();
+      wrapper
+        .find('button[aria-label="admin.settings.errorHandlingRule.moveDown"]')
+        .exists(),
+    ).toBe(false);
 
-    await rows[1]
-      .get('button[aria-label="admin.settings.errorHandlingRule.moveUp"]')
-      .trigger("click");
+    await setRowPriority(wrapper, "rule-a", "5");
     expect(ruleRows(wrapper)[0].text()).toContain("Rule B");
+    expect(rowPriorities(wrapper)).toEqual(["2", "5"]);
 
     await wrapper
       .get('[data-testid="error-handling-rule-save"]')
@@ -321,10 +344,129 @@ describe("admin ErrorHandlingRulesView", () => {
       enabled: true,
       default_retry_count: 2,
       rules: [
-        expect.objectContaining({ id: "rule-b" }),
-        expect.objectContaining({ id: "rule-a" }),
+        expect.objectContaining({ id: "rule-b", priority: 2 }),
+        expect.objectContaining({ id: "rule-a", priority: 5 }),
       ],
     });
+  });
+
+  // 后端承诺按 priority 升序返回，但前端不能靠这个承诺：视图顺序就是匹配顺序，
+  // 一旦接口顺序和 priority 不一致，用户看到的优先级就是错的
+  it("renders rules in ascending priority order even when the API returns them shuffled", async () => {
+    getErrorHandlingRuleSettings.mockResolvedValue({
+      enabled: true,
+      default_retry_count: 1,
+      rules: [
+        { ...RULE_A, priority: 30 },
+        { ...RULE_B, priority: 10 },
+      ],
+    });
+
+    const wrapper = mountView();
+    await flushPromises();
+
+    const rows = ruleRows(wrapper);
+    expect(rows[0].text()).toContain("Rule B");
+    expect(rows[1].text()).toContain("Rule A");
+    expect(rowPriorities(wrapper)).toEqual(["10", "30"]);
+  });
+
+  // 存量数据没有 priority 字段，缺字段时必须按下标补 1..N，不能全塞 0/NaN
+  it("falls back to the row index when the API omits priority", async () => {
+    getErrorHandlingRuleSettings.mockResolvedValue({
+      enabled: true,
+      default_retry_count: 1,
+      rules: [RULE_A, RULE_B],
+    });
+
+    const wrapper = mountView();
+    await flushPromises();
+
+    expect(rowPriorities(wrapper)).toEqual(["1", "2"]);
+  });
+
+  // 非法输入不能进本地状态：0 / 1000 会被后端拒掉，空串会让整行优先级变 NaN
+  it("clamps an inline priority into the 1-999 range", async () => {
+    getErrorHandlingRuleSettings.mockResolvedValue({
+      enabled: true,
+      default_retry_count: 1,
+      rules: [{ ...RULE_A, priority: 7 }],
+    });
+
+    const wrapper = mountView();
+    await flushPromises();
+
+    const zero = await setRowPriority(wrapper, "rule-a", "0");
+    // 输入框自己也要回显收敛后的值，否则界面上还留着非法的 0
+    expect((zero.element as HTMLInputElement).value).toBe("1");
+
+    await setRowPriority(wrapper, "rule-a", "1000");
+    expect(rowPriorities(wrapper)).toEqual(["999"]);
+
+    // 空串没有可用数值，保留改动前的值而不是掉成 0
+    await setRowPriority(wrapper, "rule-a", "");
+    expect(rowPriorities(wrapper)).toEqual(["999"]);
+
+    await wrapper
+      .get('[data-testid="error-handling-rule-save"]')
+      .trigger("click");
+    await flushPromises();
+
+    expect(updateErrorHandlingRuleSettings.mock.calls[0][0].rules[0]).toMatchObject(
+      { id: "rule-a", priority: 999 },
+    );
+  });
+
+  // 新增规则默认排到最末，否则每加一条都要手动改数字才不会插队
+  it("defaults the dialog priority to max priority + 1", async () => {
+    getErrorHandlingRuleSettings.mockResolvedValue({
+      enabled: true,
+      default_retry_count: 1,
+      rules: [
+        { ...RULE_A, priority: 3 },
+        { ...RULE_B, priority: 8 },
+      ],
+    });
+
+    const wrapper = mountView();
+    await flushPromises();
+    await wrapper
+      .get('[data-testid="error-handling-rule-add"]')
+      .trigger("click");
+
+    expect(
+      (
+        dialog(wrapper).get('[data-testid="error-handling-rule-dialog-priority"]')
+          .element as HTMLInputElement
+      ).value,
+    ).toBe("9");
+  });
+
+  // 弹窗里的优先级是自由文本，确定时才解析：非法值要就地报错而不是静默塞个兜底值
+  it("keeps the dialog open and reports an out-of-range priority inline", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+    await wrapper
+      .get('[data-testid="error-handling-rule-add"]')
+      .trigger("click");
+
+    const form = dialog(wrapper);
+    await form
+      .get('[data-testid="error-handling-rule-status-codes"]')
+      .setValue("500");
+
+    for (const invalid of ["0", "1000", "abc"]) {
+      await form
+        .get('[data-testid="error-handling-rule-dialog-priority"]')
+        .setValue(invalid);
+      await submitDialog(wrapper);
+
+      expect(wrapper.find('[data-testid="rule-dialog"]').exists()).toBe(true);
+      expect(
+        wrapper.get('[data-testid="error-handling-rule-dialog-error"]').text(),
+      ).toBe("admin.settings.errorHandlingRule.invalidPriority");
+      expect(ruleRows(wrapper)).toHaveLength(0);
+    }
   });
 
   it("round-trips the per-rule enabled toggle through save", async () => {
@@ -365,6 +507,13 @@ describe("admin ErrorHandlingRulesView", () => {
     await wrapper.get('[data-testid="error-handling-rule-add"]').trigger("click");
 
     const form = dialog(wrapper);
+    // 空列表时 max+1 退化成 1
+    expect(
+      (
+        form.get('[data-testid="error-handling-rule-dialog-priority"]')
+          .element as HTMLInputElement
+      ).value,
+    ).toBe("1");
     await form
       .get('[data-testid="error-handling-rule-dialog-name"]')
       .setValue("New rule");
@@ -388,6 +537,7 @@ describe("admin ErrorHandlingRulesView", () => {
     expect(rule).toMatchObject({
       name: "New rule",
       enabled: true,
+      priority: 1,
       status_codes: [500, 502],
       keywords: ["overloaded", "rate limit"],
       action: "retry",
@@ -434,6 +584,7 @@ describe("admin ErrorHandlingRulesView", () => {
       id: "rule-a",
       name: "Rule A",
       enabled: true,
+      priority: 1,
       status_codes: [429, 529],
       keywords: ["first"],
       action: "retry",

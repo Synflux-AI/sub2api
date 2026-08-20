@@ -82,21 +82,31 @@
                 </button>
               </div>
 
-              <!-- 行序即匹配优先级，所以没有任何一列可排序：一旦允许排序，视图顺序
-                   会和 rules 数组脱钩，↑↓ 改的数组和用户看到的行就对不上了 -->
+              <!-- 行序完全由 priority 决定，所以没有任何一列可排序：一旦允许排序，
+                   视图顺序就和优先级脱钩，用户看到的行序不再是真实匹配顺序 -->
               <div class="overflow-hidden rounded-lg border border-gray-200 dark:border-dark-700">
                 <DataTable
                   :columns="errorHandlingRuleColumns"
-                  :data="errorHandlingRuleForm.rules"
+                  :data="sortedRules"
                   :row-key="(row: ErrorHandlingRuleFormItem) => row.id"
-                  :actions-count="4"
+                  :actions-count="2"
                 >
                   <template #cell-priority="{ row }">
-                    <span
-                      class="inline-flex h-6 min-w-6 items-center justify-center rounded bg-gray-100 px-1.5 text-xs font-medium text-gray-700 dark:bg-dark-600 dark:text-gray-300"
-                    >
-                      {{ ruleIndex(row) + 1 }}
-                    </span>
+                    <!-- 刻意用 :value + @change 而不是 v-model：v-model 会在打字过程中
+                         实时重排，输入 "12" 时敲完 "1" 那行就先跳走了 -->
+                    <input
+                      :value="row.priority"
+                      type="number"
+                      :min="ERROR_HANDLING_RULE_MIN_PRIORITY"
+                      :max="ERROR_HANDLING_RULE_MAX_PRIORITY"
+                      class="input input-sm w-16"
+                      :aria-label="t('admin.settings.errorHandlingRule.priority')"
+                      :title="t('admin.settings.errorHandlingRule.priorityHint')"
+                      :data-testid="`error-handling-rule-priority-${row.id}`"
+                      @change="
+                        setRulePriority(row, $event.target as HTMLInputElement)
+                      "
+                    />
                   </template>
 
                   <template #cell-name="{ row }">
@@ -246,28 +256,6 @@
                     <div class="flex items-center justify-end gap-1">
                       <button
                         type="button"
-                        :disabled="ruleIndex(row) === 0"
-                        class="rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-dark-600 dark:hover:text-gray-300"
-                        :title="t('admin.settings.errorHandlingRule.moveUp')"
-                        :aria-label="t('admin.settings.errorHandlingRule.moveUp')"
-                        @click="moveErrorHandlingRule(ruleIndex(row), -1)"
-                      >
-                        <Icon name="arrowUp" size="sm" />
-                      </button>
-                      <button
-                        type="button"
-                        :disabled="
-                          ruleIndex(row) === errorHandlingRuleForm.rules.length - 1
-                        "
-                        class="rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-dark-600 dark:hover:text-gray-300"
-                        :title="t('admin.settings.errorHandlingRule.moveDown')"
-                        :aria-label="t('admin.settings.errorHandlingRule.moveDown')"
-                        @click="moveErrorHandlingRule(ruleIndex(row), 1)"
-                      >
-                        <Icon name="arrowDown" size="sm" />
-                      </button>
-                      <button
-                        type="button"
                         class="rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-dark-600 dark:hover:text-gray-300"
                         :title="t('common.edit')"
                         :aria-label="t('common.edit')"
@@ -345,6 +333,30 @@
             :placeholder="t('admin.settings.errorHandlingRule.namePlaceholder')"
             data-testid="error-handling-rule-dialog-name"
           />
+        </div>
+
+        <div>
+          <label class="input-label">
+            {{ t("admin.settings.errorHandlingRule.priority") }}
+          </label>
+          <!-- 存原始文本而不是 v-model 出来的 number：v-model 在 type=number 上会
+               隐式转数字，越界值就没法在确定时原样报错了 -->
+          <input
+            :value="ruleDialogForm.priority_text"
+            type="number"
+            :min="ERROR_HANDLING_RULE_MIN_PRIORITY"
+            :max="ERROR_HANDLING_RULE_MAX_PRIORITY"
+            class="input w-32"
+            data-testid="error-handling-rule-dialog-priority"
+            @input="
+              ruleDialogForm.priority_text = (
+                $event.target as HTMLInputElement
+              ).value
+            "
+          />
+          <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+            {{ t("admin.settings.errorHandlingRule.priorityHint") }}
+          </p>
         </div>
 
         <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -524,12 +536,17 @@ const ERROR_HANDLING_RULE_MAX_RETRY = 4;
 const ERROR_HANDLING_RULE_MAX_RULES = 50;
 const ERROR_HANDLING_RULE_MIN_STATUS_CODE = 100;
 const ERROR_HANDLING_RULE_MAX_STATUS_CODE = 599;
+// 与后端 priority 的合法区间保持一致
+const ERROR_HANDLING_RULE_MIN_PRIORITY = 1;
+const ERROR_HANDLING_RULE_MAX_PRIORITY = 999;
 
 type ErrorHandlingRuleFormItem = {
   /** 稳定标识：新增时前端就生成，兼作表格 row key 和后端 rule id */
   id: string;
   name: string;
   enabled: boolean;
+  /** 匹配优先级，数值越小越先匹配；视图顺序完全由它决定 */
+  priority: number;
   status_codes: number[];
   keywords: string[];
   action: ErrorHandlingRuleAction;
@@ -540,6 +557,7 @@ type ErrorHandlingRuleFormItem = {
 /** 弹窗里编辑的是原始文本，确定时才解析，避免输入过程中被重排 */
 type ErrorHandlingRuleDialogForm = {
   name: string;
+  priority_text: string;
   status_codes_text: string;
   keywords_text: string;
   action: ErrorHandlingRuleAction;
@@ -551,7 +569,7 @@ let errorHandlingRuleIDSequence = 0;
 
 /**
  * 规则 ID 在前端就定下来，而不是提交空串让后端补：ID 是
- * errorHandlingRuleTracker 记重试计数的键，前端能稳定持有它，上下移动、
+ * errorHandlingRuleTracker 记重试计数的键，前端能稳定持有它，改优先级、
  * 反复保存都不会让同一条规则换 ID。
  */
 function nextErrorHandlingRuleID(): string {
@@ -569,7 +587,16 @@ const errorHandlingRuleForm = reactive({
   rules: [] as ErrorHandlingRuleFormItem[],
 });
 
-// 没有任何一列设 sortable：行序即匹配优先级，可排序会让视图顺序和数组脱钩
+/**
+ * 视图顺序只由 priority 决定：按升序排，相同 priority 保持数组原有先后
+ * （Array.prototype.sort 稳定，但必须先拷贝，不能原地 sort 这个 reactive 数组）。
+ * 后端对相同 priority 也是按提交顺序稳定排序，两边口径一致。
+ */
+const sortedRules = computed<ErrorHandlingRuleFormItem[]>(() =>
+  [...errorHandlingRuleForm.rules].sort((a, b) => a.priority - b.priority),
+);
+
+// 没有任何一列设 sortable：行序就是匹配优先级，可排序会让视图顺序和 priority 脱钩
 const errorHandlingRuleColumns = computed<Column[]>(() => [
   { key: "priority", label: t("admin.settings.errorHandlingRule.priority") },
   { key: "name", label: t("admin.settings.errorHandlingRule.name") },
@@ -586,10 +613,6 @@ const errorHandlingRuleColumns = computed<Column[]>(() => [
   { key: "enabled", label: t("admin.settings.errorHandlingRule.ruleStatus") },
   { key: "actions", label: t("common.actions") },
 ]);
-
-function ruleIndex(rule: ErrorHandlingRuleFormItem): number {
-  return errorHandlingRuleForm.rules.findIndex((item) => item.id === rule.id);
-}
 
 function ruleActionLabel(action: ErrorHandlingRuleAction): string {
   switch (action) {
@@ -669,29 +692,75 @@ function clampErrorHandlingRetryCount(value: unknown): number {
   );
 }
 
-function moveErrorHandlingRule(index: number, delta: number) {
-  const target = index + delta;
-  if (index < 0 || target < 0 || target >= errorHandlingRuleForm.rules.length) {
-    return;
+/**
+ * 保证优先级一定是 {ERROR_HANDLING_RULE_MIN_PRIORITY}–{ERROR_HANDLING_RULE_MAX_PRIORITY}
+ * 的整数。空值 / 非法输入回落到 fallback（通常是改动前的值），否则清空输入框
+ * 就会把整行的优先级变成 NaN，行序直接乱掉。
+ */
+function clampErrorHandlingPriority(
+  value: unknown,
+  fallback: number = ERROR_HANDLING_RULE_MIN_PRIORITY,
+): number {
+  const parsed =
+    typeof value === "number" ? value : Number.parseInt(String(value ?? ""), 10);
+  const resolved = Number.isFinite(parsed) ? parsed : fallback;
+  if (!Number.isFinite(resolved)) return ERROR_HANDLING_RULE_MIN_PRIORITY;
+  return Math.min(
+    ERROR_HANDLING_RULE_MAX_PRIORITY,
+    Math.max(ERROR_HANDLING_RULE_MIN_PRIORITY, Math.trunc(resolved)),
+  );
+}
+
+/** 新增规则默认排到最末，免得每加一条都要手动改数字才不会插队 */
+function nextErrorHandlingRulePriority(): number {
+  if (errorHandlingRuleForm.rules.length === 0) {
+    return ERROR_HANDLING_RULE_MIN_PRIORITY;
   }
-  const rules = errorHandlingRuleForm.rules;
-  [rules[index], rules[target]] = [rules[target], rules[index]];
+  const max = Math.max(
+    ...errorHandlingRuleForm.rules.map((rule) => rule.priority),
+  );
+  return clampErrorHandlingPriority(max + 1);
+}
+
+/**
+ * 行内改优先级：失焦 / 回车才提交，提交后该行按新优先级重排。
+ * 还要把收敛后的值写回 DOM——模型值没变时（比如把 1 改成 0）Vue 不会重绘，
+ * 输入框会一直留着那个非法数字。
+ */
+function setRulePriority(
+  rule: ErrorHandlingRuleFormItem,
+  input: HTMLInputElement,
+) {
+  const target = errorHandlingRuleForm.rules.find(
+    (item) => item.id === rule.id,
+  );
+  if (!target) return;
+  target.priority = clampErrorHandlingPriority(input.value, target.priority);
+  input.value = String(target.priority);
 }
 
 function toErrorHandlingRuleFormItems(
   rules: ErrorHandlingRule[] | undefined,
 ): ErrorHandlingRuleFormItem[] {
-  return (rules || []).map((rule) => ({
-    id: rule.id || nextErrorHandlingRuleID(),
-    name: rule.name,
-    // 后端 null/undefined 表示存量规则，按启用处理
-    enabled: rule.enabled ?? true,
-    status_codes: rule.status_codes || [],
-    keywords: rule.keywords || [],
-    action: rule.action || "retry",
-    retry_count: rule.retry_count ?? null,
-    exhausted_action: rule.exhausted_action || "default",
-  }));
+  return (rules || []).map((rule, index) => {
+    // 后端 normalize 后一定带合法 priority；缺字段 / <=0 的存量响应按下标补 1..N
+    const fallbackPriority = index + 1;
+    return {
+      id: rule.id || nextErrorHandlingRuleID(),
+      name: rule.name,
+      // 后端 null/undefined 表示存量规则，按启用处理
+      enabled: rule.enabled ?? true,
+      priority: clampErrorHandlingPriority(
+        rule.priority && rule.priority > 0 ? rule.priority : fallbackPriority,
+        fallbackPriority,
+      ),
+      status_codes: rule.status_codes || [],
+      keywords: rule.keywords || [],
+      action: rule.action || "retry",
+      retry_count: rule.retry_count ?? null,
+      exhausted_action: rule.exhausted_action || "default",
+    };
+  });
 }
 
 // ==================== 新增 / 编辑弹窗 ====================
@@ -701,6 +770,7 @@ const ruleDialogEditingId = ref<string | null>(null);
 const ruleDialogError = ref("");
 const ruleDialogForm = reactive<ErrorHandlingRuleDialogForm>({
   name: "",
+  priority_text: String(ERROR_HANDLING_RULE_MIN_PRIORITY),
   status_codes_text: "",
   keywords_text: "",
   action: "retry",
@@ -733,6 +803,7 @@ function openCreateRuleDialog() {
   ruleDialogError.value = "";
   Object.assign(ruleDialogForm, {
     name: "",
+    priority_text: String(nextErrorHandlingRulePriority()),
     status_codes_text: "",
     keywords_text: "",
     action: "retry" as ErrorHandlingRuleAction,
@@ -747,6 +818,7 @@ function openEditRuleDialog(rule: ErrorHandlingRuleFormItem) {
   ruleDialogError.value = "";
   Object.assign(ruleDialogForm, {
     name: rule.name,
+    priority_text: String(rule.priority),
     status_codes_text: rule.status_codes.join(", "),
     keywords_text: rule.keywords.join("\n"),
     action: rule.action,
@@ -777,10 +849,30 @@ function confirmRuleDialog() {
     ruleDialogError.value = t("admin.settings.errorHandlingRule.emptyMatcher");
     return;
   }
+  // 弹窗里的优先级不静默 clamp：用户明确输了个越界值，就地报错比悄悄改掉更好
+  const priorityText = ruleDialogForm.priority_text.trim();
+  const priority = /^\d+$/.test(priorityText)
+    ? Number.parseInt(priorityText, 10)
+    : Number.NaN;
+  if (
+    !Number.isFinite(priority) ||
+    priority < ERROR_HANDLING_RULE_MIN_PRIORITY ||
+    priority > ERROR_HANDLING_RULE_MAX_PRIORITY
+  ) {
+    ruleDialogError.value = t(
+      "admin.settings.errorHandlingRule.invalidPriority",
+      {
+        min: ERROR_HANDLING_RULE_MIN_PRIORITY,
+        max: ERROR_HANDLING_RULE_MAX_PRIORITY,
+      },
+    );
+    return;
+  }
 
   const isRetry = ruleDialogForm.action === "retry";
   const changes = {
     name: ruleDialogForm.name.trim(),
+    priority: clampErrorHandlingPriority(priority),
     status_codes: codes,
     keywords,
     action: ruleDialogForm.action,
@@ -846,10 +938,12 @@ function confirmDeleteRule() {
 
 /** 表格里的改动只存本地，点「保存」才整体 PUT（后端也只有整体 PUT 接口） */
 function buildErrorHandlingRulePayload(): ErrorHandlingRuleSettings {
-  const rules: ErrorHandlingRule[] = errorHandlingRuleForm.rules.map((rule) => ({
+  // 提交排序后的数组：后端对相同 priority 按提交顺序稳定排序，视图顺序即提交顺序
+  const rules: ErrorHandlingRule[] = sortedRules.value.map((rule) => ({
     id: rule.id,
     name: rule.name,
     enabled: rule.enabled,
+    priority: clampErrorHandlingPriority(rule.priority),
     status_codes: rule.status_codes,
     keywords: rule.keywords,
     action: rule.action,

@@ -1162,8 +1162,9 @@ export default {
         defaultRetryCount: 'Default In-Place Retry Count',
         defaultRetryCountHint: 'Used when a rule does not set its own; 0 means switch accounts immediately on match; max {max}',
         namePlaceholder: 'Rule note (optional)',
-        orderHint: 'Rules are matched top to bottom; the first match wins. Use ↑ ↓ to change priority.',
+        orderHint: 'Rules are matched in ascending priority order; the first match wins. Lower values match first.',
         priority: 'Priority',
+        priorityHint: 'Lower values have higher priority',
         name: 'Name',
         unnamedRule: 'Unnamed rule',
         matcher: 'Match Conditions',
@@ -1198,11 +1199,10 @@ export default {
         exhaustedActionPassthrough: 'Return the matched error type and message',
         exhaustedActionWarning:
           'Only the parsed error type and message are returned; other upstream fields are never exposed.',
-        moveUp: 'Move rule up',
-        moveDown: 'Move rule down',
         addRule: 'Add Rule',
         emptyMatcher: 'Configure at least one status code or keyword',
         invalidStatusCode: 'Invalid status code "{value}"; use integers between 100 and 599',
+        invalidPriority: 'Priority must be an integer between {min} and {max}',
         saved: 'Error handling rules saved',
         saveFailed: 'Failed to save error handling rules'
       },
