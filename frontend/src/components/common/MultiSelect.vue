@@ -7,10 +7,11 @@
       :class="isOpen ? 'select-trigger-open' : ''"
       :aria-expanded="isOpen"
       aria-haspopup="listbox"
-      :title="triggerTitle"
+      :aria-label="ariaLabel"
+      :title="triggerLabel"
       @click="toggleOpen"
     >
-      <span class="select-value min-w-0 flex-1 truncate">{{ triggerText }}</span>
+      <span class="select-value min-w-0 flex-1 truncate">{{ triggerLabel }}</span>
       <span v-if="modelValue.length > 1" class="shrink-0 text-xs text-gray-400 dark:text-dark-400">({{ modelValue.length }})</span>
       <span class="select-icon shrink-0 text-gray-400 transition-transform" :class="isOpen ? 'rotate-180' : ''">
         <Icon name="chevronDown" size="md" />
@@ -37,6 +38,8 @@
               v-model="searchQuery"
               type="text"
               class="select-search-input"
+              :placeholder="searchPlaceholder"
+              :aria-label="searchPlaceholder"
               @click.stop
             />
           </div>
@@ -101,14 +104,20 @@ const props = withDefaults(
     searchable?: boolean | 'auto'
     /** 首项互斥选项的文案；勾选它等价于清空 modelValue（空数组）。 */
     exclusiveEmptyLabel?: string
-    /** 搜索无匹配结果时的占位文案；未传时保持组件原有的字面量默认值，不影响其它消费者。 */
+    /** 搜索无匹配结果时的占位文案；由调用方传入已本地化文案，默认值只是英文兜底字面量。 */
     noResultsText?: string
+    /** trigger 的无障碍名称；由调用方传入已本地化文案，默认值只是英文兜底字面量。 */
+    ariaLabel?: string
+    /** 搜索框的 placeholder 兼 aria-label；由调用方传入已本地化文案，默认值只是英文兜底字面量。 */
+    searchPlaceholder?: string
   }>(),
   {
     placeholder: '',
     searchable: 'auto',
     exclusiveEmptyLabel: '',
     noResultsText: 'No results',
+    ariaLabel: 'Select options',
+    searchPlaceholder: 'Search',
   },
 )
 
@@ -136,16 +145,20 @@ const filteredOptions = computed(() => {
   return props.options.filter((option) => option.label.toLowerCase().includes(query))
 })
 
-const selectedLabels = computed(() =>
-  props.options.filter((option) => props.modelValue.includes(option.value)).map((option) => option.label),
-)
-
-const triggerText = computed(() => {
-  if (props.modelValue.length === 0) return props.exclusiveEmptyLabel || props.placeholder
-  return selectedLabels.value.join('、')
+const labelByValue = computed(() => {
+  const map = new Map<number | string, string>()
+  for (const option of props.options) map.set(option.value, option.label)
+  return map
 })
 
-const triggerTitle = computed(() => {
+// options 里查不到的值（如已被软删除的分组这类悬空 ID）回退成 `#<value>`，
+// 与列表列的展示保持一致；不能渲染成空串，否则 trigger 会看起来像「全局」。
+const selectedLabels = computed(() =>
+  props.modelValue.map((value) => labelByValue.value.get(value) ?? `#${value}`),
+)
+
+// trigger 的可见文案与 title 完全一致，共用同一个 computed。
+const triggerLabel = computed(() => {
   if (props.modelValue.length === 0) return props.exclusiveEmptyLabel || props.placeholder
   return selectedLabels.value.join('、')
 })

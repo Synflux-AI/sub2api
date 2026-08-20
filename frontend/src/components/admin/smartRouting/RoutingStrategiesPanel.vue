@@ -116,7 +116,11 @@
         <div class="grid grid-cols-1 gap-4 md:grid-cols-3">
           <div>
             <label class="input-label">{{ t('admin.routingStrategies.platform') }}</label>
-            <Select v-model="form.platform" :options="platformOptions" />
+            <Select
+              :model-value="form.platform"
+              :options="platformOptions"
+              @update:model-value="(v) => onPlatformChange(v as string)"
+            />
           </div>
           <div>
             <label class="input-label">{{ t('admin.routingStrategies.group') }}</label>
@@ -125,6 +129,8 @@
               :options="groupOptions"
               :exclusive-empty-label="t('admin.routingStrategies.globalScope')"
               :no-results-text="t('common.noOptionsFound')"
+              :aria-label="t('admin.routingStrategies.group')"
+              :search-placeholder="t('common.searchPlaceholder')"
               searchable
             />
             <p class="input-hint">{{ t('admin.routingStrategies.groupHint') }}</p>
@@ -327,7 +333,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { adminAPI } from '@/api/admin'
@@ -578,14 +584,19 @@ function resetForm() {
   accountSearch.value = ''
 }
 
-// platform 变更时剔除已选中的、在新 platform 下不再可选的分组（groupOptions 已按 platform 过滤）。
-watch(
-  () => form.platform,
-  () => {
-    const allowed = new Set(groupOptions.value.map((o) => o.value))
-    form.group_ids = form.group_ids.filter((id) => allowed.has(id))
-  }
-)
+// 仅在「用户手动改 platform」时剔除分组，绝不用 watch(() => form.platform)：
+// resetForm() / openEditDialog() 也会写 form.platform，watcher 会在程序化回填之后跑，
+// 把刚填进去的 group_ids 一起剔掉；group_ids 变空 = 全局生效（restrict 会命中所有分组），是事故。
+//
+// 剔除范围也必须收窄：只丢掉「能在 groups 里查到、但在新 platform 下不可选」的分组。
+// groups 里查不到的悬空 ID（分组被软删除、或分组列表加载失败导致 groups 为空）一律原样保留——
+// 设计决策是「悬空 ID 不清理、悬空即自然失效」，静默清理会把策略升级成全局。
+function onPlatformChange(value: string) {
+  form.platform = value
+  const allowed = new Set(groupOptions.value.map((o) => o.value))
+  const known = new Set(groups.value.map((g) => g.id))
+  form.group_ids = form.group_ids.filter((id) => !known.has(id) || allowed.has(id))
+}
 
 function openCreateDialog() {
   editing.value = null

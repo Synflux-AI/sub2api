@@ -67,6 +67,50 @@ describe('MultiSelect trigger display', () => {
     const multiple = mountMultiSelect({ modelValue: [1, 2, 3] })
     expect(multiple.get('button.select-trigger').text()).toContain('(3)')
   })
+
+  it('falls back to "#<value>" for a value that has no matching option (dangling id)', () => {
+    const wrapper = mountMultiSelect({ modelValue: [99] })
+    const trigger = wrapper.get('button.select-trigger')
+    // Must never render as an empty string: that would look identical to the "global" state.
+    expect(trigger.text()).toContain('#99')
+    expect(trigger.text()).not.toContain('Global (all groups)')
+    expect(trigger.attributes('title')).toBe('#99')
+  })
+
+  it('mixes resolved labels and "#<value>" fallbacks in modelValue order', () => {
+    const wrapper = mountMultiSelect({ modelValue: [99, 1] })
+    const trigger = wrapper.get('button.select-trigger')
+    expect(trigger.attributes('title')).toBe('#99、Group Alpha')
+    expect(trigger.text()).toContain('(2)')
+  })
+})
+
+describe('MultiSelect accessibility labels', () => {
+  it('uses the ariaLabel prop for the trigger and falls back to a generic literal', () => {
+    const labelled = mountMultiSelect({ modelValue: [], ariaLabel: '分组' })
+    expect(labelled.get('button.select-trigger').attributes('aria-label')).toBe('分组')
+
+    const bare = mountMultiSelect({ modelValue: [] })
+    expect(bare.get('button.select-trigger').attributes('aria-label')).toBe('Select options')
+  })
+
+  it('labels the search input with the searchPlaceholder prop', async () => {
+    const wrapper = mountMultiSelect({ modelValue: [], searchable: true, searchPlaceholder: '搜索...' })
+    const dropdown = await openDropdown(wrapper)
+
+    const input = dropdown.querySelector<HTMLInputElement>('.select-search-input')!
+    expect(input.getAttribute('placeholder')).toBe('搜索...')
+    expect(input.getAttribute('aria-label')).toBe('搜索...')
+  })
+
+  it('defaults the search input placeholder/aria-label to a generic literal', async () => {
+    const wrapper = mountMultiSelect({ modelValue: [], searchable: true })
+    const dropdown = await openDropdown(wrapper)
+
+    const input = dropdown.querySelector<HTMLInputElement>('.select-search-input')!
+    expect(input.getAttribute('placeholder')).toBe('Search')
+    expect(input.getAttribute('aria-label')).toBe('Search')
+  })
 })
 
 describe('MultiSelect exclusive-item semantics', () => {

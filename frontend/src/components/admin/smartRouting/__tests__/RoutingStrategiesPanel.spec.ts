@@ -289,10 +289,109 @@ describe('RoutingStrategiesPanel', () => {
     const platformDropdown = await openMultiSelectDropdown(platformSelect)
     clickOptionByText(platformDropdown, 'openai', 'div.select-option')
     await nextTick()
-    await nextTick() // watch(() => form.platform) flushes on the pre-render microtask queue
 
     expect(multiSelect.get('button.select-trigger').text()).toContain('Global')
     expect(multiSelect.props('modelValue')).toEqual([])
+  })
+
+  it('keeps a dangling group id (not present in the loaded group list) when opening the edit dialog', async () => {
+    // Group 99 was soft-deleted, so groups.getAll() no longer returns it. The design decision is
+    // "dangling ids are not cleaned up, they simply stop matching" — silently dropping it here would
+    // turn group_ids into [] and promote the (restrict) strategy to global scope.
+    getAllGroups.mockResolvedValue([makeGroup({ id: 1, name: 'ccmax', platform: 'anthropic' })])
+    listAccounts.mockResolvedValue({
+      items: [makeAccount({ id: 10, name: 'acc-openai', platform: 'openai' })]
+    })
+    listStrategies.mockResolvedValue([
+      makeStrategy({
+        id: 7,
+        name: 'dangling',
+        platform: 'openai',
+        group_ids: [99],
+        account_ids: [10],
+        account_priorities: [1]
+      })
+    ])
+
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    await wrapper.get('[title="Edit"]').trigger('click')
+    await nextTick()
+    await nextTick()
+
+    const multiSelect = groupMultiSelect(wrapper)
+    expect(multiSelect.props('modelValue')).toEqual([99])
+    expect(multiSelect.get('button.select-trigger').text()).toContain('#99')
+
+    await wrapper.get('form#routing-strategy-form').trigger('submit')
+    await flushPromises()
+
+    expect(updateStrategy).toHaveBeenCalledTimes(1)
+    expect(updateStrategy.mock.calls[0][1].group_ids).toEqual([99])
+  })
+
+  it('keeps the selected groups when the group list failed to load', async () => {
+    // loadGroups() swallows the error and leaves groups.value = []; every id then looks "unknown",
+    // and must therefore be preserved rather than filtered away.
+    getAllGroups.mockRejectedValue(new Error('boom'))
+    listAccounts.mockResolvedValue({
+      items: [makeAccount({ id: 10, name: 'acc-openai', platform: 'openai' })]
+    })
+    listStrategies.mockResolvedValue([
+      makeStrategy({
+        id: 8,
+        name: 'groups-unavailable',
+        platform: 'openai',
+        group_ids: [2, 3],
+        account_ids: [10],
+        account_priorities: [1]
+      })
+    ])
+
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    await wrapper.get('[title="Edit"]').trigger('click')
+    await nextTick()
+    await nextTick()
+
+    const multiSelect = groupMultiSelect(wrapper)
+    expect(multiSelect.props('modelValue')).toEqual([2, 3])
+    expect(multiSelect.get('button.select-trigger').text()).not.toContain('Global')
+
+    await wrapper.get('form#routing-strategy-form').trigger('submit')
+    await flushPromises()
+
+    expect(updateStrategy).toHaveBeenCalledTimes(1)
+    expect(updateStrategy.mock.calls[0][1].group_ids).toEqual([2, 3])
+  })
+
+  it('keeps a dangling group id when the user changes the platform', async () => {
+    getAllGroups.mockResolvedValue([
+      makeGroup({ id: 1, name: 'AnthropicOnly', platform: 'anthropic' }),
+      makeGroup({ id: 2, name: 'OpenAIOnly', platform: 'openai' })
+    ])
+    listStrategies.mockResolvedValue([
+      makeStrategy({ id: 9, name: 'dangling', platform: 'anthropic', group_ids: [1, 99] })
+    ])
+
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    await wrapper.get('[title="Edit"]').trigger('click')
+    await nextTick()
+
+    const multiSelect = groupMultiSelect(wrapper)
+    expect(multiSelect.props('modelValue')).toEqual([1, 99])
+
+    // Switch to openai: known-but-now-invalid id 1 is dropped, unknown id 99 survives.
+    const platformSelect = formSelects(wrapper)[0]
+    const platformDropdown = await openMultiSelectDropdown(platformSelect)
+    clickOptionByText(platformDropdown, 'openai', 'div.select-option')
+    await nextTick()
+
+    expect(multiSelect.props('modelValue')).toEqual([99])
   })
 
   it('folds more than two scope groups into "name、name +N" with the full list in the title', async () => {
