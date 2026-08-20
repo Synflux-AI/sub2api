@@ -534,6 +534,16 @@ func GroupIDNotNil() predicate.RoutingStrategy {
 	return predicate.RoutingStrategy(sql.FieldNotNull(FieldGroupID))
 }
 
+// GroupIdsIsNil applies the IsNil predicate on the "group_ids" field.
+func GroupIdsIsNil() predicate.RoutingStrategy {
+	return predicate.RoutingStrategy(sql.FieldIsNull(FieldGroupIds))
+}
+
+// GroupIdsNotNil applies the NotNil predicate on the "group_ids" field.
+func GroupIdsNotNil() predicate.RoutingStrategy {
+	return predicate.RoutingStrategy(sql.FieldNotNull(FieldGroupIds))
+}
+
 // MatchModeEQ applies the EQ predicate on the "match_mode" field.
 func MatchModeEQ(v string) predicate.RoutingStrategy {
 	return predicate.RoutingStrategy(sql.FieldEQ(FieldMatchMode, v))

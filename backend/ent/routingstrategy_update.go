@@ -160,6 +160,24 @@ func (_u *RoutingStrategyUpdate) ClearGroupID() *RoutingStrategyUpdate {
 	return _u
 }
 
+// SetGroupIds sets the "group_ids" field.
+func (_u *RoutingStrategyUpdate) SetGroupIds(v []int64) *RoutingStrategyUpdate {
+	_u.mutation.SetGroupIds(v)
+	return _u
+}
+
+// AppendGroupIds appends value to the "group_ids" field.
+func (_u *RoutingStrategyUpdate) AppendGroupIds(v []int64) *RoutingStrategyUpdate {
+	_u.mutation.AppendGroupIds(v)
+	return _u
+}
+
+// ClearGroupIds clears the value of the "group_ids" field.
+func (_u *RoutingStrategyUpdate) ClearGroupIds() *RoutingStrategyUpdate {
+	_u.mutation.ClearGroupIds()
+	return _u
+}
+
 // SetMatchMode sets the "match_mode" field.
 func (_u *RoutingStrategyUpdate) SetMatchMode(v string) *RoutingStrategyUpdate {
 	_u.mutation.SetMatchMode(v)
@@ -362,6 +380,17 @@ func (_u *RoutingStrategyUpdate) sqlSave(ctx context.Context) (_node int, err er
 	if _u.mutation.GroupIDCleared() {
 		_spec.ClearField(routingstrategy.FieldGroupID, field.TypeInt64)
 	}
+	if value, ok := _u.mutation.GroupIds(); ok {
+		_spec.SetField(routingstrategy.FieldGroupIds, field.TypeJSON, value)
+	}
+	if value, ok := _u.mutation.AppendedGroupIds(); ok {
+		_spec.AddModifier(func(u *sql.UpdateBuilder) {
+			sqljson.Append(u, routingstrategy.FieldGroupIds, value)
+		})
+	}
+	if _u.mutation.GroupIdsCleared() {
+		_spec.ClearField(routingstrategy.FieldGroupIds, field.TypeJSON)
+	}
 	if value, ok := _u.mutation.MatchMode(); ok {
 		_spec.SetField(routingstrategy.FieldMatchMode, field.TypeString, value)
 	}
@@ -548,6 +577,24 @@ func (_u *RoutingStrategyUpdateOne) AddGroupID(v int64) *RoutingStrategyUpdateOn
 // ClearGroupID clears the value of the "group_id" field.
 func (_u *RoutingStrategyUpdateOne) ClearGroupID() *RoutingStrategyUpdateOne {
 	_u.mutation.ClearGroupID()
+	return _u
+}
+
+// SetGroupIds sets the "group_ids" field.
+func (_u *RoutingStrategyUpdateOne) SetGroupIds(v []int64) *RoutingStrategyUpdateOne {
+	_u.mutation.SetGroupIds(v)
+	return _u
+}
+
+// AppendGroupIds appends value to the "group_ids" field.
+func (_u *RoutingStrategyUpdateOne) AppendGroupIds(v []int64) *RoutingStrategyUpdateOne {
+	_u.mutation.AppendGroupIds(v)
+	return _u
+}
+
+// ClearGroupIds clears the value of the "group_ids" field.
+func (_u *RoutingStrategyUpdateOne) ClearGroupIds() *RoutingStrategyUpdateOne {
+	_u.mutation.ClearGroupIds()
 	return _u
 }
 
@@ -782,6 +829,17 @@ func (_u *RoutingStrategyUpdateOne) sqlSave(ctx context.Context) (_node *Routing
 	}
 	if _u.mutation.GroupIDCleared() {
 		_spec.ClearField(routingstrategy.FieldGroupID, field.TypeInt64)
+	}
+	if value, ok := _u.mutation.GroupIds(); ok {
+		_spec.SetField(routingstrategy.FieldGroupIds, field.TypeJSON, value)
+	}
+	if value, ok := _u.mutation.AppendedGroupIds(); ok {
+		_spec.AddModifier(func(u *sql.UpdateBuilder) {
+			sqljson.Append(u, routingstrategy.FieldGroupIds, value)
+		})
+	}
+	if _u.mutation.GroupIdsCleared() {
+		_spec.ClearField(routingstrategy.FieldGroupIds, field.TypeJSON)
 	}
 	if value, ok := _u.mutation.MatchMode(); ok {
 		_spec.SetField(routingstrategy.FieldMatchMode, field.TypeString, value)

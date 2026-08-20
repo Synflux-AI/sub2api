@@ -141,6 +141,12 @@ func (_c *RoutingStrategyCreate) SetNillableGroupID(v *int64) *RoutingStrategyCr
 	return _c
 }
 
+// SetGroupIds sets the "group_ids" field.
+func (_c *RoutingStrategyCreate) SetGroupIds(v []int64) *RoutingStrategyCreate {
+	_c.mutation.SetGroupIds(v)
+	return _c
+}
+
 // SetMatchMode sets the "match_mode" field.
 func (_c *RoutingStrategyCreate) SetMatchMode(v string) *RoutingStrategyCreate {
 	_c.mutation.SetMatchMode(v)
@@ -377,6 +383,10 @@ func (_c *RoutingStrategyCreate) createSpec() (*RoutingStrategy, *sqlgraph.Creat
 		_spec.SetField(routingstrategy.FieldGroupID, field.TypeInt64, value)
 		_node.GroupID = &value
 	}
+	if value, ok := _c.mutation.GroupIds(); ok {
+		_spec.SetField(routingstrategy.FieldGroupIds, field.TypeJSON, value)
+		_node.GroupIds = value
+	}
 	if value, ok := _c.mutation.MatchMode(); ok {
 		_spec.SetField(routingstrategy.FieldMatchMode, field.TypeString, value)
 		_node.MatchMode = value
@@ -566,6 +576,24 @@ func (u *RoutingStrategyUpsert) AddGroupID(v int64) *RoutingStrategyUpsert {
 // ClearGroupID clears the value of the "group_id" field.
 func (u *RoutingStrategyUpsert) ClearGroupID() *RoutingStrategyUpsert {
 	u.SetNull(routingstrategy.FieldGroupID)
+	return u
+}
+
+// SetGroupIds sets the "group_ids" field.
+func (u *RoutingStrategyUpsert) SetGroupIds(v []int64) *RoutingStrategyUpsert {
+	u.Set(routingstrategy.FieldGroupIds, v)
+	return u
+}
+
+// UpdateGroupIds sets the "group_ids" field to the value that was provided on create.
+func (u *RoutingStrategyUpsert) UpdateGroupIds() *RoutingStrategyUpsert {
+	u.SetExcluded(routingstrategy.FieldGroupIds)
+	return u
+}
+
+// ClearGroupIds clears the value of the "group_ids" field.
+func (u *RoutingStrategyUpsert) ClearGroupIds() *RoutingStrategyUpsert {
+	u.SetNull(routingstrategy.FieldGroupIds)
 	return u
 }
 
@@ -829,6 +857,27 @@ func (u *RoutingStrategyUpsertOne) UpdateGroupID() *RoutingStrategyUpsertOne {
 func (u *RoutingStrategyUpsertOne) ClearGroupID() *RoutingStrategyUpsertOne {
 	return u.Update(func(s *RoutingStrategyUpsert) {
 		s.ClearGroupID()
+	})
+}
+
+// SetGroupIds sets the "group_ids" field.
+func (u *RoutingStrategyUpsertOne) SetGroupIds(v []int64) *RoutingStrategyUpsertOne {
+	return u.Update(func(s *RoutingStrategyUpsert) {
+		s.SetGroupIds(v)
+	})
+}
+
+// UpdateGroupIds sets the "group_ids" field to the value that was provided on create.
+func (u *RoutingStrategyUpsertOne) UpdateGroupIds() *RoutingStrategyUpsertOne {
+	return u.Update(func(s *RoutingStrategyUpsert) {
+		s.UpdateGroupIds()
+	})
+}
+
+// ClearGroupIds clears the value of the "group_ids" field.
+func (u *RoutingStrategyUpsertOne) ClearGroupIds() *RoutingStrategyUpsertOne {
+	return u.Update(func(s *RoutingStrategyUpsert) {
+		s.ClearGroupIds()
 	})
 }
 
@@ -1271,6 +1320,27 @@ func (u *RoutingStrategyUpsertBulk) UpdateGroupID() *RoutingStrategyUpsertBulk {
 func (u *RoutingStrategyUpsertBulk) ClearGroupID() *RoutingStrategyUpsertBulk {
 	return u.Update(func(s *RoutingStrategyUpsert) {
 		s.ClearGroupID()
+	})
+}
+
+// SetGroupIds sets the "group_ids" field.
+func (u *RoutingStrategyUpsertBulk) SetGroupIds(v []int64) *RoutingStrategyUpsertBulk {
+	return u.Update(func(s *RoutingStrategyUpsert) {
+		s.SetGroupIds(v)
+	})
+}
+
+// UpdateGroupIds sets the "group_ids" field to the value that was provided on create.
+func (u *RoutingStrategyUpsertBulk) UpdateGroupIds() *RoutingStrategyUpsertBulk {
+	return u.Update(func(s *RoutingStrategyUpsert) {
+		s.UpdateGroupIds()
+	})
+}
+
+// ClearGroupIds clears the value of the "group_ids" field.
+func (u *RoutingStrategyUpsertBulk) ClearGroupIds() *RoutingStrategyUpsertBulk {
+	return u.Update(func(s *RoutingStrategyUpsert) {
+		s.ClearGroupIds()
 	})
 }
 

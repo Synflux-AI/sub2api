@@ -52,7 +52,11 @@ func (RoutingStrategy) Fields() []ent.Field {
 		field.Int64("group_id").
 			Optional().
 			Nillable().
-			Comment("生效分组 ID，NULL 表示全局生效"),
+			Comment("生效分组 ID，NULL 表示全局生效；已被 group_ids 取代，仅为回滚窗口保留，下个版本删除"),
+		field.JSON("group_ids", []int64{}).
+			Optional().
+			SchemaType(map[string]string{dialect.Postgres: "jsonb"}).
+			Comment("生效分组 ID 列表，空数组表示全局生效"),
 		field.String("match_mode").
 			MaxLen(8).
 			Default(domain.RoutingStrategyMatchModeAll).
