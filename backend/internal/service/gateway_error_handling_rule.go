@@ -133,7 +133,7 @@ func (s *GatewayService) errorHandlingRulesActive(ctx context.Context, account *
 		return false
 	}
 	settings := s.settingService.GetErrorHandlingRuleSettingsCached(ctx)
-	return settings.Enabled && len(settings.Rules) > 0
+	return settings.Enabled && HasEnabledErrorHandlingRule(settings.Rules)
 }
 
 func (s *GatewayService) matchErrorHandlingRuleForAccount(ctx context.Context, account *Account, statusCode int, respBody []byte) (*ErrorHandlingRule, int) {

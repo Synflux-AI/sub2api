@@ -75,6 +75,20 @@ func TestErrorHandlingRulesActive(t *testing.T) {
 		svc := newErrorHandlingRuleService(t, &ErrorHandlingRuleSettings{Enabled: true, Rules: []ErrorHandlingRule{rule}})
 		require.False(t, svc.errorHandlingRulesActive(context.Background(), nil))
 	})
+	// 全部规则被逐条禁用时，热路径没必要再去读错误响应体。
+	t.Run("all rules disabled", func(t *testing.T) {
+		disabled := rule
+		disabled.Enabled = errorHandlingBoolPtr(false)
+		svc := newErrorHandlingRuleService(t, &ErrorHandlingRuleSettings{Enabled: true, Rules: []ErrorHandlingRule{disabled}})
+		require.False(t, svc.errorHandlingRulesActive(context.Background(), apiKeyAccount))
+	})
+	t.Run("one rule still enabled", func(t *testing.T) {
+		disabled := rule
+		disabled.Enabled = errorHandlingBoolPtr(false)
+		other := ErrorHandlingRule{ID: "r2", StatusCodes: []int{429}, Action: ErrorHandlingActionRetry}
+		svc := newErrorHandlingRuleService(t, &ErrorHandlingRuleSettings{Enabled: true, Rules: []ErrorHandlingRule{disabled, other}})
+		require.True(t, svc.errorHandlingRulesActive(context.Background(), apiKeyAccount))
+	})
 }
 
 func TestMatchErrorHandlingRuleForAccountReturnsNilWhenInactive(t *testing.T) {

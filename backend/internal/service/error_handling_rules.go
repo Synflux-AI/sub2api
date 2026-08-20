@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"time"
 )
@@ -20,8 +21,16 @@ const (
 )
 
 type ErrorHandlingRule struct {
-	ID              string   `json:"id"`
-	Name            string   `json:"name"`
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	// Enabled 用指针是为了区分「存量配置没有这个字段」和「管理员显式禁用」：
+	// 存量 JSON 反序列化成 bool 会得到零值 false，等于把线上所有规则静默停用。
+	// nil 一律按启用处理，见 IsEnabled()。
+	Enabled *bool `json:"enabled"`
+	// Priority 数字越小越先匹配。取代了原先「数组下标即匹配顺序」的隐式约定，
+	// 让前端能不改动数组结构就调整顺序。0 表示存量配置没有这个字段，
+	// normalize 时按数组下标补 1..N，于是升级后的匹配顺序与升级前逐条一致，无需数据迁移。
+	Priority        int      `json:"priority"`
 	StatusCodes     []int    `json:"status_codes"`
 	Keywords        []string `json:"keywords"`
 	Action          string   `json:"action"`
@@ -41,6 +50,7 @@ const (
 	errorHandlingRuleMaxStatusCodesPerRule = 20
 	errorHandlingRuleMaxKeywordLen         = 500
 	errorHandlingRuleMaxRetryCount         = maxRetryAttempts - 1
+	errorHandlingRulePriorityMax           = 999
 
 	errorHandlingRuleCacheTTL  = 60 * time.Second
 	errorHandlingRuleErrorTTL  = 5 * time.Second
@@ -67,6 +77,22 @@ func (r *ErrorHandlingRule) RetryLimit(defaultRetryCount int) int {
 	return defaultRetryCount
 }
 
+// IsEnabled 报告该规则是否参与匹配。nil 表示存量配置里没有 enabled 字段，按启用处理。
+func (r *ErrorHandlingRule) IsEnabled() bool {
+	return r.Enabled == nil || *r.Enabled
+}
+
+// HasEnabledErrorHandlingRule 报告是否存在至少一条启用的规则。全部规则被禁用时，
+// 热路径没必要为了 decide 一遍而去读错误响应体。
+func HasEnabledErrorHandlingRule(rules []ErrorHandlingRule) bool {
+	for i := range rules {
+		if rules[i].IsEnabled() {
+			return true
+		}
+	}
+	return false
+}
+
 func matchErrorHandlingRule(rules []ErrorHandlingRule, statusCode int, respBody []byte) *ErrorHandlingRule {
 	if len(rules) == 0 {
 		return nil
@@ -76,6 +102,9 @@ func matchErrorHandlingRule(rules []ErrorHandlingRule, statusCode int, respBody 
 	bodyLowered := false
 	for i := range rules {
 		rule := &rules[i]
+		if !rule.IsEnabled() {
+			continue
+		}
 		if len(rule.StatusCodes) == 0 && len(rule.Keywords) == 0 {
 			continue
 		}
@@ -144,14 +173,31 @@ func normalizeErrorHandlingRules(rules []ErrorHandlingRule) {
 		if rule.ExhaustedAction == "" {
 			rule.ExhaustedAction = ErrorHandlingExhaustedActionDefault
 		}
+		// 0 是「存量配置没有 priority 字段」的零值，负数只能由手改库产生：
+		// 都按数组下标补成 1..N，顺序与本字段落地前逐条一致。
+		if rule.Priority <= 0 {
+			rule.Priority = i + 1
+		}
 		// 空 ID 会让 errorHandlingRuleTracker 把不同规则当成同一条（都是 ""），
 		// 重试计数被共用。补一个确定性的占位 ID：不用随机值，否则每次读配置
 		// 都变一次，日志里同一条规则的 rule_id 对不上。
+		//
+		// 注意占位 ID 必须在下面的排序之前、按原始下标计算：ID 是
+		// errorHandlingRuleTracker 记重试计数的键，排序后再补会让管理员每改一次
+		// 优先级就换一次 ID，重试预算串号。
 		rule.ID = strings.TrimSpace(rule.ID)
 		if rule.ID == "" {
 			rule.ID = fmt.Sprintf("rule-%d", i+1)
 		}
 	}
+	// 把「priority 升序」落成数组顺序，matchErrorHandlingRule 就能继续保持
+	// 「按数组顺序取首个命中」的单一语义。normalize 是读写两条路径的必经之地，
+	// 所以热路径拿到的缓存数组一定已经是优先级序。
+	// 用 SliceStable：相同 priority 是允许的，稳定排序让它们维持提交顺序，
+	// 后端匹配顺序才能和前端列表展示顺序完全一致。
+	sort.SliceStable(rules, func(i, j int) bool {
+		return rules[i].Priority < rules[j].Priority
+	})
 }
 
 func validateErrorHandlingRuleSettings(settings *ErrorHandlingRuleSettings) error {
@@ -198,6 +244,11 @@ func validateErrorHandlingRuleSettings(settings *ErrorHandlingRuleSettings) erro
 			if len(keyword) > errorHandlingRuleMaxKeywordLen {
 				return invalid("rule %d: keyword too long (max %d characters)", i+1, errorHandlingRuleMaxKeywordLen)
 			}
+		}
+		// validate 在 normalize 之后跑，非正数已经被补成 >=1，所以这里只会拦到
+		// 管理员显式填的越界值。
+		if rule.Priority < 1 || rule.Priority > errorHandlingRulePriorityMax {
+			return invalid("rule %d: priority must be between 1 and %d", i+1, errorHandlingRulePriorityMax)
 		}
 		if rule.RetryCount != nil && (*rule.RetryCount < 0 || *rule.RetryCount > errorHandlingRuleMaxRetryCount) {
 			return invalid("rule %d: retry_count must be between 0 and %d", i+1, errorHandlingRuleMaxRetryCount)

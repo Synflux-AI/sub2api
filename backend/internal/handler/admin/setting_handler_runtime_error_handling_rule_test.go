@@ -146,3 +146,106 @@ func TestGetAndUpdateErrorHandlingRuleSettingsRoundTrip(t *testing.T) {
 	require.NoError(t, json.Unmarshal(getRec.Body.Bytes(), &getResp))
 	require.Equal(t, updateResp.Data, getResp.Data)
 }
+
+// enabled 是指针字段，往返里最容易被 DTO 层吃掉：显式 false 必须原样回来，
+// 而存量规则（不带该字段）必须保持 nil，服务层才会按启用处理。
+func TestErrorHandlingRuleSettingsRoundTripsEnabledFlag(t *testing.T) {
+	h := newErrorHandlingRuleTestHandler(t)
+	disabled := false
+	enabled := true
+	rec := doErrorHandlingRulePut(t, h, UpdateErrorHandlingRuleSettingsRequest{
+		Enabled: true, DefaultRetryCount: 1,
+		Rules: []dto.ErrorHandlingRule{
+			{ID: "r1", Enabled: &disabled, StatusCodes: []int{429}, Action: service.ErrorHandlingActionRetry},
+			{ID: "r2", Enabled: &enabled, StatusCodes: []int{500}, Action: service.ErrorHandlingActionFailover},
+			{ID: "r3", StatusCodes: []int{502}, Action: service.ErrorHandlingActionFailover},
+		},
+	})
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	getRec := httptest.NewRecorder()
+	getC, _ := gin.CreateTestContext(getRec)
+	getC.Request = httptest.NewRequest(http.MethodGet, "/admin/settings/error-handling-rules", nil)
+	h.GetErrorHandlingRuleSettings(getC)
+	require.Equal(t, http.StatusOK, getRec.Code)
+
+	var getResp struct {
+		Data dto.ErrorHandlingRuleSettings `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(getRec.Body.Bytes(), &getResp))
+	require.Len(t, getResp.Data.Rules, 3)
+	require.NotNil(t, getResp.Data.Rules[0].Enabled)
+	require.False(t, *getResp.Data.Rules[0].Enabled)
+	require.NotNil(t, getResp.Data.Rules[1].Enabled)
+	require.True(t, *getResp.Data.Rules[1].Enabled)
+	require.Nil(t, getResp.Data.Rules[2].Enabled, "未带 enabled 的规则不能被补成显式值")
+}
+
+// priority 是新字段，最容易在 DTO ↔ service 的两次拷贝里被漏掉，导致往返丢值。
+// 同时验证服务层的升序排序确实体现在响应体里：请求按 30/10 提交，响应必须是 10/30。
+func TestErrorHandlingRuleSettingsRoundTripsPriorityAndSortsAscending(t *testing.T) {
+	h := newErrorHandlingRuleTestHandler(t)
+	rec := doErrorHandlingRulePut(t, h, UpdateErrorHandlingRuleSettingsRequest{
+		Enabled: true, DefaultRetryCount: 1,
+		Rules: []dto.ErrorHandlingRule{
+			{ID: "low", Name: "后匹配", Priority: 30, StatusCodes: []int{500}, Action: service.ErrorHandlingActionFailover},
+			{ID: "high", Name: "先匹配", Priority: 10, StatusCodes: []int{429}, Action: service.ErrorHandlingActionRetry},
+		},
+	})
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var updateResp struct {
+		Data dto.ErrorHandlingRuleSettings `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &updateResp))
+	require.Len(t, updateResp.Data.Rules, 2)
+	require.Equal(t, "high", updateResp.Data.Rules[0].ID)
+	require.Equal(t, 10, updateResp.Data.Rules[0].Priority)
+	require.Equal(t, "low", updateResp.Data.Rules[1].ID)
+	require.Equal(t, 30, updateResp.Data.Rules[1].Priority, "priority 数值必须原样保留，不能被重排成 1..N")
+
+	getRec := httptest.NewRecorder()
+	getC, _ := gin.CreateTestContext(getRec)
+	getC.Request = httptest.NewRequest(http.MethodGet, "/admin/settings/error-handling-rules", nil)
+	h.GetErrorHandlingRuleSettings(getC)
+	require.Equal(t, http.StatusOK, getRec.Code)
+
+	var getResp struct {
+		Data dto.ErrorHandlingRuleSettings `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(getRec.Body.Bytes(), &getResp))
+	require.Equal(t, updateResp.Data, getResp.Data)
+}
+
+// 不带 priority 的请求（存量前端 / 老脚本）必须被补成 1..N，而不是全 0 落库。
+func TestUpdateErrorHandlingRuleSettingsBackfillsMissingPriority(t *testing.T) {
+	h := newErrorHandlingRuleTestHandler(t)
+	rec := doErrorHandlingRulePut(t, h, UpdateErrorHandlingRuleSettingsRequest{
+		Enabled: true, DefaultRetryCount: 1,
+		Rules: []dto.ErrorHandlingRule{
+			{ID: "r1", StatusCodes: []int{429}, Action: service.ErrorHandlingActionRetry},
+			{ID: "r2", StatusCodes: []int{500}, Action: service.ErrorHandlingActionFailover},
+		},
+	})
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var updateResp struct {
+		Data dto.ErrorHandlingRuleSettings `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &updateResp))
+	require.Equal(t, 1, updateResp.Data.Rules[0].Priority)
+	require.Equal(t, 2, updateResp.Data.Rules[1].Priority)
+}
+
+func TestUpdateErrorHandlingRuleSettingsRejectsPriorityAboveCap(t *testing.T) {
+	h := newErrorHandlingRuleTestHandler(t)
+	rec := doErrorHandlingRulePut(t, h, UpdateErrorHandlingRuleSettingsRequest{
+		Enabled: true, DefaultRetryCount: 1,
+		Rules: []dto.ErrorHandlingRule{
+			{ID: "r1", Priority: 1000, StatusCodes: []int{429}, Action: service.ErrorHandlingActionRetry},
+		},
+	})
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.True(t, strings.Contains(rec.Body.String(), "priority"),
+		"错误消息要指明是 priority 越界，got: %s", rec.Body.String())
+}
