@@ -246,7 +246,27 @@ func (r *groupRepository) Update(ctx context.Context, groupIn *service.Group) er
 	if err != nil {
 		return fmt.Errorf("marshal group model pricing: %w", err)
 	}
-	builder := r.client.Group.UpdateOneID(groupIn.ID).
+
+	// platform 变更要连带同步 api_key_groups.platform（issue #171），
+	// 而且必须先确认不会产生「同一把 Key 在同一平台绑两个分组」。
+	// 三件事（冲突检查、改分组行、同步绑定行）必须同一事务，任一步失败整体回滚。
+	tx, txErr := r.client.Tx(ctx)
+	if txErr != nil && !errors.Is(txErr, dbent.ErrTxStarted) {
+		return txErr
+	}
+	exec := r.client
+	if txErr == nil {
+		defer func() { _ = tx.Rollback() }()
+		exec = tx.Client()
+	} else {
+		tx = nil // 复用外层事务：提交由外层负责
+	}
+
+	if err := r.syncAPIKeyGroupPlatform(ctx, exec, groupIn.ID, groupIn.Platform); err != nil {
+		return err
+	}
+
+	builder := exec.Group.UpdateOneID(groupIn.ID).
 		SetName(groupIn.Name).
 		SetDescription(groupIn.Description).
 		SetPlatform(groupIn.Platform).
@@ -396,9 +416,74 @@ func (r *groupRepository) Update(ctx context.Context, groupIn *service.Group) er
 	if err != nil {
 		return translatePersistenceError(err, service.ErrGroupNotFound, service.ErrGroupExists)
 	}
+	if tx != nil {
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+	}
 	groupIn.UpdatedAt = updated.UpdatedAt
 	if err := enqueueSchedulerOutbox(ctx, r.sql, service.SchedulerOutboxEventGroupChanged, nil, &groupIn.ID, nil); err != nil {
 		logger.LegacyPrintf("repository.group", "[SchedulerOutbox] enqueue group update failed: group=%d err=%v", groupIn.ID, err)
+	}
+	return nil
+}
+
+// syncAPIKeyGroupPlatform 在分组 platform 变更时同步 api_key_groups.platform，
+// 并在同步之前拒掉会破坏 C1（每 Key 每平台至多一个分组）的变更。
+//
+// platform 没变时直接返回，不发任何写语句 —— 绝大多数 UpdateGroup 请求都走这条路，
+// 不能因为多分组特性给普通改名/改倍率加上写开销。
+func (r *groupRepository) syncAPIKeyGroupPlatform(ctx context.Context, exec *dbent.Client, groupID int64, newPlatform string) error {
+	// ent 的 Client 只暴露 QueryContext/ExecContext（没有 QueryRowContext），
+	// 所以这里沿用 DeleteCascade 里同样的「手动扫一行」写法。
+	current, found, err := scanOneString(ctx, exec,
+		"SELECT platform FROM groups WHERE id = $1 AND deleted_at IS NULL", groupID)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return service.ErrGroupNotFound
+	}
+	if current == newPlatform {
+		return nil
+	}
+
+	// 冲突检查必须在**任何写入之前**：这把 Key 是否已经绑了另一个新平台的分组？
+	// 只取一行——有一条就足以整体拒绝，不需要把全部冲突都扫出来。
+	conflictRows, err := exec.QueryContext(ctx, `
+		SELECT a.api_key_id, b.group_id
+		  FROM api_key_groups a
+		  JOIN api_key_groups b
+		    ON b.api_key_id = a.api_key_id
+		   AND b.group_id <> a.group_id
+		 WHERE a.group_id = $1
+		   AND b.platform = $2
+		 LIMIT 1`, groupID, newPlatform)
+	if err != nil {
+		return err
+	}
+	var conflictKeyID, conflictGroupID int64
+	hasConflict := conflictRows.Next()
+	if hasConflict {
+		if scanErr := conflictRows.Scan(&conflictKeyID, &conflictGroupID); scanErr != nil {
+			_ = conflictRows.Close()
+			return scanErr
+		}
+	}
+	if closeErr := conflictRows.Close(); closeErr != nil {
+		return closeErr
+	}
+	if rowsErr := conflictRows.Err(); rowsErr != nil {
+		return rowsErr
+	}
+	if hasConflict {
+		return fmt.Errorf("%w: api_key_id=%d 已绑定同平台(%s)的分组 group_id=%d",
+			service.ErrGroupPlatformChangeConflict, conflictKeyID, newPlatform, conflictGroupID)
+	}
+
+	if _, err := exec.ExecContext(ctx,
+		"UPDATE api_key_groups SET platform = $2 WHERE group_id = $1", groupID, newPlatform); err != nil {
+		return err
 	}
 	return nil
 }
@@ -886,6 +971,49 @@ func (r *groupRepository) DeleteCascade(ctx context.Context, id int64) ([]int64,
 
 	// 4. Soft-delete composite model routes owned by this group.
 	if _, err := exec.ExecContext(ctx, "UPDATE composite_model_routes SET deleted_at = NOW() WHERE group_id = $1 AND deleted_at IS NULL", id); err != nil {
+		return nil, err
+	}
+
+	// 4b. 清理 api_key_groups 里指向本分组的绑定行（issue #171）。
+	//
+	// 分组是**软删**（下面第 5 步只写 deleted_at），所以 FK 的 ON DELETE CASCADE
+	// 永远不会触发 —— 必须在这里显式删。不删的后果：DB 层的
+	// UNIQUE (api_key_id, platform) 不认软删，残留行会让之后给同一把 Key 绑
+	// 一个在用的同平台分组直接吃 Postgres 23505。
+	if _, err := exec.ExecContext(ctx, "DELETE FROM api_key_groups WHERE group_id = $1", id); err != nil {
+		return nil, err
+	}
+
+	// 4c. 默认组正好是本分组的 Key，从**剩余**绑定里改选一个新默认组。
+	//
+	// 顺序很关键：必须在 4b 之后 —— 那时本分组的绑定行已经删掉，不会被选中。
+	//
+	// ⚠️ `EXISTS` 那个条件不能去掉：**一个绑定都不剩时必须保留原 group_id**。
+	// 这是一条早于本 issue 的、有意为之的不变量（见
+	// allowed_groups_contract_integration_test.go 里
+	// TestGroupRepository_DeleteCascade_PreservesApiKeyGroupID 的注释）：
+	// group_id 继续指向已删分组，认证才会给出 403 GROUP_DELETED
+	// 「API Key 所属分组已删除」。
+	// 若在这里把它置空，Key 就变成「未分组」—— 而未分组在
+	// IsUngroupedKeySchedulingAllowed 为真时是**放行**的，等于把一次明确拒绝
+	// 变成了潜在的放行。单分组 Key 的行为也必须与改造前逐字相同（C3）。
+	//
+	// ORDER BY platform, group_id 是 service.ResolveDefaultGroupID 那条排序规则的
+	// **集合化表达**：这里不能逐 Key 回 Go 层调那个函数（会在持有分组行锁的事务里
+	// 产生 N 次往返）。两者等价由
+	// TestDeleteCascadeDefaultGroupReselectionMatchesResolveDefaultGroupID 钉住 ——
+	// 改任何一边都必须同步另一边。
+	if _, err := exec.ExecContext(ctx, `
+		UPDATE api_keys k
+		   SET group_id = (
+		       SELECT akg.group_id
+		         FROM api_key_groups akg
+		        WHERE akg.api_key_id = k.id
+		        ORDER BY akg.platform ASC, akg.group_id ASC
+		        LIMIT 1
+		   )
+		 WHERE k.group_id = $1
+		   AND EXISTS (SELECT 1 FROM api_key_groups akg2 WHERE akg2.api_key_id = k.id)`, id); err != nil {
 		return nil, err
 	}
 

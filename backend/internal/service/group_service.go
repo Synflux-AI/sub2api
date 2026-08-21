@@ -11,6 +11,20 @@ import (
 var (
 	ErrGroupNotFound = infraerrors.NotFound("GROUP_NOT_FOUND", "group not found")
 	ErrGroupExists   = infraerrors.Conflict("GROUP_EXISTS", "group name already exists")
+
+	// ErrGroupPlatformChangeConflict 表示改分组 platform 会让某把 API Key
+	// 出现「同平台绑定了两个分组」（issue #171 的 C1 不变量）。
+	//
+	// 这种冲突必须**整体拒绝**而不是静默改一半：
+	//   - 数据层的 UNIQUE (api_key_id, platform) 会在同步关联表时报 23505，
+	//     那时分组行已经改了，留下「分组 platform 是新的、绑定行还是旧的」的中间态；
+	//   - 更糟的是若绕过唯一约束，那把 Key 会有两个同平台分组，选组的结果变成
+	//     取决于排序，等于随机计费。
+	// 所以在改任何东西**之前**先查冲突，有冲突就整体回滚。
+	ErrGroupPlatformChangeConflict = infraerrors.Conflict(
+		"GROUP_PLATFORM_CHANGE_CONFLICT",
+		"变更分组平台会让某些 API Key 在同一平台上绑定两个分组，请先调整这些 Key 的分组绑定",
+	)
 )
 
 type GroupRepository interface {
