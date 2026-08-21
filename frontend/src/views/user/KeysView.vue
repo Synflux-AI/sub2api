@@ -141,18 +141,22 @@
                 class="-mx-2 -my-1 flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1 transition-all duration-200 hover:bg-gray-100 dark:hover:bg-dark-700"
                 :title="t('keys.clickToChangeGroup')"
               >
-                <GroupBadge
-                  v-if="row.group"
-                  :name="row.group.name"
-                  :platform="row.group.platform"
-                  :subscription-type="row.group.subscription_type"
-                  :rate-multiplier="row.group.rate_multiplier"
-                  :user-rate-multiplier="userGroupRates[row.group.id]"
-                  :peak-rate-enabled="row.group.peak_rate_enabled"
-                  :peak-start="row.group.peak_start"
-                  :peak-end="row.group.peak_end"
-                  :peak-rate-multiplier="row.group.peak_rate_multiplier"
-                />
+                <!-- issue #171：展示**全部**绑定分组，每个各自的倍率。 -->
+                <span v-if="boundGroupsOf(row).length" class="flex flex-wrap items-center gap-1">
+                  <GroupBadge
+                    v-for="g in boundGroupsOf(row)"
+                    :key="g.id"
+                    :name="g.name"
+                    :platform="g.platform"
+                    :subscription-type="g.subscription_type"
+                    :rate-multiplier="g.rate_multiplier"
+                    :user-rate-multiplier="userGroupRates[g.id]"
+                    :peak-rate-enabled="g.peak_rate_enabled"
+                    :peak-start="g.peak_start"
+                    :peak-end="g.peak_end"
+                    :peak-rate-multiplier="g.peak_rate_multiplier"
+                  />
+                </span>
                 <span v-else class="text-sm text-gray-400 dark:text-dark-500">{{
                   t('keys.noGroup')
                 }}</span>
@@ -1108,12 +1112,11 @@
           <button
             v-for="option in filteredGroupOptions"
             :key="option.value ?? 'null'"
-            @click="changeGroup(selectedKeyForGroup!, option.value)"
+            @click="toggleRowGroup(selectedKeyForGroup!, option.value)"
             :class="[
               'flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-sm transition-colors',
               'border-b border-gray-100 last:border-0 dark:border-dark-700',
-              selectedKeyForGroup?.group_id === option.value ||
-              (!selectedKeyForGroup?.group_id && option.value === null)
+              isRowGroupSelected(option.value)
                 ? 'bg-primary-50 dark:bg-primary-900/20'
                 : 'hover:bg-gray-100 dark:hover:bg-dark-700'
             ]"
@@ -1130,10 +1133,7 @@
               :peak-end="option.peakEnd"
               :peak-rate-multiplier="option.peakRateMultiplier"
               :description="option.description"
-              :selected="
-                selectedKeyForGroup?.group_id === option.value ||
-                (!selectedKeyForGroup?.group_id && option.value === null)
-              "
+              :selected="isRowGroupSelected(option.value)"
             />
           </button>
           <!-- Empty state when search has no results -->
@@ -1698,17 +1698,70 @@ const openGroupSelector = (key: ApiKey) => {
   }
 }
 
-const changeGroup = async (key: ApiKey, newGroupId: number | null) => {
-  groupSelectorKeyId.value = null
-  dropdownPosition.value = null
-  if (key.group_id === newGroupId) return
+/**
+ * 一把 Key 当前绑定的全部分组（issue #171）。
+ *
+ * 优先用后端返回的 groups；老响应体只有单个 group 时退回它，
+ * 这样前后端版本错配也不会把已绑分组显示成「无分组」。
+ */
+const boundGroupsOf = (key: ApiKey) => {
+  if (key.groups?.length) return key.groups
+  return key.group ? [key.group] : []
+}
+
+const boundIdsOf = (key: ApiKey): number[] => {
+  if (key.group_ids?.length) return key.group_ids
+  return key.group_id != null ? [key.group_id] : []
+}
+
+// 行内下拉的勾选态。option.value 为 null 是「无分组」那一项。
+const isRowGroupSelected = (optionValue: number | null) => {
+  const key = selectedKeyForGroup.value
+  if (!key) return false
+  const ids = boundIdsOf(key)
+  return optionValue === null ? ids.length === 0 : ids.includes(optionValue)
+}
+
+/**
+ * 行内快捷改组：切换某个分组的绑定状态后整体提交集合（issue #171）。
+ *
+ * 从「单选替换」改过来的。写成替换的话，用户想在列表里给多分组 Key 加一个平台，
+ * 会顺手删掉它在其它平台上的绑定 —— 而列表里根本看不出发生了什么。
+ *
+ * 提交 group_ids（含空数组）而不是 group_id：空数组是「显式解绑全部」，
+ * 省略字段会让后端回退到单值兼容路径。
+ */
+const toggleRowGroup = async (key: ApiKey, optionValue: number | null) => {
+  const current = boundIdsOf(key)
+  let next: number[]
+  if (optionValue === null) {
+    if (current.length === 0) {
+      groupSelectorKeyId.value = null
+      dropdownPosition.value = null
+      return
+    }
+    next = []
+  } else {
+    next = current.includes(optionValue)
+      ? current.filter((id) => id !== optionValue)
+      : [...current, optionValue]
+  }
+
+  // 「无分组」是终态操作，点完就收起；切换具体分组时保持下拉打开，
+  // 方便连续勾选多个平台。
+  if (optionValue === null) {
+    groupSelectorKeyId.value = null
+    dropdownPosition.value = null
+  }
 
   try {
-    await keysAPI.update(key.id, { group_id: newGroupId })
+    await keysAPI.update(key.id, { group_ids: next })
     appStore.showSuccess(t('keys.groupChangedSuccess'))
     loadApiKeys()
-  } catch (error) {
-    appStore.showError(t('keys.failedToChangeGroup'))
+  } catch (error: any) {
+    // 同平台冲突之类的校验错误由后端给出可读消息，优先展示它 ——
+    // 前端不重复实现那套校验（会漂移）。
+    appStore.showError(error?.message || t('keys.failedToChangeGroup'))
   }
 }
 
