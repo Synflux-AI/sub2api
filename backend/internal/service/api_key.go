@@ -203,6 +203,9 @@ func SortGroupBindings(bindings []GroupBinding) {
 }
 
 // SortBoundGroups 就地按 (Platform, ID) 升序排序，是 APIKey.BoundGroups 的稳定排序约定。
+//
+// 排在最后的 nil 元素是防御性处理；比较式本身复用 lessGroupBinding，
+// 不再内联第二份 (Platform, ID) 比较逻辑。
 func SortBoundGroups(groups []*Group) {
 	sort.SliceStable(groups, func(i, j int) bool {
 		a, b := groups[i], groups[j]
@@ -214,10 +217,10 @@ func SortBoundGroups(groups []*Group) {
 		case b == nil:
 			return true
 		}
-		if a.Platform != b.Platform {
-			return a.Platform < b.Platform
-		}
-		return a.ID < b.ID
+		return lessGroupBinding(
+			GroupBinding{GroupID: a.ID, Platform: a.Platform},
+			GroupBinding{GroupID: b.ID, Platform: b.Platform},
+		)
 	})
 }
 

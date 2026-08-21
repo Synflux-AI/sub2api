@@ -43,6 +43,7 @@ var (
 	ErrAPIKeyGroupPlatformConflict   = infraerrors.BadRequest(apiKeyGroupPlatformConflictReason, "同一平台最多只能绑定一个分组")
 	ErrAPIKeyCompositeGroupExclusive = infraerrors.BadRequest(apiKeyCompositeGroupExclusiveReason, "composite 分组不能与其它分组混绑")
 	ErrAPIKeyDefaultGroupNotBound    = infraerrors.BadRequest(apiKeyDefaultGroupNotBoundReason, "默认分组必须在绑定的分组集合内")
+	ErrAPIKeyTooManyBoundGroups      = infraerrors.BadRequest(apiKeyTooManyBoundGroupsReason, "绑定的分组数超过上限")
 	// ErrAPIKeyExpired        = infraerrors.Forbidden("API_KEY_EXPIRED", "api key has expired")
 	ErrAPIKeyExpired = infraerrors.Forbidden("API_KEY_EXPIRED", "api key 已过期")
 	// ErrAPIKeyQuotaExhausted = infraerrors.TooManyRequests("API_KEY_QUOTA_EXHAUSTED", "api key quota exhausted")
@@ -61,6 +62,7 @@ const (
 	apiKeyGroupPlatformConflictReason   = "API_KEY_GROUP_PLATFORM_CONFLICT"
 	apiKeyCompositeGroupExclusiveReason = "API_KEY_COMPOSITE_GROUP_EXCLUSIVE"
 	apiKeyDefaultGroupNotBoundReason    = "API_KEY_DEFAULT_GROUP_NOT_BOUND"
+	apiKeyTooManyBoundGroupsReason      = "API_KEY_TOO_MANY_BOUND_GROUPS"
 )
 
 const (
@@ -264,10 +266,12 @@ type CreateAPIKeyRequest struct {
 	//   - 只给 GroupID 时等价于 GroupIDs = [GroupID]；
 	//   - 与 GroupIDs 同时给出时表示「显式指定默认组」，必须落在 GroupIDs 内，否则拒绝。
 	GroupID *int64 `json:"group_id"`
-	// GroupIDs 是本次要绑定的分组集合（issue #171）。
-	// 空（含 nil）时回退到 GroupID 单值兼容路径；两者都为空 = 未分组 Key。
+	// GroupIDs 是本次要绑定的分组集合（issue #171）。三态，与 Update 完全一致：
+	// nil = 请求没带该字段（回退到 GroupID 单值兼容路径）；
+	// 非 nil 空切片 = 显式「不绑任何分组」（优先于同时带上的 GroupID）；非空 = 绑定该集合。
 	// 每个平台最多一个分组，composite 组不能与普通组混绑（见 ValidateGroupBindingSet）。
-	GroupIDs    []int64  `json:"group_ids"`
+	// 完整语义矩阵见 resolveAPIKeyGroupBindingIntent。
+	GroupIDs    *[]int64 `json:"group_ids"`
 	CustomKey   *string  `json:"custom_key"`   // 可选的自定义key
 	IPWhitelist []string `json:"ip_whitelist"` // IP 白名单
 	IPBlacklist []string `json:"ip_blacklist"` // IP 黑名单
@@ -549,7 +553,8 @@ func (s *APIKeyService) Create(ctx context.Context, userID int64, req CreateAPIK
 	// 位置刻意保持在自定义 Key 校验**之前**——与改造前的单分组分支同一位置，
 	// 这样「分组不存在 / 无权限」与「自定义 Key 冲突」两类错误的优先级不变（C3）。
 	// 空集合合法，落到「未分组 Key」（C5）。
-	bindingPlan, err := s.resolveAPIKeyGroupBindingPlan(ctx, user, req.GroupIDs, req.GroupID)
+	// existing 传 nil：新建的 Key 还没有任何绑定，矩阵里「现有绑定数 >= 2」那一行不可能命中。
+	bindingPlan, err := s.resolveAPIKeyGroupBindingPlan(ctx, user, req.GroupIDs, req.GroupID, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -878,11 +883,9 @@ func (s *APIKeyService) Update(ctx context.Context, id int64, userID int64, req 
 			return nil, fmt.Errorf("get user: %w", err)
 		}
 
-		var requestedGroupIDs []int64
-		if req.GroupIDs != nil {
-			requestedGroupIDs = *req.GroupIDs
-		}
-		bindingPlan, err := s.resolveAPIKeyGroupBindingPlan(ctx, user, requestedGroupIDs, req.GroupID)
+		// apiKey.BoundGroups 是 GetByID 用 WithGroup()+WithBoundGroups() 回填的**当前**绑定集合，
+		// 传进去只为判定矩阵里「只发了旧 group_id 且现有绑定 >= 2」那一行（不额外发查询）。
+		bindingPlan, err := s.resolveAPIKeyGroupBindingPlan(ctx, user, req.GroupIDs, req.GroupID, apiKey.BoundGroups)
 		if err != nil {
 			return nil, err
 		}

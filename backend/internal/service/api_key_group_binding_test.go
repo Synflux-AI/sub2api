@@ -22,20 +22,24 @@ import (
 // Stubs
 // ---------------------------------------------------------------------------
 
-// bindingGroupRepoStub 只实现 GetByID，其余方法沿用 groupRepoStub 的 panic 行为。
+// bindingGroupRepoStub 只实现 GetByIDLite，其余方法沿用 groupRepoStub 的 panic 行为。
+//
+// **刻意不实现 GetByID**：基类的 GetByID 会 panic("unexpected GetByID call")，
+// 于是「绑定解析路径必须走轻量查询」这条要求被钉死在类型上 —— GetByID 会额外跑一次
+// loadAccountCounts 聚合，在自助端点上按 group_ids 的长度线性放大查询量。
 //
 // softDeleted 里的分组返回 ErrGroupNotFound —— 这与真实仓库一致：
-// groups 走 ent 软删拦截器，GetByID 查不到已软删的行，服务层无法区分
+// groups 走 ent 软删拦截器，GetByIDLite 查不到已软删的行，服务层无法区分
 // 「从未存在」与「已软删」，两者都是 ErrGroupNotFound。
 type bindingGroupRepoStub struct {
 	groupRepoStub
 	groups       map[int64]*Group
 	softDeleted  map[int64]bool
-	getByIDCalls []int64
+	groupLookups []int64
 }
 
-func (s *bindingGroupRepoStub) GetByID(_ context.Context, id int64) (*Group, error) {
-	s.getByIDCalls = append(s.getByIDCalls, id)
+func (s *bindingGroupRepoStub) GetByIDLite(_ context.Context, id int64) (*Group, error) {
+	s.groupLookups = append(s.groupLookups, id)
 	if s.softDeleted[id] {
 		return nil, ErrGroupNotFound
 	}
@@ -172,6 +176,15 @@ func newBindingServiceHarness(t *testing.T, user *User, existing *APIKey) *bindi
 
 func testBindingUser() *User {
 	return &User{ID: 7, Status: StatusActive}
+}
+
+// groupIDsPtr 构造 *[]int64 —— Create / Update 的 GroupIDs 都是三态指针：
+// nil = 请求没带该字段；非 nil 空切片 = 显式清空；非空 = 整体替换。
+// 不传参数时返回**非 nil 的空切片指针**（显式清空），与 nil 语义不同。
+func groupIDsPtr(ids ...int64) *[]int64 {
+	out := make([]int64, 0, len(ids))
+	out = append(out, ids...)
+	return &out
 }
 
 func boundGroupIDs(groups []*Group) []int64 {
@@ -330,35 +343,117 @@ func TestResolveDefaultGroupID_MatchesFirstElementOfSortedBoundGroups(t *testing
 // 纯函数：新旧入参归一化
 // ---------------------------------------------------------------------------
 
-func TestAPIKeyRequestedGroupIDs_NormalizesLegacyAndNewInputs(t *testing.T) {
+// 完整的六格语义矩阵。每一行都是**上游裁定**的行为，不得擅自改动：
+//
+//	| group_ids     | group_id | 现有绑定数 | 行为                                              |
+//	| nil（缺省）   | X        | <= 1       | 整体替换成 [X]（改造前的单分组语义，逐字不变）      |
+//	| nil（缺省）   | X        | >= 2       | 只改默认组：集合不动，默认组 = X；X 必须 ∈ 现有集合 |
+//	| nil（缺省）   | nil      | 任意       | 空集合（Create = 未分组；Update 根本不进这个分支）  |
+//	| 非 nil 空切片 | 任意     | 任意       | 清空全部绑定（显式解绑优先，**不回退旧字段**）      |
+//	| 非空          | nil      | 任意       | 集合 = group_ids，默认组按稳定规则解析              |
+//	| 非空          | X        | 任意       | 集合 = group_ids，默认组 = X；X 必须 ∈ 集合         |
+func TestResolveAPIKeyGroupBindingIntent_CoversFullSemanticMatrix(t *testing.T) {
 	legacy := int64(10)
 	other := int64(30)
 
-	ids, def := apiKeyRequestedGroupIDs(nil, nil)
-	require.Empty(t, ids)
-	require.Nil(t, def)
+	tests := []struct {
+		name           string
+		groupIDs       *[]int64
+		legacyGroupID  *int64
+		existingCount  int
+		wantMode       apiKeyGroupBindingMode
+		wantGroupIDs   []int64
+		wantDefaultNil bool
+		wantDefault    int64
+	}{
+		{
+			name: "① 缺省 group_ids + group_id + 现有绑定 0 个 → 整体替换成单组",
+			// 未分组 Key 收到 group_id=X：与改造前逐字相同（C3）。
+			groupIDs: nil, legacyGroupID: &legacy, existingCount: 0,
+			wantMode: apiKeyBindingModeReplaceSet, wantGroupIDs: []int64{10}, wantDefault: 10,
+		},
+		{
+			name: "① 缺省 group_ids + group_id + 现有绑定 1 个 → 整体替换成单组",
+			// 单分组 Key 换组：改造前就是「丢掉旧组、绑上新组」，必须逐字不变（C3）。
+			groupIDs: nil, legacyGroupID: &legacy, existingCount: 1,
+			wantMode: apiKeyBindingModeReplaceSet, wantGroupIDs: []int64{10}, wantDefault: 10,
+		},
+		{
+			name: "② 缺省 group_ids + group_id + 现有绑定 2 个 → 只改默认组",
+			// 多分组 Key 遇到只会发旧单值字段的客户端：不能把集合缩成一个组，
+			// 否则其它平台的绑定被静默丢弃。
+			groupIDs: nil, legacyGroupID: &legacy, existingCount: 2,
+			wantMode: apiKeyBindingModeDefaultOnly, wantGroupIDs: nil, wantDefault: 10,
+		},
+		{
+			name:     "② 缺省 group_ids + group_id + 现有绑定 5 个 → 只改默认组",
+			groupIDs: nil, legacyGroupID: &legacy, existingCount: 5,
+			wantMode: apiKeyBindingModeDefaultOnly, wantGroupIDs: nil, wantDefault: 10,
+		},
+		{
+			name:     "③ 两个都缺省 → 空集合，没有默认组",
+			groupIDs: nil, legacyGroupID: nil, existingCount: 3,
+			wantMode: apiKeyBindingModeReplaceSet, wantGroupIDs: nil, wantDefaultNil: true,
+		},
+		{
+			name: "④ 非 nil 空切片 + group_id → 清空，不回退旧字段",
+			// 这一格是 review Important 1 的核心：改造前的归一化在 len(group_ids)==0 时
+			// **无条件**回退旧 group_id，于是 group_ids=[] + group_id=X 会绑上 X 而不是清空，
+			// 用户点「移除所有分组」被静默改回旧默认组。
+			groupIDs: groupIDsPtr(), legacyGroupID: &legacy, existingCount: 2,
+			wantMode: apiKeyBindingModeReplaceSet, wantGroupIDs: nil, wantDefaultNil: true,
+		},
+		{
+			name:     "④ 非 nil 空切片 + 无 group_id → 清空",
+			groupIDs: groupIDsPtr(), legacyGroupID: nil, existingCount: 2,
+			wantMode: apiKeyBindingModeReplaceSet, wantGroupIDs: nil, wantDefaultNil: true,
+		},
+		{
+			name:     "⑤ 非空 group_ids + 无 group_id → 集合替换，默认组交给稳定规则",
+			groupIDs: groupIDsPtr(30, 10), legacyGroupID: nil, existingCount: 4,
+			wantMode: apiKeyBindingModeReplaceSet, wantGroupIDs: []int64{30, 10}, wantDefaultNil: true,
+		},
+		{
+			name:     "⑥ 非空 group_ids + group_id → 集合替换，默认组显式指定",
+			groupIDs: groupIDsPtr(30, 10), legacyGroupID: &other, existingCount: 4,
+			wantMode: apiKeyBindingModeReplaceSet, wantGroupIDs: []int64{30, 10}, wantDefault: 30,
+		},
+	}
 
-	// 只带旧 group_id → 等价于 group_ids = [group_id]，且它就是默认组。
-	ids, def = apiKeyRequestedGroupIDs(nil, &legacy)
-	require.Equal(t, []int64{10}, ids)
-	require.NotNil(t, def)
-	require.Equal(t, int64(10), *def)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := resolveAPIKeyGroupBindingIntent(tt.groupIDs, tt.legacyGroupID, tt.existingCount)
+			require.Equal(t, tt.wantMode, got.Mode)
+			require.Equal(t, tt.wantGroupIDs, got.GroupIDs)
+			if tt.wantDefaultNil {
+				require.Nil(t, got.DefaultGroupID)
+				return
+			}
+			require.NotNil(t, got.DefaultGroupID)
+			require.Equal(t, tt.wantDefault, *got.DefaultGroupID)
+		})
+	}
+}
 
-	// 只带 group_ids → 默认组留给 ResolveDefaultGroupID 解析。
-	ids, def = apiKeyRequestedGroupIDs([]int64{30, 10}, nil)
-	require.Equal(t, []int64{30, 10}, ids)
-	require.Nil(t, def)
-
-	// 两个都带 → group_ids 是集合，group_id 是显式默认组。
-	ids, def = apiKeyRequestedGroupIDs([]int64{30, 10}, &other)
-	require.Equal(t, []int64{30, 10}, ids)
-	require.NotNil(t, def)
-	require.Equal(t, int64(30), *def)
-
-	// 非 nil 的空切片仍然回退到旧字段（空集合本身没有可选的默认组）。
-	ids, def = apiKeyRequestedGroupIDs([]int64{}, &legacy)
-	require.Equal(t, []int64{10}, ids)
-	require.NotNil(t, def)
+// DefaultOnly 模式下 DefaultGroupID 必然非 nil —— resolveAPIKeyGroupBindingPlan 直接解引用它。
+// 这条不变量替代了一个从唯一入口不可达的防御分支（review Minor 3）：
+// 与其留一段死代码（而且它当年表达的意图与正确行为相反），不如把不变量钉在测试里。
+func TestResolveAPIKeyGroupBindingIntent_DefaultOnlyAlwaysCarriesDefaultGroupID(t *testing.T) {
+	legacy := int64(10)
+	candidates := []*[]int64{nil, groupIDsPtr(), groupIDsPtr(1), groupIDsPtr(1, 2)}
+	for _, ids := range candidates {
+		for _, legacyID := range []*int64{nil, &legacy} {
+			for existing := 0; existing <= 4; existing++ {
+				got := resolveAPIKeyGroupBindingIntent(ids, legacyID, existing)
+				if got.Mode != apiKeyBindingModeDefaultOnly {
+					continue
+				}
+				require.NotNil(t, got.DefaultGroupID,
+					"DefaultOnly 模式必须带上默认组（ids=%v legacy=%v existing=%d）", ids, legacyID, existing)
+				require.Empty(t, got.GroupIDs, "DefaultOnly 模式不得携带待替换的集合")
+			}
+		}
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -376,7 +471,7 @@ func TestAPIKeyCreate_GroupBindingValidationMatrix(t *testing.T) {
 		{
 			name:      "同平台重复绑定",
 			user:      testBindingUser(),
-			req:       CreateAPIKeyRequest{Name: "k", GroupIDs: []int64{testGroupAnthropicA, testGroupAnthropicB}},
+			req:       CreateAPIKeyRequest{Name: "k", GroupIDs: groupIDsPtr(testGroupAnthropicA, testGroupAnthropicB)},
 			wantErrIs: ErrAPIKeyGroupPlatformConflict,
 			// 文案必须点名平台与两个分组。
 			wantErrMsgs: []string{PlatformAnthropic, "claude-ccmax", "claude-backup"},
@@ -384,45 +479,45 @@ func TestAPIKeyCreate_GroupBindingValidationMatrix(t *testing.T) {
 		{
 			name:        "composite 与普通组混绑",
 			user:        testBindingUser(),
-			req:         CreateAPIKeyRequest{Name: "k", GroupIDs: []int64{testGroupComposite, testGroupOpenAI}},
+			req:         CreateAPIKeyRequest{Name: "k", GroupIDs: groupIDsPtr(testGroupComposite, testGroupOpenAI)},
 			wantErrIs:   ErrAPIKeyCompositeGroupExclusive,
 			wantErrMsgs: []string{"combo", "codex"},
 		},
 		{
 			name:      "分组不存在",
 			user:      testBindingUser(),
-			req:       CreateAPIKeyRequest{Name: "k", GroupIDs: []int64{testGroupMissing}},
+			req:       CreateAPIKeyRequest{Name: "k", GroupIDs: groupIDsPtr(testGroupMissing)},
 			wantErrIs: ErrGroupNotFound,
 		},
 		{
 			name: "分组已软删（与不存在同一错误）",
 			user: testBindingUser(),
-			req:  CreateAPIKeyRequest{Name: "k", GroupIDs: []int64{testGroupSoftDelete}},
+			req:  CreateAPIKeyRequest{Name: "k", GroupIDs: groupIDsPtr(testGroupSoftDelete)},
 			// groups 走 ent 软删拦截器，GetByID 查不到已软删行 → 与「从未存在」同一错误。
 			wantErrIs: ErrGroupNotFound,
 		},
 		{
 			name:      "专属分组不在用户允许名单",
 			user:      testBindingUser(),
-			req:       CreateAPIKeyRequest{Name: "k", GroupIDs: []int64{testGroupExclusive}},
+			req:       CreateAPIKeyRequest{Name: "k", GroupIDs: groupIDsPtr(testGroupExclusive)},
 			wantErrIs: ErrGroupNotAllowed,
 		},
 		{
 			name:      "订阅类型分组没有有效订阅",
 			user:      testBindingUser(),
-			req:       CreateAPIKeyRequest{Name: "k", GroupIDs: []int64{testGroupSubscribed}},
+			req:       CreateAPIKeyRequest{Name: "k", GroupIDs: groupIDsPtr(testGroupSubscribed)},
 			wantErrIs: ErrGroupNotAllowed,
 		},
 		{
 			name:      "显式默认组不在绑定集合内",
 			user:      testBindingUser(),
-			req:       CreateAPIKeyRequest{Name: "k", GroupIDs: []int64{testGroupAnthropicA, testGroupOpenAI}, GroupID: ptrInt64(testGroupGemini)},
+			req:       CreateAPIKeyRequest{Name: "k", GroupIDs: groupIDsPtr(testGroupAnthropicA, testGroupOpenAI), GroupID: ptrInt64(testGroupGemini)},
 			wantErrIs: ErrAPIKeyDefaultGroupNotBound,
 		},
 		{
 			name:      "多个组里有一个无权限",
 			user:      testBindingUser(),
-			req:       CreateAPIKeyRequest{Name: "k", GroupIDs: []int64{testGroupAnthropicA, testGroupExclusive}},
+			req:       CreateAPIKeyRequest{Name: "k", GroupIDs: groupIDsPtr(testGroupAnthropicA, testGroupExclusive)},
 			wantErrIs: ErrGroupNotAllowed,
 		},
 	}
@@ -453,7 +548,7 @@ func TestAPIKeyCreate_AllowsExclusiveGroupOnAllowList(t *testing.T) {
 	h := newBindingServiceHarness(t, user, nil)
 
 	key, err := h.svc.Create(context.Background(), user.ID, CreateAPIKeyRequest{
-		Name: "k", GroupIDs: []int64{testGroupExclusive},
+		Name: "k", GroupIDs: groupIDsPtr(testGroupExclusive),
 	})
 	require.NoError(t, err)
 	require.Equal(t, []int64{testGroupExclusive}, boundGroupIDs(key.BoundGroups))
@@ -465,7 +560,7 @@ func TestAPIKeyCreate_AllowsSubscriptionGroupWithActiveSubscription(t *testing.T
 	h.userSubs.activeByGroupID[testGroupSubscribed] = true
 
 	key, err := h.svc.Create(context.Background(), user.ID, CreateAPIKeyRequest{
-		Name: "k", GroupIDs: []int64{testGroupSubscribed},
+		Name: "k", GroupIDs: groupIDsPtr(testGroupSubscribed),
 	})
 	require.NoError(t, err)
 	require.Equal(t, []int64{testGroupSubscribed}, boundGroupIDs(key.BoundGroups))
@@ -488,7 +583,7 @@ func TestAPIKeyCreate_EmptyBindingSetKeepsUngroupedSemantics(t *testing.T) {
 	require.Len(t, h.apiKeys.created, 1)
 	require.Nil(t, h.apiKeys.created[0].GroupID)
 	require.Empty(t, h.apiKeys.created[0].BoundGroups)
-	require.Empty(t, h.groups.getByIDCalls, "空集合不该去查任何分组")
+	require.Empty(t, h.groups.groupLookups, "空集合不该去查任何分组")
 }
 
 func TestAPIKeyCreate_LegacyGroupIDBindsThatGroupAndAlsoWritesAssociation(t *testing.T) {
@@ -523,7 +618,7 @@ func TestAPIKeyCreate_GroupIDsOnlyResolvesDefaultByStableRule(t *testing.T) {
 	// 故意乱序传入：gemini(40) / openai(30) / anthropic(20)。
 	// 规则 = platform 字典序 → anthropic 最小 → 默认组是 20。
 	key, err := h.svc.Create(context.Background(), user.ID, CreateAPIKeyRequest{
-		Name: "k", GroupIDs: []int64{testGroupGemini, testGroupOpenAI, testGroupAnthropicB},
+		Name: "k", GroupIDs: groupIDsPtr(testGroupGemini, testGroupOpenAI, testGroupAnthropicB),
 	})
 	require.NoError(t, err)
 	require.NotNil(t, key.GroupID)
@@ -545,7 +640,7 @@ func TestAPIKeyCreate_ExplicitDefaultGroupInsideSetWins(t *testing.T) {
 	// 稳定规则会选 anthropic(10)，但调用方显式指定了 openai(30)。
 	key, err := h.svc.Create(context.Background(), user.ID, CreateAPIKeyRequest{
 		Name:     "k",
-		GroupIDs: []int64{testGroupAnthropicA, testGroupOpenAI},
+		GroupIDs: groupIDsPtr(testGroupAnthropicA, testGroupOpenAI),
 		GroupID:  ptrInt64(testGroupOpenAI),
 	})
 	require.NoError(t, err)
@@ -559,11 +654,11 @@ func TestAPIKeyCreate_DuplicateGroupIDsAreDedupedAndQueriedOnce(t *testing.T) {
 	h := newBindingServiceHarness(t, user, nil)
 
 	key, err := h.svc.Create(context.Background(), user.ID, CreateAPIKeyRequest{
-		Name: "k", GroupIDs: []int64{testGroupAnthropicA, testGroupAnthropicA, testGroupOpenAI},
+		Name: "k", GroupIDs: groupIDsPtr(testGroupAnthropicA, testGroupAnthropicA, testGroupOpenAI),
 	})
 	require.NoError(t, err)
 	require.Equal(t, []int64{testGroupAnthropicA, testGroupOpenAI}, boundGroupIDs(key.BoundGroups))
-	require.Equal(t, []int64{testGroupAnthropicA, testGroupOpenAI}, h.groups.getByIDCalls)
+	require.Equal(t, []int64{testGroupAnthropicA, testGroupOpenAI}, h.groups.groupLookups)
 }
 
 // ---------------------------------------------------------------------------
@@ -630,7 +725,7 @@ func TestAPIKeyUpdate_WithoutGroupInputLeavesBindingsUntouched(t *testing.T) {
 
 	require.Equal(t, []APIKeyUpdateFields{{Name: true}}, h.apiKeys.updateFields,
 		"不改分组的请求不得置位 GroupID / BoundGroups")
-	require.Empty(t, h.groups.getByIDCalls, "不改分组时不该查分组")
+	require.Empty(t, h.groups.groupLookups, "不改分组时不该查分组")
 }
 
 func TestAPIKeyUpdate_EmptyGroupIDsClearsAllBindings(t *testing.T) {
@@ -729,7 +824,7 @@ func TestAPIKeyCreate_HandsMainRowAndBindingsToRepositoryInOneCall(t *testing.T)
 	h := newBindingServiceHarness(t, user, nil)
 
 	_, err := h.svc.Create(context.Background(), user.ID, CreateAPIKeyRequest{
-		Name: "k", GroupIDs: []int64{testGroupAnthropicA, testGroupOpenAI},
+		Name: "k", GroupIDs: groupIDsPtr(testGroupAnthropicA, testGroupOpenAI),
 	})
 	require.NoError(t, err)
 	require.Len(t, h.apiKeys.created, 1, "只能有一次仓库写调用")
@@ -761,7 +856,7 @@ func TestAPIKeyCreate_PropagatesBindingWriteFailureWithoutSideEffects(t *testing
 	h.apiKeys.createErr = bindingWriteErr
 
 	key, err := h.svc.Create(context.Background(), user.ID, CreateAPIKeyRequest{
-		Name: "k", GroupIDs: []int64{testGroupAnthropicA, testGroupOpenAI},
+		Name: "k", GroupIDs: groupIDsPtr(testGroupAnthropicA, testGroupOpenAI),
 	})
 	require.Error(t, err)
 	require.ErrorIs(t, err, bindingWriteErr)
@@ -810,4 +905,303 @@ func TestAPIKeyUpdate_InvalidatesOnlyThisKeysAuthCache(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Equal(t, []string{h.svc.authCacheKey("sk-existing")}, h.authCache.deleteAuthKeys)
+}
+
+// ---------------------------------------------------------------------------
+// 语义矩阵在 Create / Update 上的端到端落地（review Important 1）
+// ---------------------------------------------------------------------------
+
+// 矩阵第 1 行（C3）：单分组 Key 只发旧 group_id，**跨平台**换组时整体替换成单组。
+// 改造前的语义就是「丢掉旧组、绑上新组」，这里必须逐字不变 ——
+// 不能因为多分组改造而变成「往集合里追加一个组」。
+func TestAPIKeyUpdate_LegacyGroupIDOnSingleGroupKeyReplacesWholeSet(t *testing.T) {
+	user := testBindingUser()
+	groups := testBindingGroups()
+	existing := &APIKey{
+		ID: 101, UserID: user.ID, Key: "sk-existing", Status: StatusActive,
+		GroupID:     ptrInt64(testGroupAnthropicA),
+		Group:       groups[testGroupAnthropicA],
+		BoundGroups: []*Group{groups[testGroupAnthropicA]},
+	}
+	h := newBindingServiceHarness(t, user, existing)
+
+	key, err := h.svc.Update(context.Background(), existing.ID, user.ID, UpdateAPIKeyRequest{
+		GroupID: ptrInt64(testGroupOpenAI),
+	})
+	require.NoError(t, err)
+
+	require.Len(t, h.apiKeys.updated, 1)
+	require.Equal(t, []int64{testGroupOpenAI}, boundGroupIDs(h.apiKeys.updated[0].BoundGroups),
+		"单分组 Key 跨平台换组是**替换**，不是追加")
+	require.NotNil(t, key.GroupID)
+	require.Equal(t, testGroupOpenAI, *key.GroupID)
+}
+
+// 矩阵第 2 行：多分组 Key 只发旧 group_id → 集合保持不动，只换默认组。
+//
+// 这是 review Important 1 的另一半：改造前的「等价于 group_ids=[group_id]」会让
+// 一个只会发单值字段的旧客户端（第三方脚本 / T10 之前的前端）一次编辑就静默删掉
+// 其它平台的绑定。
+func TestAPIKeyUpdate_LegacyGroupIDOnMultiGroupKeyOnlyChangesDefault(t *testing.T) {
+	user := testBindingUser()
+	groups := testBindingGroups()
+	existing := &APIKey{
+		ID: 101, UserID: user.ID, Key: "sk-existing", Status: StatusActive,
+		GroupID:     ptrInt64(testGroupAnthropicA),
+		Group:       groups[testGroupAnthropicA],
+		BoundGroups: []*Group{groups[testGroupAnthropicA], groups[testGroupOpenAI]},
+	}
+	h := newBindingServiceHarness(t, user, existing)
+
+	key, err := h.svc.Update(context.Background(), existing.ID, user.ID, UpdateAPIKeyRequest{
+		GroupID: ptrInt64(testGroupOpenAI),
+	})
+	require.NoError(t, err)
+
+	require.Len(t, h.apiKeys.updated, 1)
+	written := h.apiKeys.updated[0]
+	// ① 绑定集合一个不少 —— openai 的绑定不得被静默丢掉。
+	require.Equal(t, []int64{testGroupAnthropicA, testGroupOpenAI}, boundGroupIDs(written.BoundGroups))
+	// ② 默认组换成了请求指定的那个。
+	require.NotNil(t, written.GroupID)
+	require.Equal(t, testGroupOpenAI, *written.GroupID)
+	// ③ 返回值三者一致。
+	require.NotNil(t, key.GroupID)
+	require.Equal(t, testGroupOpenAI, *key.GroupID)
+	require.NotNil(t, key.Group)
+	require.Equal(t, testGroupOpenAI, key.Group.ID)
+	require.Equal(t, []int64{testGroupAnthropicA, testGroupOpenAI}, boundGroupIDs(key.BoundGroups))
+	// ④ 这条路径纯内存，不新增任何分组查询。
+	require.Empty(t, h.groups.groupLookups, "只改默认组不需要重新解析分组")
+}
+
+// 矩阵第 2 行的拒绝分支：默认组必须落在**现有**绑定集合内，否则 400。
+// 要把一个新分组变成默认组，必须走 group_ids 把它加进集合。
+func TestAPIKeyUpdate_LegacyGroupIDOutsideExistingSetOnMultiGroupKeyIsRejected(t *testing.T) {
+	user := testBindingUser()
+	groups := testBindingGroups()
+	existing := &APIKey{
+		ID: 101, UserID: user.ID, Key: "sk-existing", Status: StatusActive,
+		GroupID:     ptrInt64(testGroupAnthropicA),
+		Group:       groups[testGroupAnthropicA],
+		BoundGroups: []*Group{groups[testGroupAnthropicA], groups[testGroupOpenAI]},
+	}
+	h := newBindingServiceHarness(t, user, existing)
+
+	key, err := h.svc.Update(context.Background(), existing.ID, user.ID, UpdateAPIKeyRequest{
+		GroupID: ptrInt64(testGroupGemini),
+	})
+	require.ErrorIs(t, err, ErrAPIKeyDefaultGroupNotBound)
+	require.Nil(t, key)
+	require.Empty(t, h.apiKeys.updated, "拒绝的请求不得写主表")
+	require.Zero(t, h.apiKeys.replaceBindingCalls)
+	require.Empty(t, h.authCache.deleteAuthKeys)
+	// 原始绑定集合没被就地改写。
+	require.Equal(t, []int64{testGroupAnthropicA, testGroupOpenAI}, boundGroupIDs(existing.BoundGroups))
+}
+
+// 矩阵第 4 行：非 nil 的空切片是**显式解绑**，必须优先于同时带上的旧 group_id。
+//
+// 改造前的归一化在 len(group_ids)==0 时无条件回退旧字段，于是「清空」被静默改回旧默认组
+// —— review Important 1 的原始症状。
+func TestAPIKeyUpdate_ExplicitEmptyGroupIDsBeatsLegacyGroupID(t *testing.T) {
+	user := testBindingUser()
+	groups := testBindingGroups()
+	existing := &APIKey{
+		ID: 101, UserID: user.ID, Key: "sk-existing", Status: StatusActive,
+		GroupID:     ptrInt64(testGroupAnthropicA),
+		Group:       groups[testGroupAnthropicA],
+		BoundGroups: []*Group{groups[testGroupAnthropicA], groups[testGroupOpenAI]},
+	}
+	h := newBindingServiceHarness(t, user, existing)
+
+	key, err := h.svc.Update(context.Background(), existing.ID, user.ID, UpdateAPIKeyRequest{
+		GroupIDs: groupIDsPtr(),                 // 显式清空
+		GroupID:  ptrInt64(testGroupAnthropicA), // 旧客户端顺带回传的默认组，必须被忽略
+	})
+	require.NoError(t, err)
+
+	require.Len(t, h.apiKeys.updated, 1)
+	require.Nil(t, h.apiKeys.updated[0].GroupID, "显式清空后不得回退到旧 group_id")
+	require.Empty(t, h.apiKeys.updated[0].BoundGroups)
+	require.True(t, h.apiKeys.updateFields[0].GroupID)
+	require.True(t, h.apiKeys.updateFields[0].BoundGroups)
+
+	require.Nil(t, key.GroupID)
+	require.Nil(t, key.Group)
+	require.Empty(t, key.BoundGroups)
+	require.Empty(t, h.groups.groupLookups, "清空不需要查任何分组")
+}
+
+// Create 上的矩阵第 4 行：非 nil 空切片同样优先，落到「未分组 Key」。
+func TestAPIKeyCreate_ExplicitEmptyGroupIDsBeatsLegacyGroupID(t *testing.T) {
+	user := testBindingUser()
+	h := newBindingServiceHarness(t, user, nil)
+
+	key, err := h.svc.Create(context.Background(), user.ID, CreateAPIKeyRequest{
+		Name:     "k",
+		GroupIDs: groupIDsPtr(),
+		GroupID:  ptrInt64(testGroupOpenAI),
+	})
+	require.NoError(t, err)
+	require.Nil(t, key.GroupID)
+	require.Nil(t, key.Group)
+	require.Empty(t, key.BoundGroups)
+	require.Empty(t, h.groups.groupLookups)
+}
+
+// 追加要求：默认组 A→B 之后 group_id / group / BoundGroups 三者必须自洽。
+// 单独钉一条，防止将来任何一处漂移（T10 的 DTO 直接渲染这三个字段）。
+func TestAPIKeyUpdate_DefaultGroupSwitchKeepsGroupIDGroupAndBoundGroupsConsistent(t *testing.T) {
+	user := testBindingUser()
+	groups := testBindingGroups()
+	existing := &APIKey{
+		ID: 101, UserID: user.ID, Key: "sk-existing", Status: StatusActive,
+		GroupID:     ptrInt64(testGroupAnthropicA),
+		Group:       groups[testGroupAnthropicA],
+		BoundGroups: []*Group{groups[testGroupAnthropicA], groups[testGroupOpenAI]},
+	}
+	h := newBindingServiceHarness(t, user, existing)
+
+	// 集合不变，默认组 A(anthropic) → B(openai)。
+	key, err := h.svc.Update(context.Background(), existing.ID, user.ID, UpdateAPIKeyRequest{
+		GroupIDs: groupIDsPtr(testGroupAnthropicA, testGroupOpenAI),
+		GroupID:  ptrInt64(testGroupOpenAI),
+	})
+	require.NoError(t, err)
+	require.Len(t, h.apiKeys.updated, 1)
+
+	for name, got := range map[string]*APIKey{"返回值": key, "交给仓库层的对象": h.apiKeys.updated[0]} {
+		require.NotNil(t, got.GroupID, name)
+		require.NotNil(t, got.Group, name+"：group_id 变了，group 不能还是旧对象或 nil")
+		require.Equal(t, *got.GroupID, got.Group.ID, name+"：group_id 与 group.id 必须一致")
+		require.Contains(t, boundGroupIDs(got.BoundGroups), *got.GroupID,
+			name+"：默认组必须同时是绑定集合的成员")
+		require.Equal(t, testGroupOpenAI, *got.GroupID, name)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// group_ids 长度上限：自助端点上的查询放大（review Important 2）
+// ---------------------------------------------------------------------------
+
+// 上限 = 平台总数。每平台至多一个分组，所以超过它的请求**必然**同平台冲突，
+// 合法请求不可能被这条上限挡住。
+func TestAPIKeyMaxBoundGroups_CoversEveryBindablePlatform(t *testing.T) {
+	require.Equal(t, len(apiKeyBindableGroupPlatforms), apiKeyMaxBoundGroups)
+
+	seen := make(map[string]struct{}, len(apiKeyBindableGroupPlatforms))
+	for _, p := range apiKeyBindableGroupPlatforms {
+		require.NotContains(t, seen, p, "平台 %s 重复出现，上限会被虚高", p)
+		seen[p] = struct{}{}
+		require.True(t,
+			isConcreteRequestPlatform(p) || p == PlatformComposite || p == PlatformKiro,
+			"平台 %s 不是可绑定的分组平台", p)
+	}
+
+	// 所有具体请求平台 + composite 都必须在列，否则合法的「绑满所有平台」会被误拒。
+	for _, p := range []string{
+		PlatformAnthropic, PlatformOpenAI, PlatformGemini, PlatformAntigravity,
+		PlatformGrok, PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformComposite,
+	} {
+		require.Contains(t, seen, p, "新增平台后要同步 apiKeyBindableGroupPlatforms")
+	}
+}
+
+func tooManyGroupIDs() []int64 {
+	ids := make([]int64, 0, apiKeyMaxBoundGroups+1)
+	for i := 0; i <= apiKeyMaxBoundGroups; i++ {
+		// 刻意用互不相同的 id：改造前每一个都会各触发一次分组查询。
+		ids = append(ids, int64(900000+i))
+	}
+	return ids
+}
+
+// 超限时**一次分组查询都不能发**。
+//
+// 这是这条上限存在的全部意义：groupRepo 每个 id 一次查询，普通用户的自助端点上
+// 无长度上限就等于一个 N 倍查询放大器。先掐长度、后查库，攻击者拿不到放大倍数。
+func TestAPIKeyCreate_RejectsTooManyGroupIDsBeforeAnyRepositoryQuery(t *testing.T) {
+	user := testBindingUser()
+	h := newBindingServiceHarness(t, user, nil)
+
+	ids := tooManyGroupIDs()
+	key, err := h.svc.Create(context.Background(), user.ID, CreateAPIKeyRequest{
+		Name: "k", GroupIDs: &ids,
+	})
+	require.ErrorIs(t, err, ErrAPIKeyTooManyBoundGroups)
+	require.Nil(t, key)
+	require.Empty(t, h.groups.groupLookups, "超限必须在任何仓库查询之前被拒")
+	require.Empty(t, h.apiKeys.created)
+	require.Zero(t, h.apiKeys.replaceBindingCalls)
+	require.Empty(t, h.authCache.deleteAuthKeys)
+
+	// 恰好等于上限时不被这条规则拦下（真正的拒绝理由应该是分组不存在或同平台冲突，
+	// 而不是长度）—— 否则上限就会误伤合法请求。
+	capped := ids[:apiKeyMaxBoundGroups]
+	h2 := newBindingServiceHarness(t, testBindingUser(), nil)
+	_, err = h2.svc.Create(context.Background(), user.ID, CreateAPIKeyRequest{
+		Name: "k", GroupIDs: &capped,
+	})
+	require.Error(t, err)
+	require.NotErrorIs(t, err, ErrAPIKeyTooManyBoundGroups)
+	require.NotEmpty(t, h2.groups.groupLookups, "上限之内必须照常解析分组")
+}
+
+func TestAPIKeyUpdate_RejectsTooManyGroupIDsBeforeAnyRepositoryQuery(t *testing.T) {
+	user := testBindingUser()
+	existing := &APIKey{ID: 101, UserID: user.ID, Key: "sk-existing", Status: StatusActive}
+	h := newBindingServiceHarness(t, user, existing)
+
+	ids := tooManyGroupIDs()
+	key, err := h.svc.Update(context.Background(), existing.ID, user.ID, UpdateAPIKeyRequest{GroupIDs: &ids})
+	require.ErrorIs(t, err, ErrAPIKeyTooManyBoundGroups)
+	require.Nil(t, key)
+	require.Empty(t, h.groups.groupLookups, "超限必须在任何仓库查询之前被拒")
+	require.Empty(t, h.apiKeys.updated)
+	require.Zero(t, h.apiKeys.replaceBindingCalls)
+	require.Empty(t, h.authCache.deleteAuthKeys)
+}
+
+// ---------------------------------------------------------------------------
+// 排序规则只有一份（review Minor 4）
+// ---------------------------------------------------------------------------
+
+// SortBoundGroups 与 SortGroupBindings 必须产出同一个顺序 —— 两者共用 lessGroupBinding。
+// 曾经 SortBoundGroups 内联了自己那份 (Platform, ID) 比较，注释却声称 lessGroupBinding
+// 是「唯一排序规则」；两份实现里任何一处漂移都会让「BoundGroups[0] 就是默认组」失效。
+func TestSortBoundGroups_ProducesSameOrderAsSortGroupBindings(t *testing.T) {
+	groups := testBindingGroups()
+	set := []*Group{
+		groups[testGroupOpenAI], groups[testGroupComposite], groups[testGroupAnthropicB],
+		groups[testGroupGemini], groups[testGroupAnthropicA],
+	}
+
+	bindings := GroupBindingsFromGroups(set) // 内部已 SortGroupBindings
+	SortBoundGroups(set)
+
+	require.Len(t, bindings, len(set))
+	for i := range set {
+		require.Equal(t, bindings[i].GroupID, set[i].ID, "第 %d 个元素的顺序不一致", i)
+		require.Equal(t, bindings[i].Platform, set[i].Platform)
+	}
+
+	// 默认组恰好是这个序的第一个。
+	got := ResolveDefaultGroupIDFromGroups(set)
+	require.NotNil(t, got)
+	require.Equal(t, set[0].ID, *got)
+}
+
+// nil 元素的防御性处理必须保留：排到最后，且不影响非 nil 元素之间的相对顺序。
+func TestSortBoundGroups_KeepsNilElementsLast(t *testing.T) {
+	groups := testBindingGroups()
+	set := []*Group{nil, groups[testGroupOpenAI], nil, groups[testGroupAnthropicA]}
+	SortBoundGroups(set)
+
+	require.NotNil(t, set[0])
+	require.Equal(t, testGroupAnthropicA, set[0].ID)
+	require.NotNil(t, set[1])
+	require.Equal(t, testGroupOpenAI, set[1].ID)
+	require.Nil(t, set[2])
+	require.Nil(t, set[3])
 }
