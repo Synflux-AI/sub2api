@@ -92,6 +92,9 @@ export default {
     noGroup: '无分组',
     searchGroup: '搜索分组...',
     noGroupFound: '未找到匹配的分组',
+    // issue #171：一把 Key 可绑多个分组，每个平台至多一个
+    multiGroupHint: '已绑定多个分组。网关会按请求的端点与模型自动选择生效分组，各分组按自己的倍率计费。',
+    groupPlatformConflict: '「{first}」与「{second}」都属于 {platform} 平台，每个平台最多只能绑定一个分组',
     created: '创建时间',
     copyToClipboard: '复制到剪贴板',
     copied: '已复制！',

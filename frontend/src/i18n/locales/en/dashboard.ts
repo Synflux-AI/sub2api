@@ -92,6 +92,11 @@ export default {
     noGroup: 'No group',
     searchGroup: 'Search groups...',
     noGroupFound: 'No groups found',
+    // issue #171: a key may bind several groups, at most one per platform
+    multiGroupHint:
+      'Multiple groups bound. The gateway picks the effective group from the request endpoint and model; each group bills at its own rate.',
+    groupPlatformConflict:
+      '"{first}" and "{second}" are both on the {platform} platform; only one group per platform can be bound',
     created: 'Created',
     copyToClipboard: 'Copy to clipboard',
     copied: 'Copied!',

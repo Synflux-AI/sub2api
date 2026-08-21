@@ -480,28 +480,38 @@
 
         <div>
           <label class="input-label">{{ t('keys.groupLabel') }}</label>
-          <Select
-            v-model="formData.group_id"
+          <!--
+            issue #171：一把 Key 可绑多个分组，每个平台至多一个。
+            后端会再校验一遍（同平台冲突 / composite 混绑），这里的即时提示只是体验。
+          -->
+          <MultiSelect
+            v-model="formData.group_ids"
             :options="groupOptions"
             :placeholder="t('keys.selectGroup')"
+            :exclusive-empty-label="t('keys.noGroup')"
             :searchable="true"
             :search-placeholder="t('keys.searchGroup')"
+            :no-results-text="t('keys.noGroupFound')"
+            :aria-label="t('keys.groupLabel')"
             data-tour="key-form-group"
           >
-            <template #selected="{ option }">
-              <GroupBadge
-                v-if="option"
-                :name="(option as unknown as GroupOption).label"
-                :platform="(option as unknown as GroupOption).platform"
-                :subscription-type="(option as unknown as GroupOption).subscriptionType"
-                :rate-multiplier="(option as unknown as GroupOption).rate"
-                :user-rate-multiplier="(option as unknown as GroupOption).userRate"
-                :peak-rate-enabled="(option as unknown as GroupOption).peakRateEnabled"
-                :peak-start="(option as unknown as GroupOption).peakStart"
-                :peak-end="(option as unknown as GroupOption).peakEnd"
-                :peak-rate-multiplier="(option as unknown as GroupOption).peakRateMultiplier"
-              />
-              <span v-else class="text-gray-400">{{ t('keys.selectGroup') }}</span>
+            <template #selected="{ options }">
+              <span v-if="options.length === 0" class="text-gray-400">{{ t('keys.selectGroup') }}</span>
+              <span v-else class="flex flex-wrap items-center gap-1">
+                <GroupBadge
+                  v-for="opt in (options as unknown as GroupOption[])"
+                  :key="opt.value"
+                  :name="opt.label"
+                  :platform="opt.platform"
+                  :subscription-type="opt.subscriptionType"
+                  :rate-multiplier="opt.rate"
+                  :user-rate-multiplier="opt.userRate"
+                  :peak-rate-enabled="opt.peakRateEnabled"
+                  :peak-start="opt.peakStart"
+                  :peak-end="opt.peakEnd"
+                  :peak-rate-multiplier="opt.peakRateMultiplier"
+                />
+              </span>
             </template>
             <template #option="{ option, selected }">
               <GroupOptionItem
@@ -518,7 +528,13 @@
                 :selected="selected"
               />
             </template>
-          </Select>
+          </MultiSelect>
+          <p v-if="groupPlatformConflict" class="mt-1 text-sm text-red-600 dark:text-red-400">
+            {{ groupPlatformConflict }}
+          </p>
+          <p v-else-if="formData.group_ids.length > 1" class="mt-1 text-xs text-gray-500 dark:text-dark-400">
+            {{ t('keys.multiGroupHint') }}
+          </p>
         </div>
 
         <!-- Custom Key Section (only for create) -->
@@ -1148,6 +1164,7 @@ import TablePageLayout from '@/components/layout/TablePageLayout.vue'
 	import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 	import EmptyState from '@/components/common/EmptyState.vue'
 	import Select from '@/components/common/Select.vue'
+	import MultiSelect from '@/components/common/MultiSelect.vue'
 	import SearchInput from '@/components/common/SearchInput.vue'
 	import Icon from '@/components/icons/Icon.vue'
 	import UseKeyModal from '@/components/keys/UseKeyModal.vue'
@@ -1343,7 +1360,10 @@ const setGroupButtonRef = (keyId: number, el: Element | ComponentPublicInstance 
 
 const formData = ref({
   name: '',
+  // group_id 仍是「默认组」；group_ids 是完整绑定集合（issue #171）。
+  // 提交时以 group_ids 为准，group_id 由后端按稳定规则解析。
   group_id: null as number | null,
+  group_ids: [] as number[],
   status: 'active' as 'active' | 'inactive',
   use_custom_key: false,
   custom_key: '',
@@ -1437,6 +1457,36 @@ const groupOptions = computed(() =>
     platform: group.platform
   }))
 )
+
+// issue #171：分组多选。
+// 直接把完整的 groupOptions 交给 MultiSelect —— 多余字段由插槽强转回 GroupOption
+// 使用（与本文件原有单选那段的写法一致），这样富渲染不需要二次查表。
+const groupOptionByID = (id: number | string) =>
+  groupOptions.value.find((opt) => opt.value === id)
+
+/**
+ * 同平台冲突的即时提示。每个平台至多绑一个分组（issue #171 的 C1）。
+ *
+ * 后端会独立校验并返回 400，这里只是让用户在提交前就看到问题 ——
+ * **不要**因为有了这个提示就省掉后端校验：前端可以被绕过。
+ */
+const groupPlatformConflict = computed(() => {
+  const byPlatform = new Map<string, string>()
+  for (const id of formData.value.group_ids) {
+    const opt = groupOptionByID(id)
+    if (!opt?.platform) continue
+    const existing = byPlatform.get(opt.platform)
+    if (existing) {
+      return t('keys.groupPlatformConflict', {
+        platform: opt.platform,
+        first: existing,
+        second: opt.label
+      })
+    }
+    byPlatform.set(opt.platform, opt.label)
+  }
+  return ''
+})
 
 // Group dropdown search
 const groupSearchQuery = ref('')
@@ -1578,6 +1628,10 @@ const editKey = (key: ApiKey) => {
   formData.value = {
     name: key.name,
     group_id: key.group_id,
+    // 后端始终返回 group_ids；`?? []` 只是防御老响应体。
+    // 若它是空数组而 group_id 非空（理论上不该出现），退回单个默认组以免表单显示成「未分组」。
+    group_ids:
+      key.group_ids?.length ? [...key.group_ids] : key.group_id != null ? [key.group_id] : [],
     status: key.status === 'quota_exhausted' || key.status === 'expired' ? 'inactive' : key.status,
     use_custom_key: false,
     custom_key: '',
@@ -1734,7 +1788,11 @@ const handleSubmit = async () => {
     if (showEditModal.value && selectedKey.value) {
       const updates: UpdateApiKeyRequest = {
         name: formData.value.name,
-        group_id: formData.value.group_id,
+        // 只发 group_ids，**不发** group_id：两者同时发时后端要求 group_id 必须在
+        // group_ids 里，而默认组本来就该由后端按稳定规则解析。
+        // 空数组是「显式解绑全部」——这一点依赖 group_ids 的三态语义，
+        // 所以这里必须始终带上该字段，不能因为空就省略。
+        group_ids: [...formData.value.group_ids],
         ip_whitelist: ipWhitelist,
         ip_blacklist: ipBlacklist,
         quota: quota,
@@ -1752,13 +1810,15 @@ const handleSubmit = async () => {
       const customKey = formData.value.use_custom_key ? formData.value.custom_key : undefined
       await keysAPI.create(
         formData.value.name,
-        formData.value.group_id,
+        // group_id 传 undefined：绑定集合走最后那个 groupIds 参数（issue #171）。
+        undefined,
         customKey,
         ipWhitelist,
         ipBlacklist,
         quota,
         expiresInDays,
-        rateLimitData
+        rateLimitData,
+        [...formData.value.group_ids]
       )
       appStore.showSuccess(t('keys.keyCreatedSuccess'))
       // Only advance tour if active, on submit step, and creation succeeded
@@ -1804,6 +1864,7 @@ const closeModals = () => {
   formData.value = {
     name: '',
     group_id: null,
+    group_ids: [],
     status: 'active',
     use_custom_key: false,
     custom_key: '',

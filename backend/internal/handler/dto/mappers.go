@@ -108,6 +108,17 @@ func APIKeyFromService(k *service.APIKey) *APIKey {
 		User:               UserFromServiceShallow(k.User),
 		Group:              GroupFromServiceShallow(k.Group),
 	}
+	// 绑定分组集合（issue #171）。读路径已按 (platform, id) 排好序，这里保持同序。
+	// GroupIDs 始终输出（哪怕是空数组），前端可以无条件把它塞回 group_ids；
+	// Groups 带 omitempty，未加载时不占响应体积。
+	out.GroupIDs = make([]int64, 0, len(k.BoundGroups))
+	for _, g := range k.BoundGroups {
+		if g == nil {
+			continue
+		}
+		out.GroupIDs = append(out.GroupIDs, g.ID)
+		out.Groups = append(out.Groups, GroupFromServiceShallow(g))
+	}
 	if k.Window5hStart != nil && !service.IsWindowExpired(k.Window5hStart, service.RateLimitWindow5h) {
 		t := k.Window5hStart.Add(service.RateLimitWindow5h)
 		out.Reset5hAt = &t

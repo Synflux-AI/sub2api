@@ -63,6 +63,9 @@ type AdminService interface {
 
 	// API Key management (admin)
 	AdminUpdateAPIKeyGroupID(ctx context.Context, keyID int64, groupID *int64) (*AdminUpdateAPIKeyGroupIDResult, error)
+	// AdminUpdateAPIKeyGroupIDs 是管理端多分组绑定入口（issue #171）。
+	// 传空切片表示解绑全部。与上面的单值版本共用同一份不变量校验。
+	AdminUpdateAPIKeyGroupIDs(ctx context.Context, keyID int64, groupIDs []int64) (*AdminUpdateAPIKeyGroupIDResult, error)
 	AdminResetAPIKeyRateLimitUsage(ctx context.Context, keyID int64) (*APIKey, error)
 
 	// ReplaceUserGroup 替换用户的专属分组：授予新分组权限、迁移 Key、移除旧分组权限

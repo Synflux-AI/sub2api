@@ -740,6 +740,32 @@ func (s *stubAdminService) AdminUpdateAPIKeyGroupID(ctx context.Context, keyID i
 	return nil, service.ErrAPIKeyNotFound
 }
 
+// AdminUpdateAPIKeyGroupIDs 是 issue #171 的多分组绑定入口。
+// stub 只做「记下集合、按 (platform, id) 规则算默认组」，用于 handler 层的路由与
+// 入参分派测试；真正的不变量校验有 service 层自己的测试覆盖。
+func (s *stubAdminService) AdminUpdateAPIKeyGroupIDs(ctx context.Context, keyID int64, groupIDs []int64) (*service.AdminUpdateAPIKeyGroupIDResult, error) {
+	for i := range s.apiKeys {
+		if s.apiKeys[i].ID != keyID {
+			continue
+		}
+		k := s.apiKeys[i]
+		if len(groupIDs) == 0 {
+			k.GroupID = nil
+			k.BoundGroups = nil
+		} else {
+			groups := make([]*service.Group, 0, len(groupIDs))
+			for _, gid := range groupIDs {
+				groups = append(groups, &service.Group{ID: gid})
+			}
+			service.SortBoundGroups(groups)
+			k.BoundGroups = groups
+			k.GroupID = service.ResolveDefaultGroupIDFromGroups(groups)
+		}
+		return &service.AdminUpdateAPIKeyGroupIDResult{APIKey: &k}, nil
+	}
+	return nil, service.ErrAPIKeyNotFound
+}
+
 func (s *stubAdminService) AdminResetAPIKeyRateLimitUsage(ctx context.Context, keyID int64) (*service.APIKey, error) {
 	for i := range s.apiKeys {
 		if s.apiKeys[i].ID == keyID {

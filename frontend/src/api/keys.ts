@@ -55,6 +55,9 @@ export async function getById(id: number): Promise<ApiKey> {
  * @param quota - Optional quota limit in USD (0 = unlimited)
  * @param expiresInDays - Optional days until expiry (undefined = never expires)
  * @param rateLimitData - Optional rate limit fields
+ * @param groupIds - 绑定的分组集合（issue #171），每平台至多一个。
+ *                   传了它就以它为准，不再发 group_id（后端会按稳定规则解析默认组）。
+ *                   传空数组 = 显式不绑任何分组；不传（undefined）= 走 groupId 兼容路径。
  * @returns Created API key
  */
 export async function create(
@@ -65,10 +68,15 @@ export async function create(
   ipBlacklist?: string[],
   quota?: number,
   expiresInDays?: number,
-  rateLimitData?: { rate_limit_5h?: number; rate_limit_1d?: number; rate_limit_7d?: number }
+  rateLimitData?: { rate_limit_5h?: number; rate_limit_1d?: number; rate_limit_7d?: number },
+  groupIds?: number[]
 ): Promise<ApiKey> {
   const payload: CreateApiKeyRequest = { name }
-  if (groupId !== undefined) {
+  // group_ids 与 group_id 互斥地发：两者同时发时后端要求 group_id 必须属于 group_ids，
+  // 而默认组本来就该由后端解析，没必要让前端猜。
+  if (groupIds !== undefined) {
+    payload.group_ids = [...groupIds]
+  } else if (groupId !== undefined) {
     payload.group_id = groupId
   }
   if (customKey) {
