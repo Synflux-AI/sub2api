@@ -211,3 +211,21 @@ func stripV1Prefix(p string) string {
 	}
 	return p
 }
+
+// GroupSelectionNeedsRequestModel 判断这次选组是否需要解析请求体里的模型名。
+//
+// 独立成一个判定，是为了让认证中间件能在**不需要**时完全不碰 body。
+// 这很重要：读 body 会改变 c.Request.Body 的状态，而 composite 目标平台中间件、
+// request_body_limit 的 413 处理都对此敏感。能不读就不读。
+func GroupSelectionNeedsRequestModel(in GroupSelectionInput) bool {
+	if len(in.BoundGroups) <= 1 {
+		return false // 快速路径，结果已定
+	}
+	if strings.TrimSpace(in.ForcePlatform) != "" {
+		return false // 平台已被路由钉死
+	}
+	if _, locked := EndpointPlatformLock(in.RoutePath, in.CodexClientVersion); locked {
+		return false // 端点已锁定平台
+	}
+	return true
+}

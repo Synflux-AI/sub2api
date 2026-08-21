@@ -113,6 +113,15 @@ func APIKeyAuthWithSubscriptionGoogle(apiKeyService *service.APIKeyService, subs
 			abortWithGoogleError(c, 401, "User account is not active")
 			return
 		}
+
+		// 选出本次请求的生效分组（issue #171）。位置与主中间件严格对应：
+		// User 检查之后、分组门之前。这条路径挂在 /v1beta 上，端点平台锁定表会把它
+		// 锁到 Gemini，所以多分组 Key 在这里会命中 Gemini 分组而不是默认组。
+		//
+		// 刻意**不**在这里顺手补主中间件才有的 skipBilling、日/周限额、ctxkey.UserID ——
+		// 那些是本次改造之前就存在的两份实现差异，修它们就不再是「行为逐字不变」。
+		apiKey = resolveEffectiveGroup(c, apiKey)
+
 		if code, message, ok := validateAPIKeyGroupAvailable(apiKey); !ok {
 			service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonAPIKeyGroupUnavailable)
 			if code == "GROUP_DELETED" {
