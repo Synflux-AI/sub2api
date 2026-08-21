@@ -44,16 +44,24 @@ func (r *apiKeyRepository) activeQuery() *dbent.APIKeyQuery {
 	return r.client.APIKey.Query().Where(apikey.DeletedAtIsNil())
 }
 
-// apiKeyBoundToGroup 是「Key 的绑定集合包含 groupID」的谓词：
+// 「按分组找 Key」有两套语义，**必须分开**，不要合并成一个谓词：
+//
+//	反查（apiKeyBoundToGroup）        —— 内部用，无视分组软删
+//	用户可见筛选（apiKeyBoundToLiveGroup / apiKeyHasNoLiveBoundGroup） —— 尊重分组软删
+//
+// 分开的理由见 apiKeyBoundToLiveGroup 的注释。
+
+// apiKeyBoundToGroup 是「Key 的绑定集合包含 groupID」的**反查**谓词：
 // 默认组指针 api_keys.group_id UNION 关联表 api_key_groups。
 //
 // issue #171 之前「绑定」等价于 group_id 单列相等；多分组绑定落地后，
 // 一个 Key 可以在多个平台各绑一个分组，只有默认组会写进 group_id。
-// 因此所有「按分组反查 Key」的路径都必须用这个谓词，
-// 否则非默认绑定的 Key 会被漏掉（认证缓存不失效、列表筛选查不到）。
+// 因此「按分组反查受影响的 Key」的路径（认证缓存失效、分组变更联动）都必须用这个谓词，
+// 否则非默认绑定的 Key 会被漏掉，分组改配后它的认证快照不会失效。
 //
 // 关联表分支刻意**不** join groups 表：反查的目的是找出受影响的 Key，
 // 即使分组本身已被软删也应命中（软删同样需要让这些 Key 的认证缓存失效）。
+// 反查偏向「多失效」这个安全方向。
 func apiKeyBoundToGroup(groupID int64) predicate.APIKey {
 	return apikey.Or(
 		apikey.GroupIDEQ(groupID),
@@ -61,12 +69,40 @@ func apiKeyBoundToGroup(groupID int64) predicate.APIKey {
 	)
 }
 
-// apiKeyHasNoBoundGroup 是「Key 未绑定任何分组」的谓词，
-// 即 group_id IS NULL 且关联表里没有该 Key 的行。
-func apiKeyHasNoBoundGroup() predicate.APIKey {
+// apiKeyBoundToLiveGroup 是「Key 绑定了 groupID，且该分组仍在用（未软删）」的
+// **用户可见筛选**谓词，覆盖默认组指针与关联表两条来源。
+//
+// 与 apiKeyBoundToGroup 的唯一差别是两条分支都要求分组未软删。为什么必须分开：
+//
+//   - 反查服务于认证缓存失效。分组被软删时同样要失效这些 Key 的快照，
+//     一旦 join groups 把软删过滤掉，删组/改配后就会继续按旧快照计费 ——
+//     正是 issue #171 要防的静默错价。所以反查侧**不能**改成尊重软删。
+//   - 筛选面向用户与管理员，必须尊重软删。否则「指向已软删分组的残留绑定行」
+//     会把 Key 算作「已绑定」，于是它既不出现在「未分组」筛选里，
+//     也不出现在任何在用分组的筛选里，在列表中彻底隐身。
+//     这个状态今天就可达：清 api_keys.group_id 的路径并不清理关联行。
+//
+// 本谓词与 apiKeyHasNoLiveBoundGroup 互为补集，保证「未分组」与「各在用分组」
+// 对全部 Key 构成完备划分。
+//
+// 软删条件必须显式写：SoftDeleteMixin 的拦截器不会下沉到 HasXxxWith 子查询
+// （与 user_repo.go 里 HasAPIKeysWith 必须显式加 DeletedAtIsNil 同理）。
+func apiKeyBoundToLiveGroup(groupID int64) predicate.APIKey {
+	return apikey.Or(
+		apikey.HasGroupWith(group.IDEQ(groupID), group.DeletedAtIsNil()),
+		apikey.HasBoundGroupsWith(group.IDEQ(groupID), group.DeletedAtIsNil()),
+	)
+}
+
+// apiKeyHasNoLiveBoundGroup 是「Key 没有绑定任何在用分组」的谓词（筛选值 0）。
+//
+// 默认组指针与关联行都要判：指向已软删分组的默认组指针、以及残留的软删分组绑定行，
+// 一律视为「未绑定」。这样它与 apiKeyBoundToLiveGroup 构成完备划分，
+// 不会有 Key 在列表筛选里两边都落不到。
+func apiKeyHasNoLiveBoundGroup() predicate.APIKey {
 	return apikey.And(
-		apikey.GroupIDIsNil(),
-		apikey.Not(apikey.HasAPIKeyGroups()),
+		apikey.Not(apikey.HasGroupWith(group.DeletedAtIsNil())),
+		apikey.Not(apikey.HasBoundGroupsWith(group.DeletedAtIsNil())),
 	)
 }
 
@@ -564,11 +600,13 @@ func (r *apiKeyRepository) apiKeyListByUserIDQuery(userID int64, filters service
 		q = q.Where(apikey.StatusEQ(filters.Status))
 	}
 	if filters.GroupID != nil {
-		// 0 = 未绑定任何分组；>0 = 绑定集合包含该分组（默认组 OR 关联表）。
+		// 0 = 未绑定任何**在用**分组；>0 = 绑定集合包含该在用分组（默认组 OR 关联表）。
+		// 两个分支互为补集，指向已软删分组的绑定一律算「未绑定」，
+		// 避免 Key 在筛选里两边都落不到（详见 apiKeyBoundToLiveGroup 的注释）。
 		if *filters.GroupID == 0 {
-			q = q.Where(apiKeyHasNoBoundGroup())
+			q = q.Where(apiKeyHasNoLiveBoundGroup())
 		} else {
-			q = q.Where(apiKeyBoundToGroup(*filters.GroupID))
+			q = q.Where(apiKeyBoundToLiveGroup(*filters.GroupID))
 		}
 	}
 
@@ -1179,7 +1217,14 @@ func apiKeyEntityToService(m *dbent.APIKey) *service.APIKey {
 //     顺带覆盖「只 WithGroup() 没 WithBoundGroups() 」的查询。
 //   - 剔除软删是刻意的：关联表里可能残留指向已软删分组的行（见 ReplaceBindings 的说明），
 //     读路径必须把它们当作不存在。需要原始绑定集合请用 ListBoundGroupIDs。
-//   - 两条边都没 eager-load 时返回 nil，不伪造空集合。
+//
+// 返回 nil 的三种情况（**语义相同：没有可用的绑定分组**）：
+//  1. 两条边都没 eager-load；
+//  2. eager-load 了但确实没有绑定；
+//  3. 所有绑定都指向已软删的分组，被全部剔除。
+//
+// 因此下游（T4 认证快照 / T10 DTO）**不得**把 nil 当作「未加载」哨兵去区分 1 与 2/3 ——
+// 想知道某个查询是否加载了绑定，请看查询本身有没有 WithBoundGroups()／WithGroup()。
 func boundGroupsFromEntity(m *dbent.APIKey) []*service.Group {
 	total := len(m.Edges.BoundGroups)
 	if m.Edges.Group != nil {

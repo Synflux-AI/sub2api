@@ -269,6 +269,41 @@ func (s *APIKeyBindingsSuite) TestListByUserIDFilterMatchesBindingSetMembership(
 	s.Require().ElementsMatch([]string{key3.Key}, unbound, "0 表示未绑定任何分组")
 }
 
+// TestListByUserIDFilterKeepsResidualSoftDeletedBindingVisible 钉住「筛选值 0 与各在用分组
+// 构成完备划分」：只剩「指向已软删分组的残留绑定行」的 Key 必须出现在「未分组」结果里，
+// 否则它既不在 0 里也不在任何在用分组里，在列表中彻底隐身。
+func (s *APIKeyBindingsSuite) TestListByUserIDFilterKeepsResidualSoftDeletedBindingVisible() {
+	user := s.mustUser()
+	staleGroup := s.mustGroup(service.PlatformAnthropic)
+	liveGroup := s.mustGroup(service.PlatformAnthropic)
+
+	// 只有残留绑定行、没有默认组指针（模拟 group_id 已被清、关联行未清的状态）。
+	residual := s.mustKey(user.ID, nil, staleGroup)
+	// 默认组指针指向已软删分组、没有关联行的 Key，同样必须落进「未分组」。
+	danglingDefault := s.mustKey(user.ID, staleGroup)
+	bound := s.mustKey(user.ID, liveGroup, liveGroup)
+
+	s.mustSoftDeleteGroup(staleGroup.ID)
+
+	params := pagination.PaginationParams{Page: 1, PageSize: 50}
+
+	unbound := s.mustListKeyStrings(user.ID, params, 0)
+	s.Require().ElementsMatch([]string{residual.Key, danglingDefault.Key}, unbound,
+		"指向已软删分组的绑定必须算作『未绑定』，Key 不能在列表里隐身")
+
+	byLive := s.mustListKeyStrings(user.ID, params, liveGroup.ID)
+	s.Require().ElementsMatch([]string{bound.Key}, byLive)
+
+	byStale := s.mustListKeyStrings(user.ID, params, staleGroup.ID)
+	s.Require().Empty(byStale, "按已软删分组筛选不应返回结果（该分组在 UI 上已不存在）")
+
+	// 反查侧必须**保持**无视软删，否则分组删除后这些 Key 的认证缓存不会失效。
+	keys, err := s.repo.ListKeysByGroupID(s.ctx, staleGroup.ID)
+	s.Require().NoError(err)
+	s.Require().ElementsMatch([]string{residual.Key, danglingDefault.Key}, keys,
+		"筛选尊重软删，但反查（缓存失效）必须继续命中软删分组")
+}
+
 func (s *APIKeyBindingsSuite) TestListByUserIDBackfillsBoundGroups() {
 	user := s.mustUser()
 	anthropicA := s.mustGroup(service.PlatformAnthropic)

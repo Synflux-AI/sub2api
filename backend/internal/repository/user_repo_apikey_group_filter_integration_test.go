@@ -157,6 +157,61 @@ func (s *UserRepoAPIKeyGroupFilterSuite) TestAPIKeyGroupAndStatusFilter() {
 	s.Require().Equal([]int64{active.ID}, s.ids(users), "only active user with matching key group should match")
 }
 
+// issue #171：Key 通过 api_key_groups **非默认**绑定到该分组的用户同样必须被筛出来。
+// 改动前这里只查 api_keys.group_id 单列，会把这类用户漏掉。
+func (s *UserRepoAPIKeyGroupFilterSuite) TestNonDefaultBoundGroupMatches() {
+	target := s.mustCreateGroupWithPlatform("grp-nondefault-target", service.PlatformAnthropic)
+	other := s.mustCreateGroupWithPlatform("grp-nondefault-other", service.PlatformOpenAI)
+
+	// hit 的 Key 默认组是 other（openai），把 target（anthropic）作为非默认绑定。
+	hit := s.mustCreateUser("nondefault-hit@test.com")
+	hitKey := s.mustCreateAPIKey(hit.ID, "sk-nondefault-hit", "K", &other.ID)
+	s.mustBindGroup(hitKey.ID, other.ID, service.PlatformOpenAI)
+	s.mustBindGroup(hitKey.ID, target.ID, service.PlatformAnthropic)
+
+	// miss 只绑 other，不该命中。
+	miss := s.mustCreateUser("nondefault-miss@test.com")
+	missKey := s.mustCreateAPIKey(miss.ID, "sk-nondefault-miss", "K", &other.ID)
+	s.mustBindGroup(missKey.ID, other.ID, service.PlatformOpenAI)
+
+	s.Require().Equal([]int64{hit.ID}, s.ids(s.listByAPIKeyGroup(target.ID)),
+		"非默认绑定该分组的用户必须命中")
+}
+
+// 分组被软删后，该筛选（用户可见）不应再命中 —— 与 api_key 列表筛选的语义保持一致。
+func (s *UserRepoAPIKeyGroupFilterSuite) TestSoftDeletedGroupDoesNotMatch() {
+	target := s.mustCreateGroupWithPlatform("grp-softdeleted-target", service.PlatformAnthropic)
+	u := s.mustCreateUser("softdeleted-group@test.com")
+	ak := s.mustCreateAPIKey(u.ID, "sk-softdeleted-group", "K", &target.ID)
+	s.mustBindGroup(ak.ID, target.ID, service.PlatformAnthropic)
+
+	s.Require().NoError(s.client.Group.DeleteOneID(target.ID).Exec(s.ctx), "soft delete group")
+
+	s.Require().Empty(s.listByAPIKeyGroup(target.ID),
+		"用户可见筛选必须尊重分组软删")
+}
+
+func (s *UserRepoAPIKeyGroupFilterSuite) mustCreateGroupWithPlatform(name, platform string) *dbent.Group {
+	s.T().Helper()
+	g, err := s.client.Group.Create().
+		SetName(name).
+		SetPlatform(platform).
+		SetStatus(service.StatusActive).
+		Save(s.ctx)
+	s.Require().NoError(err, "create group")
+	return g
+}
+
+func (s *UserRepoAPIKeyGroupFilterSuite) mustBindGroup(apiKeyID, groupID int64, platform string) {
+	s.T().Helper()
+	err := s.client.APIKeyGroup.Create().
+		SetAPIKeyID(apiKeyID).
+		SetGroupID(groupID).
+		SetPlatform(platform).
+		Exec(s.ctx)
+	s.Require().NoError(err, "bind group")
+}
+
 // 缺省（APIKeyGroupID=0）不过滤：所有用户都返回。
 func (s *UserRepoAPIKeyGroupFilterSuite) TestZeroGroupIDNoFilter() {
 	g := s.mustCreateGroup("grp-zero")

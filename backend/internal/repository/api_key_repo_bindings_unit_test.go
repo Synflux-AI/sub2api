@@ -393,14 +393,19 @@ func TestListByUserIDGroupFilterMatchesBindingSetMembership(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())
 
+	// count + page 两条语句都必须带筛选谓词；显式断言条数，避免切片为空时循环恒真。
+	require.Len(t, *statements, 2)
 	for _, sql := range *statements {
-		require.Contains(t, sql, `"api_keys"."group_id" = $2`)
-		require.Contains(t, sql, `FROM "api_key_groups"`)
-		require.Contains(t, sql, `"api_key_groups"."group_id" = $3`)
+		// 默认组分支：EXISTS 到 groups，并要求分组未软删。
+		require.Contains(t, sql, `"api_keys"."group_id" = "groups"."id"`)
+		require.Contains(t, sql, `"groups"."deleted_at" IS NULL`)
+		// 关联表分支：join groups，同样要求未软删。
+		require.Contains(t, sql, `FROM "api_key_groups" JOIN "groups"`)
+		require.Contains(t, sql, `"t1"."deleted_at" IS NULL`)
 	}
 }
 
-func TestListByUserIDGroupFilterZeroMeansNoBindingAtAll(t *testing.T) {
+func TestListByUserIDGroupFilterZeroMeansNoLiveBindingAtAll(t *testing.T) {
 	repo, mock, statements := newAPIKeyRepoSQLMockForBindings(t)
 
 	mock.ExpectQuery("count").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
@@ -413,9 +418,14 @@ func TestListByUserIDGroupFilterZeroMeansNoBindingAtAll(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())
 
+	require.Len(t, *statements, 2)
 	for _, sql := range *statements {
-		require.Contains(t, sql, `"api_keys"."group_id" IS NULL`)
-		require.Contains(t, sql, `NOT (EXISTS (SELECT "api_key_groups"."api_key_id" FROM "api_key_groups"`)
+		// 「未绑定任何在用分组」= 默认组指针与关联行都不指向在用分组，
+		// 与 >0 分支互为补集，指向已软删分组的绑定一律算未绑定。
+		require.Contains(t, sql,
+			`NOT (EXISTS (SELECT "groups"."id" FROM "groups" WHERE "api_keys"."group_id" = "groups"."id" AND "groups"."deleted_at" IS NULL))`)
+		require.Contains(t, sql,
+			`NOT ("api_keys"."id" IN (SELECT "api_key_groups"."api_key_id" FROM "api_key_groups" JOIN "groups" AS "t1" ON "api_key_groups"."group_id" = "t1"."id" WHERE "t1"."deleted_at" IS NULL))`)
 	}
 }
 
