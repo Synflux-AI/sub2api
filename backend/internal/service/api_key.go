@@ -1,6 +1,7 @@
 package service
 
 import (
+	"sort"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
@@ -45,7 +46,16 @@ type APIKey struct {
 	UpdatedAt           time.Time
 	User                *User
 	Group               *Group
-	CurrentConcurrency  int
+	// BoundGroups 是该 Key 的完整绑定集合（**含默认组** Group），
+	// 每个平台最多一个分组（由 api_key_groups 的 (api_key_id, platform) 唯一索引保证）。
+	//
+	// 读路径语义：只包含未软删的分组；排序稳定 —— 先按 Platform 字典序，再按 ID 升序。
+	// 写路径语义：作为 Create / Update(fields.BoundGroups=true) 的绑定入参，
+	// 仓库层按 GroupBindingsFromGroups 派生出 []GroupBinding 后整体替换关联表。
+	//
+	// GroupID / Group 的「默认组」语义不变：默认组同时是绑定集合的成员。
+	BoundGroups        []*Group
+	CurrentConcurrency int
 
 	// Quota fields
 	Quota     float64    // Quota limit in USD (0 = unlimited)
@@ -137,9 +147,81 @@ func (k *APIKey) EffectiveUsage7d() float64 {
 	return k.Usage7d
 }
 
+// GroupBinding 是「API Key ↔ 分组」的一条绑定关系，对应 api_key_groups 表的一行。
+//
+// Platform 是绑定时从 groups.platform 取的**快照**，与关联表的 platform 列一一对应。
+// DB 上 (api_key_id, platform) 有唯一索引，因此同一个 Key 在同一平台上只能有一条绑定。
+// 分组自身 platform 事后被改动时快照不会自动跟随（联动属于服务层职责，见 issue #171 T7）。
+type GroupBinding struct {
+	GroupID  int64
+	Platform string
+}
+
+// GroupBindingsFromGroups 把领域模型里的 []*Group 派生成仓库写入用的 []GroupBinding。
+//
+// 规则：跳过 nil；按 GroupID 去重（保留首次出现的 platform 快照）；
+// 输出按 (Platform, GroupID) 稳定排序，与 APIKey.BoundGroups 的排序约定一致，
+// 这样「同一份绑定集合」在任何调用方手里都会产生完全相同的写入顺序，便于对账与测试。
+//
+// 注意：本函数**不做**「同平台重复」校验 —— 那是服务层的业务校验（T3），
+// 若真有两个同平台分组混进来，仓库写入会撞 idx_api_key_groups_key_platform 唯一索引。
+func GroupBindingsFromGroups(groups []*Group) []GroupBinding {
+	if len(groups) == 0 {
+		return nil
+	}
+	out := make([]GroupBinding, 0, len(groups))
+	seen := make(map[int64]struct{}, len(groups))
+	for _, g := range groups {
+		if g == nil {
+			continue
+		}
+		if _, dup := seen[g.ID]; dup {
+			continue
+		}
+		seen[g.ID] = struct{}{}
+		out = append(out, GroupBinding{GroupID: g.ID, Platform: g.Platform})
+	}
+	SortGroupBindings(out)
+	return out
+}
+
+// SortGroupBindings 就地按 (Platform, GroupID) 升序排序。
+func SortGroupBindings(bindings []GroupBinding) {
+	sort.SliceStable(bindings, func(i, j int) bool {
+		if bindings[i].Platform != bindings[j].Platform {
+			return bindings[i].Platform < bindings[j].Platform
+		}
+		return bindings[i].GroupID < bindings[j].GroupID
+	})
+}
+
+// SortBoundGroups 就地按 (Platform, ID) 升序排序，是 APIKey.BoundGroups 的稳定排序约定。
+func SortBoundGroups(groups []*Group) {
+	sort.SliceStable(groups, func(i, j int) bool {
+		a, b := groups[i], groups[j]
+		switch {
+		case a == nil && b == nil:
+			return false
+		case a == nil:
+			return false
+		case b == nil:
+			return true
+		}
+		if a.Platform != b.Platform {
+			return a.Platform < b.Platform
+		}
+		return a.ID < b.ID
+	})
+}
+
 // APIKeyListFilters holds optional filtering parameters for listing API keys.
 type APIKeyListFilters struct {
-	Search  string
-	Status  string
-	GroupID *int64 // nil=不筛选, 0=无分组, >0=指定分组
+	Search string
+	Status string
+	// GroupID: nil=不筛选, 0=未绑定任何分组, >0=绑定集合**包含**该分组。
+	//
+	// >0 的语义从 issue #171 起由「api_keys.group_id 等于该值」放宽为
+	// 「默认组等于该值 OR api_key_groups 里存在该分组的绑定行」，
+	// 这样按分组筛选能命中非默认绑定的 Key。
+	GroupID *int64
 }

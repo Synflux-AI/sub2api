@@ -207,6 +207,22 @@ func (s *apiKeyRepoStub) ListKeysByGroupID(ctx context.Context, groupID int64) (
 	panic("unexpected ListKeysByGroupID call")
 }
 
+func (s *apiKeyRepoStub) ListBoundGroupIDs(ctx context.Context, apiKeyID int64) ([]int64, error) {
+	panic("unexpected ListBoundGroupIDs call")
+}
+
+func (s *apiKeyRepoStub) ReplaceBindings(ctx context.Context, apiKeyID int64, bindings []GroupBinding) error {
+	panic("unexpected ReplaceBindings call")
+}
+
+func (s *apiKeyRepoStub) ListKeyIDsByBoundGroupID(ctx context.Context, groupID int64) ([]int64, error) {
+	panic("unexpected ListKeyIDsByBoundGroupID call")
+}
+
+func (s *apiKeyRepoStub) DeleteBindingsByGroupID(ctx context.Context, groupID int64) (int64, error) {
+	panic("unexpected DeleteBindingsByGroupID call")
+}
+
 func (s *apiKeyRepoStub) IncrementQuotaUsed(ctx context.Context, id int64, amount float64) (float64, error) {
 	panic("unexpected IncrementQuotaUsed call")
 }

@@ -32,6 +32,10 @@ var (
 	ErrAPIKeyRateLimited    = infraerrors.TooManyRequests("API_KEY_RATE_LIMITED", "too many failed attempts, please try again later")
 	ErrAPIKeyAuthOverloaded = infraerrors.ServiceUnavailable("API_KEY_AUTH_OVERLOADED", "api key authentication is temporarily overloaded")
 	ErrInvalidIPPattern     = infraerrors.BadRequest("INVALID_IP_PATTERN", "invalid IP or CIDR pattern")
+	// ErrAPIKeyGroupBindingConflict 由 ReplaceBindings 在撞上 api_key_groups 唯一约束时返回。
+	// 正常情况下不该出现：整体替换语义已经排除了「残留旧行」这一类冲突，
+	// 剩下的唯一来源是调用方在同一次替换里传入了两个同 platform 的分组（服务层校验漏网）。
+	ErrAPIKeyGroupBindingConflict = infraerrors.Conflict("API_KEY_GROUP_BINDING_CONFLICT", "api key 在同一平台上只能绑定一个分组")
 	// ErrAPIKeyExpired        = infraerrors.Forbidden("API_KEY_EXPIRED", "api key has expired")
 	ErrAPIKeyExpired = infraerrors.Forbidden("API_KEY_EXPIRED", "api key 已过期")
 	// ErrAPIKeyQuotaExhausted = infraerrors.TooManyRequests("API_KEY_QUOTA_EXHAUSTED", "api key quota exhausted")
@@ -75,6 +79,13 @@ type APIKeyUpdateFields struct {
 	RateLimitUsage bool
 	// IPRules 覆盖 ip_whitelist 与 ip_blacklist。
 	IPRules bool
+	// BoundGroups 声明本次要**整体替换** api_key_groups 里该 Key 的绑定集合，
+	// 替换内容取自 APIKey.BoundGroups（含默认组）。
+	//
+	// 与 GroupID 相互独立：GroupID 只写 api_keys.group_id 这一列（默认组指针），
+	// BoundGroups 只写关联表。改默认组时通常要**两个都置位**，
+	// 否则关联表会与 group_id 不一致（这一致性由服务层负责，参见 issue #171）。
+	BoundGroups bool
 }
 
 // IsEmpty 报告该次 Update 是否不写任何列。
@@ -109,7 +120,30 @@ type APIKeyRepository interface {
 	UpdateGroupIDByUserAndGroup(ctx context.Context, userID, oldGroupID, newGroupID int64) (int64, error)
 	CountByGroupID(ctx context.Context, groupID int64) (int64, error)
 	ListKeysByUserID(ctx context.Context, userID int64) ([]string, error)
+	// ListKeysByGroupID 返回绑定集合包含 groupID 的所有未软删 Key 的 key 值
+	// （默认组 api_keys.group_id UNION 关联表 api_key_groups），用于认证缓存失效。
 	ListKeysByGroupID(ctx context.Context, groupID int64) ([]string, error)
+
+	// --- 多分组绑定（issue #171）---
+
+	// ListBoundGroupIDs 返回 api_key_groups 里该 Key 的**原始**绑定分组 ID，按 group_id 升序。
+	//
+	// 「原始」= 不 join groups 表、不过滤已软删的分组，返回的就是持久化的绑定集合本身。
+	// 需要「可用分组」语义的读路径请用 APIKey.BoundGroups（已过滤软删）。
+	ListBoundGroupIDs(ctx context.Context, apiKeyID int64) ([]int64, error)
+
+	// ReplaceBindings 以**整体替换**语义重写该 Key 在 api_key_groups 里的绑定集合。
+	// 详见 repository 实现上的不变量说明。bindings 为空表示清空该 Key 的全部绑定。
+	ReplaceBindings(ctx context.Context, apiKeyID int64, bindings []GroupBinding) error
+
+	// ListKeyIDsByBoundGroupID 返回绑定集合包含 groupID 的所有未软删 Key 的 ID，按 ID 升序
+	// （默认组 UNION 关联表，与 ListKeysByGroupID 同一谓词）。
+	ListKeyIDsByBoundGroupID(ctx context.Context, groupID int64) ([]int64, error)
+
+	// DeleteBindingsByGroupID 物理删除该分组的全部绑定行，返回删除行数。
+	// 分组走软删（UPDATE deleted_at），不会触发 FK ON DELETE CASCADE，
+	// 所以分组删除路径必须显式调用本方法清理关联行。
+	DeleteBindingsByGroupID(ctx context.Context, groupID int64) (int64, error)
 
 	// Quota methods
 	IncrementQuotaUsed(ctx context.Context, id int64, amount float64) (float64, error)
