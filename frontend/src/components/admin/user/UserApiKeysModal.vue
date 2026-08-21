@@ -26,17 +26,21 @@
                 class="-mx-1 -my-0.5 flex cursor-pointer items-center gap-1 rounded-md px-1 py-0.5 transition-colors hover:bg-gray-100 dark:hover:bg-dark-700"
                 :disabled="updatingKeyIds.has(key.id)"
               >
-                <GroupBadge
-                  v-if="key.group_id && key.group"
-                  :name="key.group.name"
-                  :platform="key.group.platform"
-                  :subscription-type="key.group.subscription_type"
-                  :rate-multiplier="key.group.rate_multiplier"
-                  :peak-rate-enabled="key.group.peak_rate_enabled"
-                  :peak-start="key.group.peak_start"
-                  :peak-end="key.group.peak_end"
-                  :peak-rate-multiplier="key.group.peak_rate_multiplier"
-                />
+                <!-- issue #171：展示**全部**绑定分组，不只是默认组。 -->
+                <span v-if="boundGroupsOf(key).length" class="flex flex-wrap items-center gap-1">
+                  <GroupBadge
+                    v-for="g in boundGroupsOf(key)"
+                    :key="g.id"
+                    :name="g.name"
+                    :platform="g.platform"
+                    :subscription-type="g.subscription_type"
+                    :rate-multiplier="g.rate_multiplier"
+                    :peak-rate-enabled="g.peak_rate_enabled"
+                    :peak-start="g.peak_start"
+                    :peak-end="g.peak_end"
+                    :peak-rate-multiplier="g.peak_rate_multiplier"
+                  />
+                </span>
                 <span v-else class="text-gray-400 italic">{{ t('admin.users.none') }}</span>
                 <svg v-if="updatingKeyIds.has(key.id)" class="h-3 w-3 animate-spin text-primary-500" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
                 <svg v-else class="h-3 w-3 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8.25 15L12 18.75 15.75 15m-7.5-6L12 5.25 15.75 9" /></svg>
@@ -60,17 +64,17 @@
       <div class="max-h-64 overflow-y-auto p-1.5">
         <!-- Unbind option -->
         <button
-          @click="changeGroup(selectedKeyForGroup!, null)"
+          @click="clearGroups(selectedKeyForGroup!)"
           :class="[
             'flex w-full items-center rounded-lg px-3 py-2 text-sm transition-colors',
-            !selectedKeyForGroup?.group_id
+            selectedBoundIds.length === 0
               ? 'bg-primary-50 dark:bg-primary-900/20'
               : 'hover:bg-gray-100 dark:hover:bg-dark-700'
           ]"
         >
           <span class="text-gray-500 italic">{{ t('admin.users.none') }}</span>
           <svg
-            v-if="!selectedKeyForGroup?.group_id"
+            v-if="selectedBoundIds.length === 0"
             class="ml-auto h-4 w-4 shrink-0 text-primary-600 dark:text-primary-400"
             fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"
           ><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
@@ -79,10 +83,10 @@
         <button
           v-for="group in allGroups"
           :key="group.id"
-          @click="changeGroup(selectedKeyForGroup!, group.id)"
+          @click="toggleGroup(selectedKeyForGroup!, group.id)"
           :class="[
             'flex w-full items-center justify-between rounded-lg px-3 py-2 text-sm transition-colors',
-            selectedKeyForGroup?.group_id === group.id
+            selectedBoundIds.includes(group.id)
               ? 'bg-primary-50 dark:bg-primary-900/20'
               : 'hover:bg-gray-100 dark:hover:bg-dark-700'
           ]"
@@ -97,7 +101,7 @@
             :peak-end="group.peak_end"
             :peak-rate-multiplier="group.peak_rate_multiplier"
             :description="group.description"
-            :selected="selectedKeyForGroup?.group_id === group.id"
+            :selected="selectedBoundIds.includes(group.id)"
           />
         </button>
       </div>
@@ -202,13 +206,59 @@ const closeGroupSelector = () => {
   dropdownPosition.value = null
 }
 
-const changeGroup = async (key: ApiKey, newGroupId: number | null) => {
-  closeGroupSelector()
-  if (key.group_id === newGroupId || (!key.group_id && newGroupId === null)) return
+/**
+ * 一把 Key 当前绑定的全部分组（issue #171）。
+ *
+ * 优先用后端返回的 groups；老响应体只有单个 group 时退回它，
+ * 这样即使前后端版本错配也不会把已绑分组显示成「无」。
+ */
+const boundGroupsOf = (key: ApiKey) => {
+  if (key.groups?.length) return key.groups
+  return key.group ? [key.group] : []
+}
 
+/**
+ * 一把 Key 当前绑定的分组 id 集合。
+ *
+ * 刻意做成「从入参算」而不是「读下拉状态」：toggleGroup / clearGroups 本来就收到了
+ * key，依赖下拉是否打开会让它们在下拉关闭时静默算成空集合，
+ * 于是「加入一个分组」变成「替换成这一个分组」—— 那会删掉其它平台的绑定。
+ */
+const boundIdsOf = (key: ApiKey): number[] => {
+  if (key.group_ids?.length) return key.group_ids
+  return key.group_id != null ? [key.group_id] : []
+}
+
+// 渲染勾选态用的；与 boundIdsOf 同一份实现。
+const selectedBoundIds = computed(() => {
+  const key = selectedKeyForGroup.value
+  return key ? boundIdsOf(key) : []
+})
+
+/**
+ * 切换某个分组的绑定状态（加入 / 移除），然后整体提交集合。
+ *
+ * 下拉刻意**不关闭** —— 多选场景下管理员通常要连点几个分组，
+ * 每点一次就关掉会非常难用。清空（clearGroups）才关闭。
+ */
+const toggleGroup = async (key: ApiKey, groupId: number) => {
+  const current = boundIdsOf(key)
+  const next = current.includes(groupId)
+    ? current.filter((id) => id !== groupId)
+    : [...current, groupId]
+  await submitGroups(key, next)
+}
+
+const clearGroups = async (key: ApiKey) => {
+  closeGroupSelector()
+  if (boundIdsOf(key).length === 0) return
+  await submitGroups(key, [])
+}
+
+const submitGroups = async (key: ApiKey, groupIds: number[]) => {
   updatingKeyIds.value.add(key.id)
   try {
-    const result = await adminAPI.apiKeys.updateApiKeyGroup(key.id, newGroupId)
+    const result = await adminAPI.apiKeys.updateApiKeyGroups(key.id, groupIds)
     // Update local data
     const idx = apiKeys.value.findIndex((k) => k.id === key.id)
     if (idx !== -1) {
@@ -220,6 +270,8 @@ const changeGroup = async (key: ApiKey, newGroupId: number | null) => {
       appStore.showSuccess(t('admin.users.groupChangedSuccess'))
     }
   } catch (error: any) {
+    // 同平台冲突之类的校验错误由后端给出可读消息，直接展示 ——
+    // 前端不重复实现那套校验（会漂移）。
     appStore.showError(error?.message || t('admin.users.groupChangeFailed'))
   } finally {
     updatingKeyIds.value.delete(key.id)
