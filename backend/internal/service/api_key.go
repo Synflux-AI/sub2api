@@ -235,3 +235,29 @@ type APIKeyListFilters struct {
 	// 这样按分组筛选能命中非默认绑定的 Key。
 	GroupID *int64
 }
+
+// CloneAPIKeyWithGroup 返回一个把「生效分组」换成 group 的 APIKey **浅拷贝**。
+//
+// 两个用途共用它：
+//   - fallback_group_id 的请求内换组（handler 层）；
+//   - issue #171 的认证期选组：选中非默认分组后，用它替换 ContextKeyAPIKey 里的对象。
+//
+// 为什么必须是拷贝而不是原地改 apiKey.Group/GroupID：认证缓存 L1 存的是
+// *APIKeyAuthCacheEntry 对象本身（不序列化），而 snapshotToAPIKey 每次都新建 APIKey，
+// 但 User / Group 等指针字段在同一请求内被多处共享。原地改指针会污染共享对象，
+// 让同一把 Key 的**其它并发请求**看到被改过的生效分组 —— 静默错价，且极难复现。
+//
+// 浅拷贝的含义（调用方必须知道）：User、BoundGroups、IPWhitelist 等指针/切片字段
+// 与原对象**共享底层数据**。只读没问题；要改这些字段必须自己深拷贝。
+// 特别注意 User.UserGroupRPMOverrides 是按分组索引的 map，换组后 checkRPM 会按
+// 新 group.ID 取值，无需（也不应）改动这个 map。
+func CloneAPIKeyWithGroup(apiKey *APIKey, group *Group) *APIKey {
+	if apiKey == nil || group == nil {
+		return apiKey
+	}
+	cloned := *apiKey
+	groupID := group.ID
+	cloned.GroupID = &groupID
+	cloned.Group = group
+	return &cloned
+}

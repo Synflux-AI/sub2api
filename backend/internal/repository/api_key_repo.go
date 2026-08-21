@@ -236,6 +236,77 @@ func (r *apiKeyRepository) GetByKey(ctx context.Context, key string) (*service.A
 	return apiKeyEntityToService(m), nil
 }
 
+// authGroupProjection 是认证快照所需的分组列清单，**默认组与全部绑定组共用这一份**。
+//
+// 为什么必须是唯一一份：`APIKeyAuthGroupSnapshot` 的每个字段都直接喂给热路径上的某道门
+// （计费倍率、分组 RPM、模型路由、客户端限制、利润控制…）。漏选一列不会报错，
+// 只会让对应字段拿到零值 —— 例如 `ProfitControlEnabled=false` 会让利润控制门**静默失效**。
+// 多分组之后如果默认组和绑定组各自维护一份清单，两份必然漂移，
+// 于是「同一个分组当默认组时门生效、当非默认绑定组时门失效」这种极难定位的 bug 就会出现。
+//
+// 新增快照分组字段时：改 `APIKeyAuthGroupSnapshot` → 改本函数 → 补
+// `api_key_repo_profit_projection_integration_test.go` 的对账断言。三处缺一不可。
+func authGroupProjection() []string {
+	return []string{
+		group.FieldID,
+		group.FieldName,
+		group.FieldPlatform,
+		group.FieldIsExclusive,
+		group.FieldStatus,
+		group.FieldSubscriptionType,
+		group.FieldRateMultiplier,
+		group.FieldDailyLimitUsd,
+		group.FieldWeeklyLimitUsd,
+		group.FieldMonthlyLimitUsd,
+		group.FieldAllowImageGeneration,
+		group.FieldAllowBatchImageGeneration,
+		group.FieldImageRateIndependent,
+		group.FieldImageRateMultiplier,
+		group.FieldImagePrice1k,
+		group.FieldImagePrice2k,
+		group.FieldImagePrice4k,
+		group.FieldVideoRateIndependent,
+		group.FieldVideoRateMultiplier,
+		group.FieldVideoPrice480p,
+		group.FieldVideoPrice720p,
+		group.FieldVideoPrice1080p,
+		group.FieldVideoModelPrices,
+		group.FieldWebSearchPricePerCall,
+		group.FieldSearchPricePer1k,
+		group.FieldAudioRealtimePricePerMin,
+		group.FieldAudioTtsPricePerMillionChars,
+		group.FieldAudioSttPricePerHour,
+		group.FieldLongContextPricingEnabled,
+		group.FieldModelPricing,
+		group.FieldClaudeCodeOnly,
+		group.FieldCodexCliOnly,
+		group.FieldFallbackGroupID,
+		group.FieldFallbackGroupIDOnInvalidRequest,
+		group.FieldModelRoutingEnabled,
+		group.FieldModelRouting,
+		group.FieldMcpXMLInject,
+		group.FieldSupportedModelScopes,
+		group.FieldAllowMessagesDispatch,
+		group.FieldAllowLive,
+		group.FieldDefaultMappedModel,
+		group.FieldMessagesDispatchModelConfig,
+		group.FieldModelsListConfig,
+		group.FieldRpmLimit,
+		group.FieldMaxReasoningEffort,
+		group.FieldReasoningEffortMappings,
+		group.FieldPeakRateEnabled,
+		group.FieldPeakStart,
+		group.FieldPeakEnd,
+		group.FieldPeakRateMultiplier,
+		// 分组利润控制：认证快照是调度门 enable 判定的直接来源，
+		// 漏选会让门静默失效；新增快照分组字段时必须同步本投影，
+		// 集成测试对账兜底。
+		group.FieldProfitControlEnabled,
+		group.FieldProfitMinMargin,
+		group.FieldProfitSafetyBuffer,
+	}
+}
+
 func (r *apiKeyRepository) GetByKeyForAuth(ctx context.Context, key string) (*service.APIKey, error) {
 	m, err := r.activeQuery().
 		Where(apikey.KeyEQ(key)).
@@ -286,64 +357,12 @@ func (r *apiKeyRepository) GetByKeyForAuth(ctx context.Context, key string) (*se
 			})
 		}).
 		WithGroup(func(q *dbent.GroupQuery) {
-			q.Select(
-				group.FieldID,
-				group.FieldName,
-				group.FieldPlatform,
-				group.FieldIsExclusive,
-				group.FieldStatus,
-				group.FieldSubscriptionType,
-				group.FieldRateMultiplier,
-				group.FieldDailyLimitUsd,
-				group.FieldWeeklyLimitUsd,
-				group.FieldMonthlyLimitUsd,
-				group.FieldAllowImageGeneration,
-				group.FieldAllowBatchImageGeneration,
-				group.FieldImageRateIndependent,
-				group.FieldImageRateMultiplier,
-				group.FieldImagePrice1k,
-				group.FieldImagePrice2k,
-				group.FieldImagePrice4k,
-				group.FieldVideoRateIndependent,
-				group.FieldVideoRateMultiplier,
-				group.FieldVideoPrice480p,
-				group.FieldVideoPrice720p,
-				group.FieldVideoPrice1080p,
-				group.FieldVideoModelPrices,
-				group.FieldWebSearchPricePerCall,
-				group.FieldSearchPricePer1k,
-				group.FieldAudioRealtimePricePerMin,
-				group.FieldAudioTtsPricePerMillionChars,
-				group.FieldAudioSttPricePerHour,
-				group.FieldLongContextPricingEnabled,
-				group.FieldModelPricing,
-				group.FieldClaudeCodeOnly,
-				group.FieldCodexCliOnly,
-				group.FieldFallbackGroupID,
-				group.FieldFallbackGroupIDOnInvalidRequest,
-				group.FieldModelRoutingEnabled,
-				group.FieldModelRouting,
-				group.FieldMcpXMLInject,
-				group.FieldSupportedModelScopes,
-				group.FieldAllowMessagesDispatch,
-				group.FieldAllowLive,
-				group.FieldDefaultMappedModel,
-				group.FieldMessagesDispatchModelConfig,
-				group.FieldModelsListConfig,
-				group.FieldRpmLimit,
-				group.FieldMaxReasoningEffort,
-				group.FieldReasoningEffortMappings,
-				group.FieldPeakRateEnabled,
-				group.FieldPeakStart,
-				group.FieldPeakEnd,
-				group.FieldPeakRateMultiplier,
-				// 分组利润控制：认证快照是调度门 enable 判定的直接来源，
-				// 漏选会让门静默失效；新增快照分组字段时必须同步本投影，
-				// 集成测试对账兜底。
-				group.FieldProfitControlEnabled,
-				group.FieldProfitMinMargin,
-				group.FieldProfitSafetyBuffer,
-			)
+			q.Select(authGroupProjection()...)
+		}).
+		// 绑定集合复用**同一份**投影清单（见 authGroupProjection 的说明）。
+		// 一次 eager-load 拿全部绑定组，不产生 N+1。
+		WithBoundGroups(func(q *dbent.GroupQuery) {
+			q.Select(authGroupProjection()...)
 		}).
 		Only(ctx)
 	if err != nil {

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
+	"sort"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -28,8 +29,13 @@ import (
 // v22: 再次撞号——上游 v20(group long-context and model pricing fields)与本仓库 v21
 // 字段集不同,合并后快照同时含上游长上下文/模型定价字段与本仓库扩展字段,
 // 与任一方旧版本均不兼容,升 22 强制失效。
+// v23: issue #171 —— 快照新增 Groups（全部绑定分组）与 User.UserGroupRPMOverrides
+// （按分组的 RPM override）。**必须升版**：存量 v22 快照没有 Groups 字段,
+// 反序列化后会得到 len(Groups)==0,而这在 v23 的语义里表示「未分组 Key」——
+// 于是多分组 Key 会在 L2 TTL 内静默退化成单分组（按默认组计费、选组失效),
+// 无报错无日志。这是本次上线期最隐蔽的坑。
 // 注:本仓库与上游各自独立演进该版本号,每次 sync 合并若双方都动过快照结构,需继续递增。
-const apiKeyAuthSnapshotVersion = 22
+const apiKeyAuthSnapshotVersion = 23
 
 type apiKeyAuthCacheConfig struct {
 	l1Size        int
@@ -388,69 +394,38 @@ func (s *APIKeyService) snapshotFromAPIKey(ctx context.Context, apiKey *APIKey) 
 		},
 	}
 
-	// 填充 (user, group) RPM override —— snapshot 构建时查一次 DB，后续请求零 DB 往返。
-	if apiKey.GroupID != nil && *apiKey.GroupID > 0 && s.userGroupRateRepo != nil {
-		override, err := s.userGroupRateRepo.GetRPMOverrideByUserAndGroup(ctx, apiKey.UserID, *apiKey.GroupID)
-		if err == nil && override != nil {
-			snapshot.User.UserGroupRPMOverride = override
+	// 填充 (user, group) RPM override —— snapshot 构建时查 DB，后续请求零 DB 往返。
+	//
+	// 多分组（issue #171）：对**每个绑定分组**各查一次，结果放进 UserGroupRPMOverrides；
+	// 默认组的值同时写进旧的单值字段 UserGroupRPMOverride，保持下游兼容。
+	// 查询失败或无 override 时**不写入该键**，checkRPM 会回退到 DB 现查
+	// （这也是「缺键」必须与「无 override」同义的原因，见字段注释）。
+	if s.userGroupRateRepo != nil {
+		for _, gid := range authRPMOverrideGroupIDs(apiKey) {
+			override, err := s.userGroupRateRepo.GetRPMOverrideByUserAndGroup(ctx, apiKey.UserID, gid)
+			if err != nil || override == nil {
+				continue
+			}
+			if snapshot.User.UserGroupRPMOverrides == nil {
+				snapshot.User.UserGroupRPMOverrides = make(map[int64]int, 1)
+			}
+			snapshot.User.UserGroupRPMOverrides[gid] = *override
+			if apiKey.GroupID != nil && *apiKey.GroupID == gid {
+				snapshot.User.UserGroupRPMOverride = override
+			}
 		}
-		// 查询失败或无 override 时留 nil，checkRPM 会回退到 DB 查询
 	}
 	if apiKey.Group != nil {
-		snapshot.Group = &APIKeyAuthGroupSnapshot{
-			ID:                              apiKey.Group.ID,
-			Name:                            apiKey.Group.Name,
-			Platform:                        apiKey.Group.Platform,
-			IsExclusive:                     apiKey.Group.IsExclusive,
-			Status:                          apiKey.Group.Status,
-			SubscriptionType:                apiKey.Group.SubscriptionType,
-			RateMultiplier:                  apiKey.Group.RateMultiplier,
-			DailyLimitUSD:                   apiKey.Group.DailyLimitUSD,
-			WeeklyLimitUSD:                  apiKey.Group.WeeklyLimitUSD,
-			MonthlyLimitUSD:                 apiKey.Group.MonthlyLimitUSD,
-			AllowImageGeneration:            apiKey.Group.AllowImageGeneration,
-			AllowBatchImageGeneration:       apiKey.Group.AllowBatchImageGeneration,
-			ImageRateIndependent:            apiKey.Group.ImageRateIndependent,
-			ImageRateMultiplier:             apiKey.Group.ImageRateMultiplier,
-			ImagePrice1K:                    apiKey.Group.ImagePrice1K,
-			ImagePrice2K:                    apiKey.Group.ImagePrice2K,
-			ImagePrice4K:                    apiKey.Group.ImagePrice4K,
-			VideoRateIndependent:            apiKey.Group.VideoRateIndependent,
-			VideoRateMultiplier:             apiKey.Group.VideoRateMultiplier,
-			VideoPrice480P:                  apiKey.Group.VideoPrice480P,
-			VideoPrice720P:                  apiKey.Group.VideoPrice720P,
-			VideoPrice1080P:                 apiKey.Group.VideoPrice1080P,
-			VideoModelPrices:                NormalizeVideoModelPrices(apiKey.Group.VideoModelPrices),
-			WebSearchPricePerCall:           apiKey.Group.WebSearchPricePerCall,
-			SearchPricePer1k:                apiKey.Group.SearchPricePer1k,
-			AudioRealtimePricePerMin:        apiKey.Group.AudioRealtimePricePerMin,
-			AudioTTSPricePerMillionChars:    apiKey.Group.AudioTTSPricePerMillionChars,
-			AudioSTTPricePerHour:            apiKey.Group.AudioSTTPricePerHour,
-			LongContextPricingEnabled:       apiKey.Group.LongContextPricingEnabled,
-			ModelPricing:                    apiKey.Group.ModelPricing,
-			ClaudeCodeOnly:                  apiKey.Group.ClaudeCodeOnly,
-			CodexCLIOnly:                    apiKey.Group.CodexCLIOnly,
-			FallbackGroupID:                 apiKey.Group.FallbackGroupID,
-			FallbackGroupIDOnInvalidRequest: apiKey.Group.FallbackGroupIDOnInvalidRequest,
-			ModelRouting:                    apiKey.Group.ModelRouting,
-			ModelRoutingEnabled:             apiKey.Group.ModelRoutingEnabled,
-			MCPXMLInject:                    apiKey.Group.MCPXMLInject,
-			SupportedModelScopes:            apiKey.Group.SupportedModelScopes,
-			AllowMessagesDispatch:           apiKey.Group.AllowMessagesDispatch,
-			AllowLive:                       apiKey.Group.AllowLive,
-			DefaultMappedModel:              apiKey.Group.DefaultMappedModel,
-			MessagesDispatchModelConfig:     apiKey.Group.MessagesDispatchModelConfig,
-			ModelsListConfig:                apiKey.Group.ModelsListConfig,
-			RPMLimit:                        apiKey.Group.RPMLimit,
-			MaxReasoningEffort:              apiKey.Group.MaxReasoningEffort,
-			ReasoningEffortMappings:         apiKey.Group.ReasoningEffortMappings,
-			PeakRateEnabled:                 apiKey.Group.PeakRateEnabled,
-			PeakStart:                       apiKey.Group.PeakStart,
-			PeakEnd:                         apiKey.Group.PeakEnd,
-			PeakRateMultiplier:              apiKey.Group.PeakRateMultiplier,
-			ProfitControlEnabled:            apiKey.Group.ProfitControlEnabled,
-			ProfitMinMargin:                 apiKey.Group.ProfitMinMargin,
-			ProfitSafetyBuffer:              apiKey.Group.ProfitSafetyBuffer,
+		snapshot.Group = groupToAuthSnapshot(apiKey.Group)
+	}
+	// 绑定集合（issue #171）。BoundGroups 已由读模型按 (Platform, ID) 稳定排序，
+	// 这里保持同序写入 —— 选组依赖这个顺序的稳定性。
+	if len(apiKey.BoundGroups) > 0 {
+		snapshot.Groups = make([]APIKeyAuthGroupSnapshot, 0, len(apiKey.BoundGroups))
+		for _, g := range apiKey.BoundGroups {
+			if gs := groupToAuthSnapshot(g); gs != nil {
+				snapshot.Groups = append(snapshot.Groups, *gs)
+			}
 		}
 	}
 	return snapshot
@@ -496,66 +471,193 @@ func (s *APIKeyService) snapshotToAPIKey(key string, snapshot *APIKeyAuthSnapsho
 			TotalRecharged:             snapshot.User.TotalRecharged,
 			RPMLimit:                   snapshot.User.RPMLimit,
 			UserGroupRPMOverride:       snapshot.User.UserGroupRPMOverride,
+			UserGroupRPMOverrides:      snapshot.User.UserGroupRPMOverrides,
 		},
 	}
 	if snapshot.Group != nil {
-		apiKey.Group = &Group{
-			ID:                              snapshot.Group.ID,
-			Name:                            snapshot.Group.Name,
-			Platform:                        snapshot.Group.Platform,
-			IsExclusive:                     snapshot.Group.IsExclusive,
-			Status:                          snapshot.Group.Status,
-			Hydrated:                        true,
-			SubscriptionType:                snapshot.Group.SubscriptionType,
-			RateMultiplier:                  snapshot.Group.RateMultiplier,
-			DailyLimitUSD:                   snapshot.Group.DailyLimitUSD,
-			WeeklyLimitUSD:                  snapshot.Group.WeeklyLimitUSD,
-			MonthlyLimitUSD:                 snapshot.Group.MonthlyLimitUSD,
-			AllowImageGeneration:            snapshot.Group.AllowImageGeneration,
-			AllowBatchImageGeneration:       snapshot.Group.AllowBatchImageGeneration,
-			ImageRateIndependent:            snapshot.Group.ImageRateIndependent,
-			ImageRateMultiplier:             snapshot.Group.ImageRateMultiplier,
-			ImagePrice1K:                    snapshot.Group.ImagePrice1K,
-			ImagePrice2K:                    snapshot.Group.ImagePrice2K,
-			ImagePrice4K:                    snapshot.Group.ImagePrice4K,
-			VideoRateIndependent:            snapshot.Group.VideoRateIndependent,
-			VideoRateMultiplier:             snapshot.Group.VideoRateMultiplier,
-			VideoPrice480P:                  snapshot.Group.VideoPrice480P,
-			VideoPrice720P:                  snapshot.Group.VideoPrice720P,
-			VideoPrice1080P:                 snapshot.Group.VideoPrice1080P,
-			VideoModelPrices:                NormalizeVideoModelPrices(snapshot.Group.VideoModelPrices),
-			WebSearchPricePerCall:           snapshot.Group.WebSearchPricePerCall,
-			SearchPricePer1k:                snapshot.Group.SearchPricePer1k,
-			AudioRealtimePricePerMin:        snapshot.Group.AudioRealtimePricePerMin,
-			AudioTTSPricePerMillionChars:    snapshot.Group.AudioTTSPricePerMillionChars,
-			AudioSTTPricePerHour:            snapshot.Group.AudioSTTPricePerHour,
-			LongContextPricingEnabled:       snapshot.Group.LongContextPricingEnabled,
-			ModelPricing:                    snapshot.Group.ModelPricing,
-			ClaudeCodeOnly:                  snapshot.Group.ClaudeCodeOnly,
-			CodexCLIOnly:                    snapshot.Group.CodexCLIOnly,
-			FallbackGroupID:                 snapshot.Group.FallbackGroupID,
-			FallbackGroupIDOnInvalidRequest: snapshot.Group.FallbackGroupIDOnInvalidRequest,
-			ModelRouting:                    snapshot.Group.ModelRouting,
-			ModelRoutingEnabled:             snapshot.Group.ModelRoutingEnabled,
-			MCPXMLInject:                    snapshot.Group.MCPXMLInject,
-			SupportedModelScopes:            snapshot.Group.SupportedModelScopes,
-			AllowMessagesDispatch:           snapshot.Group.AllowMessagesDispatch,
-			AllowLive:                       snapshot.Group.AllowLive,
-			DefaultMappedModel:              snapshot.Group.DefaultMappedModel,
-			MessagesDispatchModelConfig:     snapshot.Group.MessagesDispatchModelConfig,
-			ModelsListConfig:                snapshot.Group.ModelsListConfig,
-			RPMLimit:                        snapshot.Group.RPMLimit,
-			MaxReasoningEffort:              snapshot.Group.MaxReasoningEffort,
-			ReasoningEffortMappings:         snapshot.Group.ReasoningEffortMappings,
-			PeakRateEnabled:                 snapshot.Group.PeakRateEnabled,
-			PeakStart:                       snapshot.Group.PeakStart,
-			PeakEnd:                         snapshot.Group.PeakEnd,
-			PeakRateMultiplier:              snapshot.Group.PeakRateMultiplier,
-			ProfitControlEnabled:            snapshot.Group.ProfitControlEnabled,
-			ProfitMinMargin:                 snapshot.Group.ProfitMinMargin,
-			ProfitSafetyBuffer:              snapshot.Group.ProfitSafetyBuffer,
+		apiKey.Group = authSnapshotToGroup(snapshot.Group)
+	}
+	// 绑定集合（issue #171）。顺序与写入时一致，选组依赖它稳定。
+	if len(snapshot.Groups) > 0 {
+		apiKey.BoundGroups = make([]*Group, 0, len(snapshot.Groups))
+		for i := range snapshot.Groups {
+			if g := authSnapshotToGroup(&snapshot.Groups[i]); g != nil {
+				apiKey.BoundGroups = append(apiKey.BoundGroups, g)
+			}
 		}
 	}
 	s.compileAPIKeyIPRules(apiKey)
 	return apiKey
+}
+
+// groupToAuthSnapshot 把分组领域对象转成认证快照的分组部分。
+//
+// 默认组（snapshot.Group）与全部绑定组（snapshot.Groups）**共用这一个函数**。
+// 理由同 authGroupProjection：这些字段每一个都直接喂给热路径上的某道门，
+// 漏赋值不报错、只会拿到零值静默失效。两份实现必然漂移，于是会出现
+// 「同一分组当默认组时门生效、当非默认绑定组时门失效」这类极难定位的 bug。
+//
+// 新增字段时：改 APIKeyAuthGroupSnapshot -> 改 authGroupProjection（SQL 投影）
+// -> 改本函数与 authSnapshotToGroup（双向转换）-> 补对账测试。
+func groupToAuthSnapshot(g *Group) *APIKeyAuthGroupSnapshot {
+	if g == nil {
+		return nil
+	}
+	return &APIKeyAuthGroupSnapshot{
+		ID:                              g.ID,
+		Name:                            g.Name,
+		Platform:                        g.Platform,
+		IsExclusive:                     g.IsExclusive,
+		Status:                          g.Status,
+		SubscriptionType:                g.SubscriptionType,
+		RateMultiplier:                  g.RateMultiplier,
+		DailyLimitUSD:                   g.DailyLimitUSD,
+		WeeklyLimitUSD:                  g.WeeklyLimitUSD,
+		MonthlyLimitUSD:                 g.MonthlyLimitUSD,
+		AllowImageGeneration:            g.AllowImageGeneration,
+		AllowBatchImageGeneration:       g.AllowBatchImageGeneration,
+		ImageRateIndependent:            g.ImageRateIndependent,
+		ImageRateMultiplier:             g.ImageRateMultiplier,
+		ImagePrice1K:                    g.ImagePrice1K,
+		ImagePrice2K:                    g.ImagePrice2K,
+		ImagePrice4K:                    g.ImagePrice4K,
+		VideoRateIndependent:            g.VideoRateIndependent,
+		VideoRateMultiplier:             g.VideoRateMultiplier,
+		VideoPrice480P:                  g.VideoPrice480P,
+		VideoPrice720P:                  g.VideoPrice720P,
+		VideoPrice1080P:                 g.VideoPrice1080P,
+		VideoModelPrices:                NormalizeVideoModelPrices(g.VideoModelPrices),
+		WebSearchPricePerCall:           g.WebSearchPricePerCall,
+		SearchPricePer1k:                g.SearchPricePer1k,
+		AudioRealtimePricePerMin:        g.AudioRealtimePricePerMin,
+		AudioTTSPricePerMillionChars:    g.AudioTTSPricePerMillionChars,
+		AudioSTTPricePerHour:            g.AudioSTTPricePerHour,
+		LongContextPricingEnabled:       g.LongContextPricingEnabled,
+		ModelPricing:                    g.ModelPricing,
+		ClaudeCodeOnly:                  g.ClaudeCodeOnly,
+		CodexCLIOnly:                    g.CodexCLIOnly,
+		FallbackGroupID:                 g.FallbackGroupID,
+		FallbackGroupIDOnInvalidRequest: g.FallbackGroupIDOnInvalidRequest,
+		ModelRouting:                    g.ModelRouting,
+		ModelRoutingEnabled:             g.ModelRoutingEnabled,
+		MCPXMLInject:                    g.MCPXMLInject,
+		SupportedModelScopes:            g.SupportedModelScopes,
+		AllowMessagesDispatch:           g.AllowMessagesDispatch,
+		AllowLive:                       g.AllowLive,
+		DefaultMappedModel:              g.DefaultMappedModel,
+		MessagesDispatchModelConfig:     g.MessagesDispatchModelConfig,
+		ModelsListConfig:                g.ModelsListConfig,
+		RPMLimit:                        g.RPMLimit,
+		MaxReasoningEffort:              g.MaxReasoningEffort,
+		ReasoningEffortMappings:         g.ReasoningEffortMappings,
+		PeakRateEnabled:                 g.PeakRateEnabled,
+		PeakStart:                       g.PeakStart,
+		PeakEnd:                         g.PeakEnd,
+		PeakRateMultiplier:              g.PeakRateMultiplier,
+		ProfitControlEnabled:            g.ProfitControlEnabled,
+		ProfitMinMargin:                 g.ProfitMinMargin,
+		ProfitSafetyBuffer:              g.ProfitSafetyBuffer,
+	}
+}
+
+// authSnapshotToGroup 是 groupToAuthSnapshot 的逆向转换，
+// 默认组与全部绑定组**共用这一个函数**（理由见 groupToAuthSnapshot）。
+//
+// 注意 Hydrated: true —— 这是从快照还原的分组唯一能标记「字段已完整装载」的地方。
+// 漏掉它会让 service.IsGroupContextValid 判假，于是 setGroupContext 静默跳过，
+// 计费 fallback 到调度分组：**无报错、无日志的静默错价**。
+func authSnapshotToGroup(s *APIKeyAuthGroupSnapshot) *Group {
+	if s == nil {
+		return nil
+	}
+	return &Group{
+		ID:                              s.ID,
+		Name:                            s.Name,
+		Platform:                        s.Platform,
+		IsExclusive:                     s.IsExclusive,
+		Status:                          s.Status,
+		Hydrated:                        true,
+		SubscriptionType:                s.SubscriptionType,
+		RateMultiplier:                  s.RateMultiplier,
+		DailyLimitUSD:                   s.DailyLimitUSD,
+		WeeklyLimitUSD:                  s.WeeklyLimitUSD,
+		MonthlyLimitUSD:                 s.MonthlyLimitUSD,
+		AllowImageGeneration:            s.AllowImageGeneration,
+		AllowBatchImageGeneration:       s.AllowBatchImageGeneration,
+		ImageRateIndependent:            s.ImageRateIndependent,
+		ImageRateMultiplier:             s.ImageRateMultiplier,
+		ImagePrice1K:                    s.ImagePrice1K,
+		ImagePrice2K:                    s.ImagePrice2K,
+		ImagePrice4K:                    s.ImagePrice4K,
+		VideoRateIndependent:            s.VideoRateIndependent,
+		VideoRateMultiplier:             s.VideoRateMultiplier,
+		VideoPrice480P:                  s.VideoPrice480P,
+		VideoPrice720P:                  s.VideoPrice720P,
+		VideoPrice1080P:                 s.VideoPrice1080P,
+		VideoModelPrices:                NormalizeVideoModelPrices(s.VideoModelPrices),
+		WebSearchPricePerCall:           s.WebSearchPricePerCall,
+		SearchPricePer1k:                s.SearchPricePer1k,
+		AudioRealtimePricePerMin:        s.AudioRealtimePricePerMin,
+		AudioTTSPricePerMillionChars:    s.AudioTTSPricePerMillionChars,
+		AudioSTTPricePerHour:            s.AudioSTTPricePerHour,
+		LongContextPricingEnabled:       s.LongContextPricingEnabled,
+		ModelPricing:                    s.ModelPricing,
+		ClaudeCodeOnly:                  s.ClaudeCodeOnly,
+		CodexCLIOnly:                    s.CodexCLIOnly,
+		FallbackGroupID:                 s.FallbackGroupID,
+		FallbackGroupIDOnInvalidRequest: s.FallbackGroupIDOnInvalidRequest,
+		ModelRouting:                    s.ModelRouting,
+		ModelRoutingEnabled:             s.ModelRoutingEnabled,
+		MCPXMLInject:                    s.MCPXMLInject,
+		SupportedModelScopes:            s.SupportedModelScopes,
+		AllowMessagesDispatch:           s.AllowMessagesDispatch,
+		AllowLive:                       s.AllowLive,
+		DefaultMappedModel:              s.DefaultMappedModel,
+		MessagesDispatchModelConfig:     s.MessagesDispatchModelConfig,
+		ModelsListConfig:                s.ModelsListConfig,
+		RPMLimit:                        s.RPMLimit,
+		MaxReasoningEffort:              s.MaxReasoningEffort,
+		ReasoningEffortMappings:         s.ReasoningEffortMappings,
+		PeakRateEnabled:                 s.PeakRateEnabled,
+		PeakStart:                       s.PeakStart,
+		PeakEnd:                         s.PeakEnd,
+		PeakRateMultiplier:              s.PeakRateMultiplier,
+		ProfitControlEnabled:            s.ProfitControlEnabled,
+		ProfitMinMargin:                 s.ProfitMinMargin,
+		ProfitSafetyBuffer:              s.ProfitSafetyBuffer,
+	}
+}
+
+// authRPMOverrideGroupIDs 返回构建快照时需要查 (user, group) RPM override 的分组 ID 集合：
+// 默认组 + 全部绑定组，去重后按升序（顺序固定是为了让快照与测试可复现）。
+//
+// 单分组 Key 只会得到一个 ID，查询次数与改造前逐字相同（C3）。
+// 多分组 Key 的查询次数等于绑定组数，上界是平台总数（见 apiKeyMaxBoundGroups），
+// 且只发生在快照回源时（L1/L2 未命中），不在每请求路径上。
+func authRPMOverrideGroupIDs(apiKey *APIKey) []int64 {
+	if apiKey == nil {
+		return nil
+	}
+	seen := make(map[int64]struct{}, len(apiKey.BoundGroups)+1)
+	ids := make([]int64, 0, len(apiKey.BoundGroups)+1)
+	add := func(id int64) {
+		if id <= 0 {
+			return
+		}
+		if _, dup := seen[id]; dup {
+			return
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	if apiKey.GroupID != nil {
+		add(*apiKey.GroupID)
+	}
+	for _, g := range apiKey.BoundGroups {
+		if g != nil {
+			add(g.ID)
+		}
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	return ids
 }

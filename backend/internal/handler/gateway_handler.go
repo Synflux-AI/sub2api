@@ -1430,15 +1430,11 @@ func (h *GatewayHandler) AntigravityModels(c *gin.Context) {
 	})
 }
 
+// cloneAPIKeyWithGroup 是 service.CloneAPIKeyWithGroup 的薄别名，保留是为了不动
+// fallback_group_id 那条调用链的可读性。实现已上移到 service 层，
+// 因为认证中间件的选组（issue #171）也要用同一套语义。
 func cloneAPIKeyWithGroup(apiKey *service.APIKey, group *service.Group) *service.APIKey {
-	if apiKey == nil || group == nil {
-		return apiKey
-	}
-	cloned := *apiKey
-	groupID := group.ID
-	cloned.GroupID = &groupID
-	cloned.Group = group
-	return &cloned
+	return service.CloneAPIKeyWithGroup(apiKey, group)
 }
 
 // Usage handles getting account balance and usage statistics for CC Switch integration
