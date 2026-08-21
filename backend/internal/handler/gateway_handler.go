@@ -1082,6 +1082,16 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 func (h *GatewayHandler) Models(c *gin.Context) {
 	apiKey, _ := middleware2.GetAPIKeyFromContext(c)
 
+	// 多分组 Key（issue #171）：返回**全部绑定分组**的模型并集。
+	// 每个分组先各自应用自己的 models_list_config，再合并去重 ——
+	// 合并后再过滤是错的，那会让 A 组的自定义清单误伤 B 组的模型。
+	//
+	// 单分组 / 未分组 Key 完全走下面的原有逻辑，一行未改（C3）。
+	if models, platform, ok := h.boundGroupsModelsUnion(c, apiKey); ok {
+		h.writeModelsForPlatform(c, platform, models)
+		return
+	}
+
 	var groupID *int64
 	var platform string
 

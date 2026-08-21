@@ -85,7 +85,10 @@ func TestGatewayHandlerKeyBillingInfoUsesGroupRate(t *testing.T) {
 	var got keyBillingInfoResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
 	require.Equal(t, "sub2api.key_billing", got.Object)
-	require.Equal(t, 1, got.SchemaVersion)
+	// v1 → v2：issue #171 加了 groups[]。顶层字段全部保持原位原语义（默认组），
+	// 所以这是纯加性变更；升版号是给客户端的信号——多分组 Key 只看顶层字段会拿到
+	// 默认组的倍率而不是本次请求命中分组的倍率。
+	require.Equal(t, 2, got.SchemaVersion)
 	require.Equal(t, "token", got.BillingScope)
 	require.Equal(t, 0.75, got.GroupRateMultiplier)
 	require.Nil(t, got.UserRateMultiplier)
@@ -98,6 +101,13 @@ func TestGatewayHandlerKeyBillingInfoUsesGroupRate(t *testing.T) {
 	require.Equal(t, 0.75, got.EffectiveRateMultiplier)
 	require.Nil(t, got.Timezone)
 	require.False(t, got.ObservedAt.IsZero())
+
+	// 单分组 Key 也返回一个元素，且与顶层字段一致 —— 客户端不必区分两种形状。
+	require.Len(t, got.Groups, 1)
+	require.True(t, got.Groups[0].IsDefault)
+	require.Equal(t, got.GroupRateMultiplier, got.Groups[0].GroupRateMultiplier)
+	require.Equal(t, got.ResolvedRateMultiplier, got.Groups[0].ResolvedRateMultiplier)
+	require.Equal(t, got.EffectiveRateMultiplier, got.Groups[0].EffectiveRateMultiplier)
 	var fields map[string]json.RawMessage
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &fields))
 	require.NotContains(t, fields, "user_rate_multiplier")
