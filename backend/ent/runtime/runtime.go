@@ -1812,13 +1812,13 @@ func init() {
 	// routingstrategy.PlatformValidator is a validator for the "platform" field. It is called by the builders before save.
 	routingstrategy.PlatformValidator = routingstrategyDescPlatform.Validators[0].(func(string) error)
 	// routingstrategyDescMatchMode is the schema descriptor for match_mode field.
-	routingstrategyDescMatchMode := routingstrategyFields[6].Descriptor()
+	routingstrategyDescMatchMode := routingstrategyFields[7].Descriptor()
 	// routingstrategy.DefaultMatchMode holds the default value on creation for the match_mode field.
 	routingstrategy.DefaultMatchMode = routingstrategyDescMatchMode.Default.(string)
 	// routingstrategy.MatchModeValidator is a validator for the "match_mode" field. It is called by the builders before save.
 	routingstrategy.MatchModeValidator = routingstrategyDescMatchMode.Validators[0].(func(string) error)
 	// routingstrategyDescAction is the schema descriptor for action field.
-	routingstrategyDescAction := routingstrategyFields[8].Descriptor()
+	routingstrategyDescAction := routingstrategyFields[9].Descriptor()
 	// routingstrategy.DefaultAction holds the default value on creation for the action field.
 	routingstrategy.DefaultAction = routingstrategyDescAction.Default.(string)
 	// routingstrategy.ActionValidator is a validator for the "action" field. It is called by the builders before save.

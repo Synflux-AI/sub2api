@@ -32,6 +32,8 @@ const (
 	FieldPlatform = "platform"
 	// FieldGroupID holds the string denoting the group_id field in the database.
 	FieldGroupID = "group_id"
+	// FieldGroupIds holds the string denoting the group_ids field in the database.
+	FieldGroupIds = "group_ids"
 	// FieldMatchMode holds the string denoting the match_mode field in the database.
 	FieldMatchMode = "match_mode"
 	// FieldConditions holds the string denoting the conditions field in the database.
@@ -58,6 +60,7 @@ var Columns = []string{
 	FieldPriority,
 	FieldPlatform,
 	FieldGroupID,
+	FieldGroupIds,
 	FieldMatchMode,
 	FieldConditions,
 	FieldAction,

@@ -2432,7 +2432,7 @@ export interface RoutingStrategy {
   enabled: boolean
   priority: number
   platform: string
-  group_id: number | null
+  group_ids: number[]
   match_mode: RoutingStrategyMatchMode
   conditions: RoutingCondition[]
   action: RoutingStrategyAction
@@ -2449,7 +2449,7 @@ export interface SaveRoutingStrategyRequest {
   enabled: boolean
   priority: number
   platform: string
-  group_id?: number | null
+  group_ids: number[]
   match_mode: RoutingStrategyMatchMode
   conditions: RoutingCondition[]
   action: RoutingStrategyAction

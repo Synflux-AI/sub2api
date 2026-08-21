@@ -31,7 +31,7 @@ type saveRoutingStrategyRequest struct {
 	Enabled           bool                      `json:"enabled"`
 	Priority          int                       `json:"priority"`
 	Platform          string                    `json:"platform"`
-	GroupID           *int64                    `json:"group_id"`
+	GroupIDs          []int64                   `json:"group_ids"`
 	MatchMode         string                    `json:"match_mode"`
 	Conditions        []routingConditionRequest `json:"conditions"`
 	Action            string                    `json:"action"`
@@ -54,7 +54,7 @@ func (r *saveRoutingStrategyRequest) toInput() *service.SaveRoutingStrategyInput
 		Enabled:           r.Enabled,
 		Priority:          r.Priority,
 		Platform:          r.Platform,
-		GroupID:           r.GroupID,
+		GroupIDs:          r.GroupIDs,
 		MatchMode:         r.MatchMode,
 		Conditions:        conditions,
 		Action:            r.Action,

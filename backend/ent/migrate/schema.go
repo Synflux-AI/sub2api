@@ -1519,6 +1519,7 @@ var (
 		{Name: "priority", Type: field.TypeInt, Default: 100},
 		{Name: "platform", Type: field.TypeString, Size: 32, Default: "anthropic"},
 		{Name: "group_id", Type: field.TypeInt64, Nullable: true},
+		{Name: "group_ids", Type: field.TypeJSON, Nullable: true, SchemaType: map[string]string{"postgres": "jsonb"}},
 		{Name: "match_mode", Type: field.TypeString, Size: 8, Default: "all"},
 		{Name: "conditions", Type: field.TypeJSON, Nullable: true, SchemaType: map[string]string{"postgres": "jsonb"}},
 		{Name: "action", Type: field.TypeString, Size: 16, Default: "restrict"},

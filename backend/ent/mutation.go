@@ -39808,6 +39808,8 @@ type RoutingStrategyMutation struct {
 	platform                 *string
 	group_id                 *int64
 	addgroup_id              *int64
+	group_ids                *[]int64
+	appendgroup_ids          []int64
 	match_mode               *string
 	conditions               *[]domain.RoutingCondition
 	appendconditions         []domain.RoutingCondition
@@ -40311,6 +40313,71 @@ func (m *RoutingStrategyMutation) ResetGroupID() {
 	delete(m.clearedFields, routingstrategy.FieldGroupID)
 }
 
+// SetGroupIds sets the "group_ids" field.
+func (m *RoutingStrategyMutation) SetGroupIds(i []int64) {
+	m.group_ids = &i
+	m.appendgroup_ids = nil
+}
+
+// GroupIds returns the value of the "group_ids" field in the mutation.
+func (m *RoutingStrategyMutation) GroupIds() (r []int64, exists bool) {
+	v := m.group_ids
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldGroupIds returns the old "group_ids" field's value of the RoutingStrategy entity.
+// If the RoutingStrategy object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RoutingStrategyMutation) OldGroupIds(ctx context.Context) (v []int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldGroupIds is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldGroupIds requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldGroupIds: %w", err)
+	}
+	return oldValue.GroupIds, nil
+}
+
+// AppendGroupIds adds i to the "group_ids" field.
+func (m *RoutingStrategyMutation) AppendGroupIds(i []int64) {
+	m.appendgroup_ids = append(m.appendgroup_ids, i...)
+}
+
+// AppendedGroupIds returns the list of values that were appended to the "group_ids" field in this mutation.
+func (m *RoutingStrategyMutation) AppendedGroupIds() ([]int64, bool) {
+	if len(m.appendgroup_ids) == 0 {
+		return nil, false
+	}
+	return m.appendgroup_ids, true
+}
+
+// ClearGroupIds clears the value of the "group_ids" field.
+func (m *RoutingStrategyMutation) ClearGroupIds() {
+	m.group_ids = nil
+	m.appendgroup_ids = nil
+	m.clearedFields[routingstrategy.FieldGroupIds] = struct{}{}
+}
+
+// GroupIdsCleared returns if the "group_ids" field was cleared in this mutation.
+func (m *RoutingStrategyMutation) GroupIdsCleared() bool {
+	_, ok := m.clearedFields[routingstrategy.FieldGroupIds]
+	return ok
+}
+
+// ResetGroupIds resets all changes to the "group_ids" field.
+func (m *RoutingStrategyMutation) ResetGroupIds() {
+	m.group_ids = nil
+	m.appendgroup_ids = nil
+	delete(m.clearedFields, routingstrategy.FieldGroupIds)
+}
+
 // SetMatchMode sets the "match_mode" field.
 func (m *RoutingStrategyMutation) SetMatchMode(s string) {
 	m.match_mode = &s
@@ -40612,7 +40679,7 @@ func (m *RoutingStrategyMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *RoutingStrategyMutation) Fields() []string {
-	fields := make([]string, 0, 14)
+	fields := make([]string, 0, 15)
 	if m.created_at != nil {
 		fields = append(fields, routingstrategy.FieldCreatedAt)
 	}
@@ -40639,6 +40706,9 @@ func (m *RoutingStrategyMutation) Fields() []string {
 	}
 	if m.group_id != nil {
 		fields = append(fields, routingstrategy.FieldGroupID)
+	}
+	if m.group_ids != nil {
+		fields = append(fields, routingstrategy.FieldGroupIds)
 	}
 	if m.match_mode != nil {
 		fields = append(fields, routingstrategy.FieldMatchMode)
@@ -40681,6 +40751,8 @@ func (m *RoutingStrategyMutation) Field(name string) (ent.Value, bool) {
 		return m.Platform()
 	case routingstrategy.FieldGroupID:
 		return m.GroupID()
+	case routingstrategy.FieldGroupIds:
+		return m.GroupIds()
 	case routingstrategy.FieldMatchMode:
 		return m.MatchMode()
 	case routingstrategy.FieldConditions:
@@ -40718,6 +40790,8 @@ func (m *RoutingStrategyMutation) OldField(ctx context.Context, name string) (en
 		return m.OldPlatform(ctx)
 	case routingstrategy.FieldGroupID:
 		return m.OldGroupID(ctx)
+	case routingstrategy.FieldGroupIds:
+		return m.OldGroupIds(ctx)
 	case routingstrategy.FieldMatchMode:
 		return m.OldMatchMode(ctx)
 	case routingstrategy.FieldConditions:
@@ -40799,6 +40873,13 @@ func (m *RoutingStrategyMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetGroupID(v)
+		return nil
+	case routingstrategy.FieldGroupIds:
+		v, ok := value.([]int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetGroupIds(v)
 		return nil
 	case routingstrategy.FieldMatchMode:
 		v, ok := value.(string)
@@ -40898,6 +40979,9 @@ func (m *RoutingStrategyMutation) ClearedFields() []string {
 	if m.FieldCleared(routingstrategy.FieldGroupID) {
 		fields = append(fields, routingstrategy.FieldGroupID)
 	}
+	if m.FieldCleared(routingstrategy.FieldGroupIds) {
+		fields = append(fields, routingstrategy.FieldGroupIds)
+	}
 	if m.FieldCleared(routingstrategy.FieldConditions) {
 		fields = append(fields, routingstrategy.FieldConditions)
 	}
@@ -40926,6 +41010,9 @@ func (m *RoutingStrategyMutation) ClearField(name string) error {
 		return nil
 	case routingstrategy.FieldGroupID:
 		m.ClearGroupID()
+		return nil
+	case routingstrategy.FieldGroupIds:
+		m.ClearGroupIds()
 		return nil
 	case routingstrategy.FieldConditions:
 		m.ClearConditions()
@@ -40970,6 +41057,9 @@ func (m *RoutingStrategyMutation) ResetField(name string) error {
 		return nil
 	case routingstrategy.FieldGroupID:
 		m.ResetGroupID()
+		return nil
+	case routingstrategy.FieldGroupIds:
+		m.ResetGroupIds()
 		return nil
 	case routingstrategy.FieldMatchMode:
 		m.ResetMatchMode()

@@ -35,8 +35,10 @@ type RoutingStrategy struct {
 	Priority int `json:"priority,omitempty"`
 	// 生效平台，空字符串表示任意平台
 	Platform string `json:"platform,omitempty"`
-	// 生效分组 ID，NULL 表示全局生效
+	// 生效分组 ID，NULL 表示全局生效；已被 group_ids 取代，仅为回滚窗口保留，下个版本删除
 	GroupID *int64 `json:"group_id,omitempty"`
+	// 生效分组 ID 列表，空数组表示全局生效
+	GroupIds []int64 `json:"group_ids,omitempty"`
 	// 策略内多条件的组合方式：all | any
 	MatchMode string `json:"match_mode,omitempty"`
 	// 匹配条件列表：[{type,op,value}]
@@ -55,7 +57,7 @@ func (*RoutingStrategy) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
-		case routingstrategy.FieldConditions, routingstrategy.FieldAccountIds, routingstrategy.FieldAccountPriorities:
+		case routingstrategy.FieldGroupIds, routingstrategy.FieldConditions, routingstrategy.FieldAccountIds, routingstrategy.FieldAccountPriorities:
 			values[i] = new([]byte)
 		case routingstrategy.FieldEnabled:
 			values[i] = new(sql.NullBool)
@@ -141,6 +143,14 @@ func (_m *RoutingStrategy) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				_m.GroupID = new(int64)
 				*_m.GroupID = value.Int64
+			}
+		case routingstrategy.FieldGroupIds:
+			if value, ok := values[i].(*[]byte); !ok {
+				return fmt.Errorf("unexpected type %T for field group_ids", values[i])
+			} else if value != nil && len(*value) > 0 {
+				if err := json.Unmarshal(*value, &_m.GroupIds); err != nil {
+					return fmt.Errorf("unmarshal field group_ids: %w", err)
+				}
 			}
 		case routingstrategy.FieldMatchMode:
 			if value, ok := values[i].(*sql.NullString); !ok {
@@ -244,6 +254,9 @@ func (_m *RoutingStrategy) String() string {
 		builder.WriteString("group_id=")
 		builder.WriteString(fmt.Sprintf("%v", *v))
 	}
+	builder.WriteString(", ")
+	builder.WriteString("group_ids=")
+	builder.WriteString(fmt.Sprintf("%v", _m.GroupIds))
 	builder.WriteString(", ")
 	builder.WriteString("match_mode=")
 	builder.WriteString(_m.MatchMode)

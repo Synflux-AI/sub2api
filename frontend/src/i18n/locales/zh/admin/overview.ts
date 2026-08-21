@@ -806,6 +806,8 @@ export default {
       anyPlatform: '任意平台',
       group: '分组',
       globalScope: '全局（所有分组）',
+      groupHint: '留空表示对所有分组生效',
+      groupsMore: '+{count}',
       matchMode: '条件组合',
       matchAll: '满足全部条件',
       matchAny: '满足任一条件',

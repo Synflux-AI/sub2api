@@ -809,6 +809,8 @@ export default {
       anyPlatform: 'Any platform',
       group: 'Group',
       globalScope: 'Global (all groups)',
+      groupHint: 'Leave empty to apply to all groups',
+      groupsMore: '+{count}',
       matchMode: 'Match mode',
       matchAll: 'Match ALL conditions',
       matchAny: 'Match ANY condition',
