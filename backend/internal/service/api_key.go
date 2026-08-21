@@ -185,13 +185,20 @@ func GroupBindingsFromGroups(groups []*Group) []GroupBinding {
 	return out
 }
 
+// lessGroupBinding 是 (Platform, GroupID) 升序这条**唯一**的绑定集合排序规则。
+// SortGroupBindings 与 ResolveDefaultGroupID（默认组 = 该序下的第一个）共用它，
+// 保证「排序约定」与「默认组选取规则」永远同源，不会各自漂移。
+func lessGroupBinding(a, b GroupBinding) bool {
+	if a.Platform != b.Platform {
+		return a.Platform < b.Platform
+	}
+	return a.GroupID < b.GroupID
+}
+
 // SortGroupBindings 就地按 (Platform, GroupID) 升序排序。
 func SortGroupBindings(bindings []GroupBinding) {
 	sort.SliceStable(bindings, func(i, j int) bool {
-		if bindings[i].Platform != bindings[j].Platform {
-			return bindings[i].Platform < bindings[j].Platform
-		}
-		return bindings[i].GroupID < bindings[j].GroupID
+		return lessGroupBinding(bindings[i], bindings[j])
 	})
 }
 

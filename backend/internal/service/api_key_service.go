@@ -36,6 +36,13 @@ var (
 	// 正常情况下不该出现：整体替换语义已经排除了「残留旧行」这一类冲突，
 	// 剩下的唯一来源是调用方在同一次替换里传入了两个同 platform 的分组（服务层校验漏网）。
 	ErrAPIKeyGroupBindingConflict = infraerrors.Conflict("API_KEY_GROUP_BINDING_CONFLICT", "api key 在同一平台上只能绑定一个分组")
+
+	// 多分组绑定的业务校验错误（issue #171）。实际返回的错误由
+	// api_key_group_binding.go 里的构造函数生成，Message 会点名具体的平台与分组；
+	// Reason 与下面的哨兵一致，因此调用方与测试仍可用 errors.Is 判定。
+	ErrAPIKeyGroupPlatformConflict   = infraerrors.BadRequest(apiKeyGroupPlatformConflictReason, "同一平台最多只能绑定一个分组")
+	ErrAPIKeyCompositeGroupExclusive = infraerrors.BadRequest(apiKeyCompositeGroupExclusiveReason, "composite 分组不能与其它分组混绑")
+	ErrAPIKeyDefaultGroupNotBound    = infraerrors.BadRequest(apiKeyDefaultGroupNotBoundReason, "默认分组必须在绑定的分组集合内")
 	// ErrAPIKeyExpired        = infraerrors.Forbidden("API_KEY_EXPIRED", "api key has expired")
 	ErrAPIKeyExpired = infraerrors.Forbidden("API_KEY_EXPIRED", "api key 已过期")
 	// ErrAPIKeyQuotaExhausted = infraerrors.TooManyRequests("API_KEY_QUOTA_EXHAUSTED", "api key quota exhausted")
@@ -45,6 +52,15 @@ var (
 	ErrAPIKeyRateLimit5hExceeded = infraerrors.TooManyRequests("API_KEY_RATE_5H_EXCEEDED", "api key 5小时限额已用完")
 	ErrAPIKeyRateLimit1dExceeded = infraerrors.TooManyRequests("API_KEY_RATE_1D_EXCEEDED", "api key 日限额已用完")
 	ErrAPIKeyRateLimit7dExceeded = infraerrors.TooManyRequests("API_KEY_RATE_7D_EXCEEDED", "api key 7天限额已用完")
+)
+
+// 多分组绑定校验错误的 Reason 常量（issue #171）。
+// 抽成常量是因为同一个 Reason 既用于哨兵变量、也用于带具体分组名的错误构造函数，
+// 两处必须逐字一致，errors.Is 才成立（ApplicationError.Is 比对 Code + Reason）。
+const (
+	apiKeyGroupPlatformConflictReason   = "API_KEY_GROUP_PLATFORM_CONFLICT"
+	apiKeyCompositeGroupExclusiveReason = "API_KEY_COMPOSITE_GROUP_EXCLUSIVE"
+	apiKeyDefaultGroupNotBoundReason    = "API_KEY_DEFAULT_GROUP_NOT_BOUND"
 )
 
 const (
@@ -243,8 +259,15 @@ type APIKeyAuthCacheInvalidator interface {
 
 // CreateAPIKeyRequest 创建API Key请求
 type CreateAPIKeyRequest struct {
-	Name        string   `json:"name"`
-	GroupID     *int64   `json:"group_id"`
+	Name string `json:"name"`
+	// GroupID 是**默认组**（旧的单值入参，保留兼容）。
+	//   - 只给 GroupID 时等价于 GroupIDs = [GroupID]；
+	//   - 与 GroupIDs 同时给出时表示「显式指定默认组」，必须落在 GroupIDs 内，否则拒绝。
+	GroupID *int64 `json:"group_id"`
+	// GroupIDs 是本次要绑定的分组集合（issue #171）。
+	// 空（含 nil）时回退到 GroupID 单值兼容路径；两者都为空 = 未分组 Key。
+	// 每个平台最多一个分组，composite 组不能与普通组混绑（见 ValidateGroupBindingSet）。
+	GroupIDs    []int64  `json:"group_ids"`
 	CustomKey   *string  `json:"custom_key"`   // 可选的自定义key
 	IPWhitelist []string `json:"ip_whitelist"` // IP 白名单
 	IPBlacklist []string `json:"ip_blacklist"` // IP 黑名单
@@ -261,8 +284,14 @@ type CreateAPIKeyRequest struct {
 
 // UpdateAPIKeyRequest 更新API Key请求
 type UpdateAPIKeyRequest struct {
-	Name        *string   `json:"name"`
-	GroupID     *int64    `json:"group_id"`
+	Name *string `json:"name"`
+	// GroupID 是**默认组**（旧的单值入参，保留兼容）。
+	// GroupIDs 为 nil 时它等价于 GroupIDs = [GroupID]（整体替换成单组，与改造前行为一致）；
+	// GroupIDs 非 nil 时它表示「显式指定默认组」，必须落在 GroupIDs 内，否则拒绝。
+	GroupID *int64 `json:"group_id"`
+	// GroupIDs 是本次要**整体替换**的绑定集合（issue #171）。
+	// nil = 不修改任何绑定；非 nil 的空切片 = 清空绑定（回到未分组 Key）。
+	GroupIDs    *[]int64  `json:"group_ids"`
 	Status      *string   `json:"status"`
 	IPWhitelist *[]string `json:"ip_whitelist"` // IP 白名单（nil 不修改，空数组清空）
 	IPBlacklist *[]string `json:"ip_blacklist"` // IP 黑名单（nil 不修改，空数组清空）
@@ -516,17 +545,13 @@ func (s *APIKeyService) Create(ctx context.Context, userID int64, req CreateAPIK
 		}
 	}
 
-	// 验证分组权限（如果指定了分组）
-	if req.GroupID != nil {
-		group, err := s.groupRepo.GetByID(ctx, *req.GroupID)
-		if err != nil {
-			return nil, fmt.Errorf("get group: %w", err)
-		}
-
-		// 检查用户是否可以绑定该分组
-		if !s.canUserBindGroup(ctx, user, group) {
-			return nil, ErrGroupNotAllowed
-		}
+	// 解析并校验分组绑定集合（issue #171）。
+	// 位置刻意保持在自定义 Key 校验**之前**——与改造前的单分组分支同一位置，
+	// 这样「分组不存在 / 无权限」与「自定义 Key 冲突」两类错误的优先级不变（C3）。
+	// 空集合合法，落到「未分组 Key」（C5）。
+	bindingPlan, err := s.resolveAPIKeyGroupBindingPlan(ctx, user, req.GroupIDs, req.GroupID)
+	if err != nil {
+		return nil, err
 	}
 
 	var key string
@@ -564,12 +589,17 @@ func (s *APIKeyService) Create(ctx context.Context, userID int64, req CreateAPIK
 		}
 	}
 
-	// 创建API Key记录
+	// 创建API Key记录。
+	// GroupID（默认组指针）与 BoundGroups（完整绑定集合）都来自同一份 bindingPlan，
+	// 因此「默认组必然同时出现在关联表里」这条不变量在写入前就已成立（spec §1）。
+	// 仓库层的 Create 会在**同一事务**内落主表 + api_key_groups（C11）。
 	apiKey := &APIKey{
 		UserID:      userID,
 		Key:         key,
 		Name:        html.EscapeString(req.Name),
-		GroupID:     req.GroupID,
+		GroupID:     bindingPlan.DefaultGroupID,
+		Group:       bindingPlan.DefaultGroup,
+		BoundGroups: bindingPlan.Groups,
 		Status:      StatusActive,
 		IPWhitelist: req.IPWhitelist,
 		IPBlacklist: req.IPBlacklist,
@@ -590,6 +620,14 @@ func (s *APIKeyService) Create(ctx context.Context, userID int64, req CreateAPIK
 		return nil, fmt.Errorf("create api key: %w", err)
 	}
 
+	// 认证缓存按 **key 字符串**分桶，一把 Key 一条 entry。本次写入只改这一把 Key 的快照，
+	// 所以按 key 失效在语义上已经覆盖了「它的全部绑定组」——受影响的快照只有这一条。
+	//
+	// C12 / spec §2 的「按所有绑定分组失效」约束的是**反查方向**：手里只有 group、
+	// 要找出所有受影响的 Key 时必须走 UNION 谓词（T2 已把 ListKeysByGroupID 改成 UNION），
+	// 适用场景是组级操作（删组 / 改 platform / admin 批量替换，见 T7），不是单 Key 的自助 CRUD。
+	// 这里若照字面对每个绑定组调 InvalidateAuthCacheByGroupID，会把该组下成千上万把
+	// 其它 Key 的缓存在请求路径内同步全清（写风暴 + 回源雪崩），而它们的快照根本没变。
 	s.InvalidateAuthCacheByKey(ctx, apiKey.Key)
 	s.compileAPIKeyIPRules(apiKey)
 
@@ -831,24 +869,38 @@ func (s *APIKeyService) Update(ctx context.Context, id int64, userID int64, req 
 		fields.Name = true
 	}
 
-	if req.GroupID != nil {
+	// 分组绑定（issue #171）。只有本次请求真的要动绑定时才进这个分支，
+	// 否则连 userRepo.GetByID 都不发（保持「只改名」这类请求的查询次数不变）。
+	if req.GroupIDs != nil || req.GroupID != nil {
 		// 验证分组权限
 		user, err := s.userRepo.GetByID(ctx, userID)
 		if err != nil {
 			return nil, fmt.Errorf("get user: %w", err)
 		}
 
-		group, err := s.groupRepo.GetByID(ctx, *req.GroupID)
+		var requestedGroupIDs []int64
+		if req.GroupIDs != nil {
+			requestedGroupIDs = *req.GroupIDs
+		}
+		bindingPlan, err := s.resolveAPIKeyGroupBindingPlan(ctx, user, requestedGroupIDs, req.GroupID)
 		if err != nil {
-			return nil, fmt.Errorf("get group: %w", err)
+			return nil, err
 		}
 
-		if !s.canUserBindGroup(ctx, user, group) {
-			return nil, ErrGroupNotAllowed
-		}
+		apiKey.GroupID = bindingPlan.DefaultGroupID
+		// GetByID 回填的 Group / BoundGroups 是**改动前**的绑定状态，这里必须整体覆盖，
+		// 否则返回给客户端的对象会出现「group_id 已经换了、group 还是旧分组」的自相矛盾。
+		apiKey.Group = bindingPlan.DefaultGroup
+		apiKey.BoundGroups = bindingPlan.Groups
 
-		apiKey.GroupID = req.GroupID
+		// 两个掩码必须**同时**置位：GroupID 只写 api_keys.group_id（默认组指针），
+		// BoundGroups 才会让仓库层用 ReplaceBindings 整体重写 api_key_groups。
+		// 只置 GroupID 的话，「默认组 A→B（同平台）」会在关联表里残留 A，
+		// 读模型 BoundGroups 就变成同平台双绑 {A,B} —— 这是 issue #171 T2 review 实测出的
+		// 不变量破裂，本分支的两行置位就是它的修复点（对应验收断言
+		// TestAPIKeyUpdate_LegacyGroupIDSwitchOnSamePlatformLeavesNoDoubleBinding）。
 		fields.GroupID = true
+		fields.BoundGroups = true
 	}
 
 	if req.Status != nil {
@@ -936,6 +988,9 @@ func (s *APIKeyService) Update(ctx context.Context, id int64, userID int64, req 
 		return nil, fmt.Errorf("update api key: %w", err)
 	}
 
+	// 与 Create 同理：认证缓存按 key 字符串分桶，本次只有这把 Key 的快照变了，
+	// 按 key 失效即已覆盖它的全部绑定组。C12 的「按所有绑定分组失效」约束的是
+	// 组级操作的反查方向（T7），不是单 Key 的自助 CRUD —— 详见 Create 里的同款注释。
 	s.InvalidateAuthCacheByKey(ctx, apiKey.Key)
 	s.compileAPIKeyIPRules(apiKey)
 
