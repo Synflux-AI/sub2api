@@ -129,6 +129,9 @@ func (APIKey) Edges() []ent.Edge {
 			Ref("api_keys").
 			Field("group_id").
 			Unique(),
+		// bound_groups 是多分组绑定关系；group（group_id）继续表示默认分组。
+		edge.To("bound_groups", Group.Type).
+			Through("api_key_groups", APIKeyGroup.Type),
 		edge.To("usage_logs", UsageLog.Type),
 	}
 }
