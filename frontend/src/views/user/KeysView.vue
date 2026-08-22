@@ -1714,11 +1714,30 @@ const boundIdsOf = (key: ApiKey): number[] => {
   return key.group_id != null ? [key.group_id] : []
 }
 
+/**
+ * 行内改组的在途集合（issue #171）。
+ *
+ * 行内下拉在勾选具体分组后**保持打开**，方便连续勾多个平台；而列表数据要等
+ * loadApiKeys() 回来才更新。若第二次点击仍从 key.group_ids 读起点，算出的集合里
+ * 就没有第一次的改动 —— 整体替换语义下，这等于把刚加上的分组又提交掉了。
+ * 所以在途期间以本 ref 为唯一事实来源，请求本身再串行化一次。
+ *
+ * seq 用来判定「我是不是最后一次提交」。**不要**改成比较 ids 的引用：
+ * ref 会把对象深度包成响应式代理，读回来的 ids 与写进去的原数组不是同一个引用，
+ * 恒等判定永远为假，在途状态就再也清不掉了。
+ */
+const rowGroupPending = ref<{ keyId: number; seq: number; ids: number[] } | null>(null)
+let rowGroupSeq = 0
+let rowGroupQueue: Promise<unknown> = Promise.resolve()
+
+const pendingIdsOf = (key: ApiKey): number[] =>
+  rowGroupPending.value?.keyId === key.id ? rowGroupPending.value.ids : boundIdsOf(key)
+
 // 行内下拉的勾选态。option.value 为 null 是「无分组」那一项。
 const isRowGroupSelected = (optionValue: number | null) => {
   const key = selectedKeyForGroup.value
   if (!key) return false
-  const ids = boundIdsOf(key)
+  const ids = pendingIdsOf(key)
   return optionValue === null ? ids.length === 0 : ids.includes(optionValue)
 }
 
@@ -1732,7 +1751,8 @@ const isRowGroupSelected = (optionValue: number | null) => {
  * 省略字段会让后端回退到单值兼容路径。
  */
 const toggleRowGroup = async (key: ApiKey, optionValue: number | null) => {
-  const current = boundIdsOf(key)
+  // 起点取在途集合而不是 key.group_ids，理由见 rowGroupPending。
+  const current = pendingIdsOf(key)
   let next: number[]
   if (optionValue === null) {
     if (current.length === 0) {
@@ -1754,15 +1774,30 @@ const toggleRowGroup = async (key: ApiKey, optionValue: number | null) => {
     dropdownPosition.value = null
   }
 
-  try {
-    await keysAPI.update(key.id, { group_ids: next })
-    appStore.showSuccess(t('keys.groupChangedSuccess'))
-    loadApiKeys()
-  } catch (error: any) {
-    // 同平台冲突之类的校验错误由后端给出可读消息，优先展示它 ——
-    // 前端不重复实现那套校验（会漂移）。
-    appStore.showError(error?.message || t('keys.failedToChangeGroup'))
-  }
+  // 立刻落到在途集合，勾选态与下一次点击的起点都以它为准。
+  const seq = ++rowGroupSeq
+  rowGroupPending.value = { keyId: key.id, seq, ids: next }
+
+  // 串行化：整体替换语义下，两个并发 PUT 的到达顺序会决定最终集合，
+  // 先发的那个后到就会把后一次改动覆盖掉。
+  rowGroupQueue = rowGroupQueue.then(async () => {
+    try {
+      await keysAPI.update(key.id, { group_ids: next })
+      appStore.showSuccess(t('keys.groupChangedSuccess'))
+      await loadApiKeys()
+    } catch (error: any) {
+      // 同平台冲突之类的校验错误由后端给出可读消息，优先展示它 ——
+      // 前端不重复实现那套校验（会漂移）。
+      appStore.showError(error?.message || t('keys.failedToChangeGroup'))
+    } finally {
+      // 只有仍是最后一次提交时才清空，否则会把更晚那次的在途状态抹掉。
+      // 失败时也要清 —— 让勾选态退回服务端事实，而不是停在一个没落库的集合上。
+      if (rowGroupPending.value?.seq === seq) {
+        rowGroupPending.value = null
+      }
+    }
+  })
+  await rowGroupQueue
 }
 
 const closeGroupSelector = (event: MouseEvent) => {

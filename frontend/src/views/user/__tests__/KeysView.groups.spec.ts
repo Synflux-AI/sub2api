@@ -214,4 +214,40 @@ describe('KeysView 行内分组切换（issue #171）', () => {
 
     expect(showError).toHaveBeenCalledWith('同一平台最多只能绑定一个分组')
   })
+
+  // 下拉在勾选具体分组后保持打开，用户会连着点第二个平台；而列表数据要等
+  // loadApiKeys() 回来才更新。第二次点击若仍从 key.group_ids 读起点，整体替换语义下
+  // 就会把第一次刚加上的分组又提交掉 —— 而界面上完全看不出发生了什么。
+  it('连续勾选两个平台时，第二次以在途集合为起点（不得丢掉第一次的改动）', async () => {
+    const single = { ...multiGroupKey(), group_ids: [10], groups: [anthropic] }
+    const wrapper = await mountView([single])
+    const vm = wrapper.vm as unknown as {
+      toggleRowGroup: (k: unknown, v: number | null) => Promise<void>
+    }
+
+    // 刻意不 await 第一次：模拟用户在请求回来之前就点了第二个。
+    const first = vm.toggleRowGroup(single, 20)
+    const second = vm.toggleRowGroup(single, 30)
+    await Promise.all([first, second])
+
+    expect(updateKey).toHaveBeenCalledTimes(2)
+    expect(updateKey.mock.calls[0][1]).toEqual({ group_ids: [10, 20] })
+    expect(updateKey.mock.calls[1][1]).toEqual({ group_ids: [10, 20, 30] })
+  })
+
+  // 在途集合只在提交序列内有效，落库（或失败）之后必须退回服务端事实，
+  // 否则勾选态会永远停在一个可能没落库的集合上。
+  it('提交结束后清空在途集合，勾选态回到服务端事实', async () => {
+    const single = { ...multiGroupKey(), group_ids: [10], groups: [anthropic] }
+    const wrapper = await mountView([single])
+    const vm = wrapper.vm as unknown as {
+      toggleRowGroup: (k: unknown, v: number | null) => Promise<void>
+      rowGroupPending: { keyId: number; ids: number[] } | null
+    }
+
+    await vm.toggleRowGroup(single, 20)
+    await flushPromises()
+
+    expect(vm.rowGroupPending).toBeNull()
+  })
 })
