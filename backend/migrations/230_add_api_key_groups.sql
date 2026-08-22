@@ -14,15 +14,46 @@
 --    （参照 group_repo.DeleteCascade 里对 user_allowed_groups / account_groups 的处理）。
 --
 -- 回滚窗口注意事项：
--- migrations_runner 会跳过 schema_migrations 里已记录的迁移，本文件永不重跑。回滚到 230 之前的
--- 镜像期间，旧代码只写 api_keys.group_id，不会写 api_key_groups，于是这段时间新建或改绑的 Key
--- 在关联表里没有对应行；回滚回来后读路径按设计以 api_key_groups 为准，这些 Key 会表现为
--- 「未绑定任何分组」。因此回滚期间产生的数据需要重新执行下面的回填语句补齐（幂等，可安全重跑）：
+-- migrations_runner 会跳过 schema_migrations 里已记录的迁移，本文件永不重跑；本表也只增不删，
+-- 所以「回滚应用镜像」这一步本身是安全的（旧代码完全忽略 api_key_groups）。
+-- 需要人工善后的是**回滚窗口内旧代码写过分组的那些 Key**，共两种。
+-- 两条语句**必须按下面的顺序跑**：先清残留、再回填。反过来的话，残留行会让回填的
+-- ON CONFLICT DO NOTHING 静默跳过那一行，看起来成功、实际什么都没修。
+--
+-- 步骤 1（**必须修，不会自愈**）：清残留关联行。
+-- 旧代码把默认组从 A 改成同平台的 C 时只写 api_keys.group_id，关联行 A 留在表里。
+-- 回滚回来后读模型做「默认组 UNION 关联表」得到 {A, C} —— 同一平台两个分组，破坏 C1。
+-- 注意关联表自身没有重复（UNIQUE (api_key_id, platform) 保证只有 A 一行），
+-- 双绑是 UNION 出来的，所以查重复行是查不出问题的。
+-- 选组按 (platform, id) 命中 id 较小的那个，于是请求可能按 A 计费而不是 C，无报错无日志。
+--   DELETE FROM api_key_groups akg
+--    USING api_keys k, groups g
+--    WHERE akg.api_key_id = k.id
+--      AND g.id = k.group_id
+--      AND akg.platform = g.platform
+--      AND akg.group_id <> k.group_id;
+--
+-- 步骤 2：补缺失的关联行。旧代码新建的 Key 只写了 api_keys.group_id。
+-- 这一种其实能自愈（读模型 boundGroupsFromEntity 会把默认组并进绑定集合，
+-- 网关与列表筛选都不受影响），补齐是为了让关联表与 group_id 重新对齐，也补上
+-- 步骤 1 刚删掉的那些行。幂等，可安全重跑：
 --   INSERT INTO api_key_groups (api_key_id, group_id, platform)
 --   SELECT k.id, k.group_id, g.platform
 --     FROM api_keys k JOIN groups g ON g.id = k.group_id
 --    WHERE k.group_id IS NOT NULL AND k.deleted_at IS NULL
 --   ON CONFLICT DO NOTHING;
+--
+-- 自检（两步跑完后应返回 0 行）：
+--   SELECT k.id
+--     FROM api_keys k
+--     JOIN groups g          ON g.id = k.group_id
+--     JOIN api_key_groups akg ON akg.api_key_id = k.id
+--    WHERE k.deleted_at IS NULL
+--      AND akg.platform = g.platform
+--      AND akg.group_id <> k.group_id;
+--
+-- 另注：多分组功能一旦被使用，回滚就是有损的 —— 旧代码只认 api_keys.group_id，
+-- 非默认平台的绑定会静默按默认组计费。可无损回滚的窗口截止到第一把多绑 Key 建立之前。
 
 CREATE TABLE IF NOT EXISTS api_key_groups (
     api_key_id  BIGINT NOT NULL REFERENCES api_keys(id) ON DELETE CASCADE,
