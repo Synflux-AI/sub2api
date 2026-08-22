@@ -84,9 +84,9 @@ func TestGetUserUsageTrendSort(t *testing.T) {
 		orderBy string
 	}{
 		{"actual_cost", "SUM(actual_cost)"},
-		{"requests", "COUNT(*)"},
-		{"total_tokens", "SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens)"},
-		{"invalid", "SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens)"},
+		{"requests", "SUM(requests)"},
+		{"total_tokens", "SUM(tokens)"},
+		{"invalid", "SUM(tokens)"},
 	} {
 		t.Run(tc.sortBy, func(t *testing.T) {
 			db, mock := newSQLMock(t)
@@ -126,5 +126,33 @@ func TestGetUserUsageTrendIncludesOthers(t *testing.T) {
 		Date: "2026-07-01", UserID: 0, Key: "__others__", Label: "其他",
 		Requests: 3, Tokens: 300, Cost: 1.5, ActualCost: 1.2,
 	}}, rows)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestGetUserUsageTrendPreaggregatesBeforeRanking(t *testing.T) {
+	var query string
+	matcher := sqlmock.QueryMatcherFunc(func(_, actual string) error {
+		query = actual
+		return nil
+	})
+	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(matcher))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	repo := &usageLogRepository{sql: db}
+	start := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	end := start.Add(30 * 24 * time.Hour)
+
+	mock.ExpectQuery("capture user trend query").
+		WithArgs(start, end, 8).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"date", "user_id", "key", "label", "email", "username", "notes", "requests", "tokens", "cost", "actual_cost",
+		}))
+
+	rows, err := repo.GetUserUsageTrend(context.Background(), start, end, "day", 8, "requests")
+	require.NoError(t, err)
+	require.Empty(t, rows)
+	require.Contains(t, query, "WITH per_user_bucket AS MATERIALIZED")
+	require.Contains(t, query, "GROUP BY 1, 2")
+	require.NotContains(t, query, "SELECT * FROM usage_logs")
 	require.NoError(t, mock.ExpectationsWereMet())
 }

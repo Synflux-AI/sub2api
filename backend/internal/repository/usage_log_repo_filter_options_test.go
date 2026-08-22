@@ -98,7 +98,7 @@ func TestUserTrendAndModelTrendUseSharedRequestedModelFilters(t *testing.T) {
 			UserIDs: []int64{7, 8}, AccountID: 3, GroupID: 4,
 			Models: []string{"public-model"}, ModelFilterSource: usagestats.ModelSourceRequested,
 		}
-		mock.ExpectQuery(`(?s)WITH filtered AS .*user_id IN \(\$3, \$4\).*account_id = \$5.*group_id = \$6.*COALESCE\(NULLIF\(TRIM\(requested_model\), ''\), model\) IN \(\$7\).*FROM filtered u`).
+		mock.ExpectQuery(`(?s)WITH per_user_bucket AS MATERIALIZED .*user_id IN \(\$3, \$4\).*account_id = \$5.*group_id = \$6.*COALESCE\(NULLIF\(TRIM\(requested_model\), ''\), model\) IN \(\$7\).*FROM per_user_bucket u`).
 			WithArgs(start, end, int64(7), int64(8), int64(3), int64(4), "public-model", 8).
 			WillReturnRows(sqlmock.NewRows([]string{
 				"date", "user_id", "key", "label", "email", "username", "notes", "requests", "tokens", "cost", "actual_cost",
