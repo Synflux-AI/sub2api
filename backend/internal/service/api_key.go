@@ -1,6 +1,7 @@
 package service
 
 import (
+	"sort"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
@@ -45,7 +46,16 @@ type APIKey struct {
 	UpdatedAt           time.Time
 	User                *User
 	Group               *Group
-	CurrentConcurrency  int
+	// BoundGroups 是该 Key 的完整绑定集合（**含默认组** Group），
+	// 每个平台最多一个分组（由 api_key_groups 的 (api_key_id, platform) 唯一索引保证）。
+	//
+	// 读路径语义：只包含未软删的分组；排序稳定 —— 先按 Platform 字典序，再按 ID 升序。
+	// 写路径语义：作为 Create / Update(fields.BoundGroups=true) 的绑定入参，
+	// 仓库层按 GroupBindingsFromGroups 派生出 []GroupBinding 后整体替换关联表。
+	//
+	// GroupID / Group 的「默认组」语义不变：默认组同时是绑定集合的成员。
+	BoundGroups        []*Group
+	CurrentConcurrency int
 
 	// Quota fields
 	Quota     float64    // Quota limit in USD (0 = unlimited)
@@ -137,9 +147,117 @@ func (k *APIKey) EffectiveUsage7d() float64 {
 	return k.Usage7d
 }
 
+// GroupBinding 是「API Key ↔ 分组」的一条绑定关系，对应 api_key_groups 表的一行。
+//
+// Platform 是绑定时从 groups.platform 取的**快照**，与关联表的 platform 列一一对应。
+// DB 上 (api_key_id, platform) 有唯一索引，因此同一个 Key 在同一平台上只能有一条绑定。
+// 分组自身 platform 事后被改动时快照不会自动跟随（联动属于服务层职责，见 issue #171 T7）。
+type GroupBinding struct {
+	GroupID  int64
+	Platform string
+}
+
+// GroupBindingsFromGroups 把领域模型里的 []*Group 派生成仓库写入用的 []GroupBinding。
+//
+// 规则：跳过 nil；按 GroupID 去重（保留首次出现的 platform 快照）；
+// 输出按 (Platform, GroupID) 稳定排序，与 APIKey.BoundGroups 的排序约定一致，
+// 这样「同一份绑定集合」在任何调用方手里都会产生完全相同的写入顺序，便于对账与测试。
+//
+// 注意：本函数**不做**「同平台重复」校验 —— 那是服务层的业务校验（T3），
+// 若真有两个同平台分组混进来，仓库写入会撞 idx_api_key_groups_key_platform 唯一索引。
+func GroupBindingsFromGroups(groups []*Group) []GroupBinding {
+	if len(groups) == 0 {
+		return nil
+	}
+	out := make([]GroupBinding, 0, len(groups))
+	seen := make(map[int64]struct{}, len(groups))
+	for _, g := range groups {
+		if g == nil {
+			continue
+		}
+		if _, dup := seen[g.ID]; dup {
+			continue
+		}
+		seen[g.ID] = struct{}{}
+		out = append(out, GroupBinding{GroupID: g.ID, Platform: g.Platform})
+	}
+	SortGroupBindings(out)
+	return out
+}
+
+// lessGroupBinding 是 (Platform, GroupID) 升序这条**唯一**的绑定集合排序规则。
+// SortGroupBindings 与 ResolveDefaultGroupID（默认组 = 该序下的第一个）共用它，
+// 保证「排序约定」与「默认组选取规则」永远同源，不会各自漂移。
+func lessGroupBinding(a, b GroupBinding) bool {
+	if a.Platform != b.Platform {
+		return a.Platform < b.Platform
+	}
+	return a.GroupID < b.GroupID
+}
+
+// SortGroupBindings 就地按 (Platform, GroupID) 升序排序。
+func SortGroupBindings(bindings []GroupBinding) {
+	sort.SliceStable(bindings, func(i, j int) bool {
+		return lessGroupBinding(bindings[i], bindings[j])
+	})
+}
+
+// SortBoundGroups 就地按 (Platform, ID) 升序排序，是 APIKey.BoundGroups 的稳定排序约定。
+//
+// 排在最后的 nil 元素是防御性处理；比较式本身复用 lessGroupBinding，
+// 不再内联第二份 (Platform, ID) 比较逻辑。
+func SortBoundGroups(groups []*Group) {
+	sort.SliceStable(groups, func(i, j int) bool {
+		a, b := groups[i], groups[j]
+		switch {
+		case a == nil && b == nil:
+			return false
+		case a == nil:
+			return false
+		case b == nil:
+			return true
+		}
+		return lessGroupBinding(
+			GroupBinding{GroupID: a.ID, Platform: a.Platform},
+			GroupBinding{GroupID: b.ID, Platform: b.Platform},
+		)
+	})
+}
+
 // APIKeyListFilters holds optional filtering parameters for listing API keys.
 type APIKeyListFilters struct {
-	Search  string
-	Status  string
-	GroupID *int64 // nil=不筛选, 0=无分组, >0=指定分组
+	Search string
+	Status string
+	// GroupID: nil=不筛选, 0=未绑定任何分组, >0=绑定集合**包含**该分组。
+	//
+	// >0 的语义从 issue #171 起由「api_keys.group_id 等于该值」放宽为
+	// 「默认组等于该值 OR api_key_groups 里存在该分组的绑定行」，
+	// 这样按分组筛选能命中非默认绑定的 Key。
+	GroupID *int64
+}
+
+// CloneAPIKeyWithGroup 返回一个把「生效分组」换成 group 的 APIKey **浅拷贝**。
+//
+// 两个用途共用它：
+//   - fallback_group_id 的请求内换组（handler 层）；
+//   - issue #171 的认证期选组：选中非默认分组后，用它替换 ContextKeyAPIKey 里的对象。
+//
+// 为什么必须是拷贝而不是原地改 apiKey.Group/GroupID：认证缓存 L1 存的是
+// *APIKeyAuthCacheEntry 对象本身（不序列化），而 snapshotToAPIKey 每次都新建 APIKey，
+// 但 User / Group 等指针字段在同一请求内被多处共享。原地改指针会污染共享对象，
+// 让同一把 Key 的**其它并发请求**看到被改过的生效分组 —— 静默错价，且极难复现。
+//
+// 浅拷贝的含义（调用方必须知道）：User、BoundGroups、IPWhitelist 等指针/切片字段
+// 与原对象**共享底层数据**。只读没问题；要改这些字段必须自己深拷贝。
+// 特别注意 User.UserGroupRPMOverrides 是按分组索引的 map，换组后 checkRPM 会按
+// 新 group.ID 取值，无需（也不应）改动这个 map。
+func CloneAPIKeyWithGroup(apiKey *APIKey, group *Group) *APIKey {
+	if apiKey == nil || group == nil {
+		return apiKey
+	}
+	cloned := *apiKey
+	groupID := group.ID
+	cloned.GroupID = &groupID
+	cloned.Group = group
+	return &cloned
 }

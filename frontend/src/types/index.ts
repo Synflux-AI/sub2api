@@ -720,6 +720,16 @@ export interface ApiKey {
   updated_at: string
   current_concurrency: number
   group?: Group
+  /**
+   * 绑定的全部分组 ID（issue #171），按 (platform, id) 稳定排序，含默认组。
+   * 后端始终返回该字段（未分组时是空数组），编辑表单可直接把它塞回 group_ids。
+   */
+  group_ids: number[]
+  /**
+   * 与 group_ids 同序的分组对象，带 platform 与 rate_multiplier，
+   * 列表页据此渲染「每个平台走哪个分组、倍率多少」。未加载时缺省。
+   */
+  groups?: Group[]
   rate_limit_5h: number
   rate_limit_1d: number
   rate_limit_7d: number
@@ -736,7 +746,19 @@ export interface ApiKey {
 
 export interface CreateApiKeyRequest {
   name: string
+  /** 默认分组。与 group_ids 的完整语义见 group_ids 的注释。 */
   group_id?: number | null
+  /**
+   * 要绑定的分组集合（issue #171），每平台至多一个。
+   *
+   * 三态，**不要**简化成 `number[]`：
+   * - `undefined`（不带该字段）= 回退到 group_id 单值兼容路径；
+   * - `[]`（显式空数组）      = 明确「不绑任何分组」，优先于同时带上的 group_id；
+   * - 非空                    = 绑定该集合，group_id 若给出必须在其中。
+   *
+   * 分不清「没传」与「传了空数组」的话，用户点「清空分组」会被静默改回旧默认组。
+   */
+  group_ids?: number[]
   custom_key?: string // Optional custom API Key
   ip_whitelist?: string[]
   ip_blacklist?: string[]
@@ -749,7 +771,15 @@ export interface CreateApiKeyRequest {
 
 export interface UpdateApiKeyRequest {
   name?: string
+  /** 语义同 CreateApiKeyRequest。 */
   group_id?: number | null
+  /**
+   * 语义同 CreateApiKeyRequest.group_ids。
+   *
+   * 额外一条只对更新有意义：只发旧 group_id 且这把 Key 已绑 >=2 个分组时，
+   * 后端理解为「只改默认组」，保留其它平台的绑定 —— 不会静默删掉它们。
+   */
+  group_ids?: number[]
   status?: 'active' | 'inactive'
   ip_whitelist?: string[]
   ip_blacklist?: string[]

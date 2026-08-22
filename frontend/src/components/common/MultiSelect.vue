@@ -11,7 +11,13 @@
       :title="triggerLabel"
       @click="toggleOpen"
     >
-      <span class="select-value min-w-0 flex-1 truncate">{{ triggerLabel }}</span>
+      <!--
+        selected 插槽可选：不传时回退到纯文本 triggerLabel（原有行为逐字不变）。
+        加它是为了让分组多选能复用 GroupBadge 之类的富渲染，而不必再造一个组件。
+      -->
+      <span class="select-value min-w-0 flex-1 truncate">
+        <slot name="selected" :options="selectedOptions" :label="triggerLabel">{{ triggerLabel }}</slot>
+      </span>
       <span v-if="modelValue.length > 1" class="shrink-0 text-xs text-gray-400 dark:text-dark-400">({{ modelValue.length }})</span>
       <span class="select-icon shrink-0 text-gray-400 transition-transform" :class="isOpen ? 'rotate-180' : ''">
         <Icon name="chevronDown" size="md" />
@@ -72,7 +78,10 @@
               :aria-disabled="!!option.disabled"
               @click="toggleOption(option)"
             >
-              <span class="select-option-label">{{ option.label }}</span>
+              <!-- option 插槽可选：不传时回退到纯文本 label（原有行为逐字不变）。 -->
+              <span class="select-option-label">
+                <slot name="option" :option="option" :selected="isSelected(option.value)">{{ option.label }}</slot>
+              </span>
               <Icon v-if="isSelected(option.value)" name="check" size="sm" class="text-primary-500" />
             </button>
 
@@ -155,6 +164,14 @@ const labelByValue = computed(() => {
 // 与列表列的展示保持一致；不能渲染成空串，否则 trigger 会看起来像「全局」。
 const selectedLabels = computed(() =>
   props.modelValue.map((value) => labelByValue.value.get(value) ?? `#${value}`),
+)
+
+// selectedOptions 按 modelValue 的顺序给出已选中的完整 option 对象，
+// 供 selected 插槽做富渲染（纯文本回退用不到它）。
+const selectedOptions = computed(() =>
+  props.modelValue
+    .map((value) => props.options.find((option) => option.value === value))
+    .filter((option): option is MultiSelectOption => option !== undefined),
 )
 
 // trigger 的可见文案与 title 完全一致，共用同一个 computed。

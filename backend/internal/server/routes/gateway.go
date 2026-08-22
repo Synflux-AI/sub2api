@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"errors"
 	"io"
-	"mime"
-	"mime/multipart"
 	"net/http"
 	"strconv"
 	"strings"
@@ -13,6 +11,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/handler"
 	pkghttputil "github.com/Wei-Shaw/sub2api/internal/pkg/httputil"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/reqmodel"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
@@ -568,61 +567,16 @@ func compositeTargetPlatformMiddleware(resolver *service.CompositeRouteResolver)
 	}
 }
 
+// 模型名解析已下沉到 internal/pkg/reqmodel —— issue #171 的认证期选组在
+// internal/server/middleware 里要用同一套解析，而 routes 依赖 middleware，
+// 反向 import 会成环。这两个函数保留为薄别名，行为与下沉前逐字相同。
+
 func compositeRequestModelFromBody(contentType string, body []byte) string {
-	if model, _ := compositeJSONRequestModel(body); model != "" {
-		return model
-	}
-	return compositeMultipartModelFromBody(contentType, body)
+	return reqmodel.FromBody(contentType, body)
 }
 
 func compositeJSONRequestModel(body []byte) (string, string) {
-	for _, path := range []string{"model", "session.model"} {
-		model := gjson.GetBytes(body, path)
-		if model.Type != gjson.String {
-			continue
-		}
-		if value := strings.TrimSpace(model.String()); value != "" {
-			return value, path
-		}
-	}
-	return "", ""
-}
-
-func compositeMultipartModelFromBody(contentType string, body []byte) string {
-	mediaType, params, err := mime.ParseMediaType(strings.TrimSpace(contentType))
-	if err != nil || !strings.EqualFold(mediaType, "multipart/form-data") {
-		return ""
-	}
-	boundary := strings.TrimSpace(params["boundary"])
-	if boundary == "" {
-		return ""
-	}
-	reader := multipart.NewReader(bytes.NewReader(body), boundary)
-	for {
-		part, err := reader.NextPart()
-		if errors.Is(err, io.EOF) {
-			return ""
-		}
-		if err != nil {
-			return ""
-		}
-		fieldName := part.FormName()
-		if part.FileName() != "" || (fieldName != "model" && fieldName != "session") {
-			continue
-		}
-		data, err := io.ReadAll(part)
-		if err != nil {
-			return ""
-		}
-		switch fieldName {
-		case "model":
-			return strings.TrimSpace(string(data))
-		case "session":
-			if model, _ := compositeJSONRequestModel(data); model != "" {
-				return model
-			}
-		}
-	}
+	return reqmodel.FromJSON(body)
 }
 
 func compositeGeminiTargetPlatformMiddleware(resolver *service.CompositeRouteResolver) gin.HandlerFunc {

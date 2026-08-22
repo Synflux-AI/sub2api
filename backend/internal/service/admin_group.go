@@ -1146,6 +1146,9 @@ func (s *adminServiceImpl) AdminUpdateAPIKeyGroupID(ctx context.Context, keyID i
 		// 0 表示解绑分组（不修改 user_allowed_groups，避免影响用户其他 Key）
 		apiKey.GroupID = nil
 		apiKey.Group = nil
+		// 解绑必须同时清空关联表（issue #171）。只清 group_id 会留下残留绑定行，
+		// 而 DB 的 UNIQUE (api_key_id, platform) 不认软删，残留行会让后续绑定吃 23505。
+		apiKey.BoundGroups = nil
 	} else {
 		// 验证目标分组存在且状态为 active
 		group, err := s.groupRepo.GetByID(ctx, *groupID)
@@ -1172,6 +1175,24 @@ func (s *adminServiceImpl) AdminUpdateAPIKeyGroupID(ctx context.Context, keyID i
 		apiKey.GroupID = &gid
 		apiKey.Group = group
 
+		// 同步关联表（issue #171）。这个接口只接受**单个** group_id，语义与用户端
+		// 「只发了旧 group_id」那一行完全相同，因此走**同一套**矩阵，不写第二份规则：
+		//   - 现有绑定 <= 1：整体替换成 [group]，与改造前逐字等价；
+		//   - 现有绑定 >= 2：只改默认组，保留其它平台的绑定，且目标组必须已在集合内。
+		// 后者是为了不静默丢数据 —— 管理员改一把多分组 Key 的默认组，不该顺手删掉
+		// 它在别的平台上的绑定。真要变更集合请用带 group_ids 的接口。
+		if len(apiKey.BoundGroups) >= 2 {
+			plan, planErr := planAPIKeyDefaultGroupChange(apiKey.BoundGroups, gid)
+			if planErr != nil {
+				return nil, planErr
+			}
+			apiKey.BoundGroups = plan.Groups
+			apiKey.GroupID = plan.DefaultGroupID
+			apiKey.Group = plan.DefaultGroup
+		} else {
+			apiKey.BoundGroups = []*Group{group}
+		}
+
 		// 专属标准分组：使用事务保证「添加分组权限」与「更新 API Key」的原子性
 		if group.IsExclusive && !group.IsSubscriptionType() {
 			opCtx := ctx
@@ -1191,7 +1212,7 @@ func (s *adminServiceImpl) AdminUpdateAPIKeyGroupID(ctx context.Context, keyID i
 			if addErr := s.userRepo.AddGroupToAllowedGroups(opCtx, apiKey.UserID, gid); addErr != nil {
 				return nil, fmt.Errorf("add group to user allowed groups: %w", addErr)
 			}
-			if err := s.apiKeyRepo.Update(opCtx, apiKey, APIKeyUpdateFields{GroupID: true}); err != nil {
+			if err := s.apiKeyRepo.Update(opCtx, apiKey, APIKeyUpdateFields{GroupID: true, BoundGroups: true}); err != nil {
 				return nil, fmt.Errorf("update api key: %w", err)
 			}
 			if tx != nil {
@@ -1215,7 +1236,7 @@ func (s *adminServiceImpl) AdminUpdateAPIKeyGroupID(ctx context.Context, keyID i
 	}
 
 	// 非专属分组 / 解绑：无需事务，单步更新即可
-	if err := s.apiKeyRepo.Update(ctx, apiKey, APIKeyUpdateFields{GroupID: true}); err != nil {
+	if err := s.apiKeyRepo.Update(ctx, apiKey, APIKeyUpdateFields{GroupID: true, BoundGroups: true}); err != nil {
 		return nil, fmt.Errorf("update api key: %w", err)
 	}
 

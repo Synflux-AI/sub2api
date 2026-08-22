@@ -15,6 +15,20 @@ type APIKeyAuthSnapshot struct {
 	User        APIKeyAuthUserSnapshot   `json:"user"`
 	Group       *APIKeyAuthGroupSnapshot `json:"group,omitempty"`
 
+	// Groups 是这把 Key **全部**绑定分组的快照（issue #171），每平台至多一个。
+	//
+	// 与 Group 的关系：Group 是「默认组」，也一定作为一个元素出现在 Groups 里
+	// （由 GetByKeyForAuth 的读模型保证：迁移 230 把 api_keys.group_id 回填进了
+	// api_key_groups，且写路径只走 ReplaceBindings 整体替换）。保留 Group 字段是为了
+	// 让不关心多分组的下游代码零改动。
+	//
+	// 排序：与 APIKey.BoundGroups 一致，按 (Platform, ID) 升序。选组依赖这个稳定顺序。
+	//
+	// 空值语义：len(Groups) == 0 表示「未分组 Key」。**不要**把它当成「未加载」——
+	// 快照一旦落地就是完整的，缺字段的只可能是旧版本快照，而旧版本会被
+	// apiKeyAuthSnapshotVersion 直接判废回源（这正是本字段必须伴随版本号递增的原因）。
+	Groups []APIKeyAuthGroupSnapshot `json:"groups,omitempty"`
+
 	// Quota fields for API Key independent quota feature
 	Quota     float64 `json:"quota"`      // Quota limit in USD (0 = unlimited)
 	QuotaUsed float64 `json:"quota_used"` // Used quota amount
@@ -59,9 +73,23 @@ type APIKeyAuthUserSnapshot struct {
 	// RPMLimit 用户级每分钟请求数上限（0 = 不限制）；用于 billing_cache_service.checkRPM 兜底判断。
 	RPMLimit int `json:"rpm_limit"`
 
-	// UserGroupRPMOverride 该 API Key 对应的 (user, group) 专属 RPM 覆盖值。
+	// UserGroupRPMOverride 该 API Key **默认分组**对应的 (user, group) 专属 RPM 覆盖值。
 	// nil = 无 override（回退到 group/user 级）；0 = 不限流；>0 = 专属上限。
+	//
+	// 多分组下这个单值只对默认组有意义，按命中分组取值请用 UserGroupRPMOverrides。
+	// 保留它是为了让不关心多分组的下游零改动。
 	UserGroupRPMOverride *int `json:"user_group_rpm_override,omitempty"`
+
+	// UserGroupRPMOverrides 是 (user, 每个绑定分组) 的专属 RPM 覆盖值（issue #171）。
+	//
+	// **三态语义靠「键在不在」表达，不要改成 map[int64]*int**：
+	//   - 键存在、值 > 0  → 该分组的专属上限；
+	//   - 键存在、值 == 0 → 该用户在该分组**免检**（这是有意义的显式配置，不是零值）；
+	//   - 键**不存在**     → 没有 override，或者快照构建时那次查询失败了。
+	//     两种情况都必须回退到 DB 现查（checkRPM 的既有行为），所以合并成「缺键」是安全的。
+	//
+	// 正因为 0 是有语义的，绝不能用「值为零就当没配」的写法去读这个 map。
+	UserGroupRPMOverrides map[int64]int `json:"user_group_rpm_overrides,omitempty"`
 }
 
 // APIKeyAuthGroupSnapshot 分组快照

@@ -55,10 +55,16 @@ type User struct {
 	// 且该 (用户, 分组) 无 rpm_override 时作为全局兜底生效，计数键 rpm:u:{userID}:{min}。
 	RPMLimit int
 
-	// UserGroupRPMOverride 来自 auth cache snapshot 的 (user, group) RPM 覆盖值。
+	// UserGroupRPMOverride 来自 auth cache snapshot 的 (user, **默认**group) RPM 覆盖值。
 	// nil = 该 API Key 对应的 (user, group) 无 override；非 nil 时 checkRPM 直接使用，
 	// 避免每请求查 DB。字段不持久化到数据库。
 	UserGroupRPMOverride *int
+
+	// UserGroupRPMOverrides 是 (user, 每个绑定分组) 的 RPM 覆盖值（issue #171）。
+	// 三态靠「键在不在」表达：键存在值 >0 = 专属上限；键存在值 ==0 = 该分组免检；
+	// 缺键 = 无 override 或快照构建时查询失败，checkRPM 回退 DB 现查。
+	// 详见 APIKeyAuthUserSnapshot.UserGroupRPMOverrides。字段不持久化到数据库。
+	UserGroupRPMOverrides map[int64]int
 
 	APIKeys       []APIKey
 	Subscriptions []UserSubscription

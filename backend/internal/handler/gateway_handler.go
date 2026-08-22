@@ -1082,6 +1082,16 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 func (h *GatewayHandler) Models(c *gin.Context) {
 	apiKey, _ := middleware2.GetAPIKeyFromContext(c)
 
+	// 多分组 Key（issue #171）：返回**全部绑定分组**的模型并集。
+	// 每个分组先各自应用自己的 models_list_config，再合并去重 ——
+	// 合并后再过滤是错的，那会让 A 组的自定义清单误伤 B 组的模型。
+	//
+	// 单分组 / 未分组 Key 完全走下面的原有逻辑，一行未改（C3）。
+	if models, platform, ok := h.boundGroupsModelsUnion(c, apiKey); ok {
+		h.writeModelsForPlatform(c, platform, models)
+		return
+	}
+
 	var groupID *int64
 	var platform string
 
@@ -1430,15 +1440,11 @@ func (h *GatewayHandler) AntigravityModels(c *gin.Context) {
 	})
 }
 
+// cloneAPIKeyWithGroup 是 service.CloneAPIKeyWithGroup 的薄别名，保留是为了不动
+// fallback_group_id 那条调用链的可读性。实现已上移到 service 层，
+// 因为认证中间件的选组（issue #171）也要用同一套语义。
 func cloneAPIKeyWithGroup(apiKey *service.APIKey, group *service.Group) *service.APIKey {
-	if apiKey == nil || group == nil {
-		return apiKey
-	}
-	cloned := *apiKey
-	groupID := group.ID
-	cloned.GroupID = &groupID
-	cloned.Group = group
-	return &cloned
+	return service.CloneAPIKeyWithGroup(apiKey, group)
 }
 
 // Usage handles getting account balance and usage statistics for CC Switch integration

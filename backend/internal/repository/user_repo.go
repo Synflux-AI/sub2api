@@ -563,10 +563,16 @@ func (r *userRepository) ListWithFilters(ctx context.Context, params pagination.
 	if filters.APIKeyGroupID > 0 {
 		// 按"API Key 实际绑定的分组"过滤：用户只要有任意一个未软删除的 API Key
 		// 绑定到该分组即命中（EXISTS 语义）。
+		//
+		// issue #171：绑定不再等于 api_keys.group_id 单列相等 —— 一个 Key 可以在
+		// 多个平台各绑一个分组，只有默认组写进 group_id。这里复用
+		// apiKeyBoundToLiveGroup（默认组 OR 关联表，且分组未软删），
+		// 否则"非默认绑定了该分组"的用户会被漏掉。
+		//
 		// 注意：SoftDeleteMixin 的拦截器不会自动下沉到 HasAPIKeysWith 子查询，
 		// 必须显式加 apikey.DeletedAtIsNil()，否则已软删除的 key 会污染过滤结果。
 		q = q.Where(dbuser.HasAPIKeysWith(
-			apikey.GroupIDEQ(filters.APIKeyGroupID),
+			apiKeyBoundToLiveGroup(filters.APIKeyGroupID),
 			apikey.DeletedAtIsNil(),
 		))
 	}

@@ -141,18 +141,22 @@
                 class="-mx-2 -my-1 flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1 transition-all duration-200 hover:bg-gray-100 dark:hover:bg-dark-700"
                 :title="t('keys.clickToChangeGroup')"
               >
-                <GroupBadge
-                  v-if="row.group"
-                  :name="row.group.name"
-                  :platform="row.group.platform"
-                  :subscription-type="row.group.subscription_type"
-                  :rate-multiplier="row.group.rate_multiplier"
-                  :user-rate-multiplier="userGroupRates[row.group.id]"
-                  :peak-rate-enabled="row.group.peak_rate_enabled"
-                  :peak-start="row.group.peak_start"
-                  :peak-end="row.group.peak_end"
-                  :peak-rate-multiplier="row.group.peak_rate_multiplier"
-                />
+                <!-- issue #171：展示**全部**绑定分组，每个各自的倍率。 -->
+                <span v-if="boundGroupsOf(row).length" class="flex flex-wrap items-center gap-1">
+                  <GroupBadge
+                    v-for="g in boundGroupsOf(row)"
+                    :key="g.id"
+                    :name="g.name"
+                    :platform="g.platform"
+                    :subscription-type="g.subscription_type"
+                    :rate-multiplier="g.rate_multiplier"
+                    :user-rate-multiplier="userGroupRates[g.id]"
+                    :peak-rate-enabled="g.peak_rate_enabled"
+                    :peak-start="g.peak_start"
+                    :peak-end="g.peak_end"
+                    :peak-rate-multiplier="g.peak_rate_multiplier"
+                  />
+                </span>
                 <span v-else class="text-sm text-gray-400 dark:text-dark-500">{{
                   t('keys.noGroup')
                 }}</span>
@@ -480,28 +484,38 @@
 
         <div>
           <label class="input-label">{{ t('keys.groupLabel') }}</label>
-          <Select
-            v-model="formData.group_id"
+          <!--
+            issue #171：一把 Key 可绑多个分组，每个平台至多一个。
+            后端会再校验一遍（同平台冲突 / composite 混绑），这里的即时提示只是体验。
+          -->
+          <MultiSelect
+            v-model="formData.group_ids"
             :options="groupOptions"
             :placeholder="t('keys.selectGroup')"
+            :exclusive-empty-label="t('keys.noGroup')"
             :searchable="true"
             :search-placeholder="t('keys.searchGroup')"
+            :no-results-text="t('keys.noGroupFound')"
+            :aria-label="t('keys.groupLabel')"
             data-tour="key-form-group"
           >
-            <template #selected="{ option }">
-              <GroupBadge
-                v-if="option"
-                :name="(option as unknown as GroupOption).label"
-                :platform="(option as unknown as GroupOption).platform"
-                :subscription-type="(option as unknown as GroupOption).subscriptionType"
-                :rate-multiplier="(option as unknown as GroupOption).rate"
-                :user-rate-multiplier="(option as unknown as GroupOption).userRate"
-                :peak-rate-enabled="(option as unknown as GroupOption).peakRateEnabled"
-                :peak-start="(option as unknown as GroupOption).peakStart"
-                :peak-end="(option as unknown as GroupOption).peakEnd"
-                :peak-rate-multiplier="(option as unknown as GroupOption).peakRateMultiplier"
-              />
-              <span v-else class="text-gray-400">{{ t('keys.selectGroup') }}</span>
+            <template #selected="{ options }">
+              <span v-if="options.length === 0" class="text-gray-400">{{ t('keys.selectGroup') }}</span>
+              <span v-else class="flex flex-wrap items-center gap-1">
+                <GroupBadge
+                  v-for="opt in (options as unknown as GroupOption[])"
+                  :key="opt.value"
+                  :name="opt.label"
+                  :platform="opt.platform"
+                  :subscription-type="opt.subscriptionType"
+                  :rate-multiplier="opt.rate"
+                  :user-rate-multiplier="opt.userRate"
+                  :peak-rate-enabled="opt.peakRateEnabled"
+                  :peak-start="opt.peakStart"
+                  :peak-end="opt.peakEnd"
+                  :peak-rate-multiplier="opt.peakRateMultiplier"
+                />
+              </span>
             </template>
             <template #option="{ option, selected }">
               <GroupOptionItem
@@ -518,7 +532,13 @@
                 :selected="selected"
               />
             </template>
-          </Select>
+          </MultiSelect>
+          <p v-if="groupPlatformConflict" class="mt-1 text-sm text-red-600 dark:text-red-400">
+            {{ groupPlatformConflict }}
+          </p>
+          <p v-else-if="formData.group_ids.length > 1" class="mt-1 text-xs text-gray-500 dark:text-dark-400">
+            {{ t('keys.multiGroupHint') }}
+          </p>
         </div>
 
         <!-- Custom Key Section (only for create) -->
@@ -1092,12 +1112,11 @@
           <button
             v-for="option in filteredGroupOptions"
             :key="option.value ?? 'null'"
-            @click="changeGroup(selectedKeyForGroup!, option.value)"
+            @click="toggleRowGroup(selectedKeyForGroup!, option.value)"
             :class="[
               'flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-sm transition-colors',
               'border-b border-gray-100 last:border-0 dark:border-dark-700',
-              selectedKeyForGroup?.group_id === option.value ||
-              (!selectedKeyForGroup?.group_id && option.value === null)
+              isRowGroupSelected(option.value)
                 ? 'bg-primary-50 dark:bg-primary-900/20'
                 : 'hover:bg-gray-100 dark:hover:bg-dark-700'
             ]"
@@ -1114,10 +1133,7 @@
               :peak-end="option.peakEnd"
               :peak-rate-multiplier="option.peakRateMultiplier"
               :description="option.description"
-              :selected="
-                selectedKeyForGroup?.group_id === option.value ||
-                (!selectedKeyForGroup?.group_id && option.value === null)
-              "
+              :selected="isRowGroupSelected(option.value)"
             />
           </button>
           <!-- Empty state when search has no results -->
@@ -1148,6 +1164,7 @@ import TablePageLayout from '@/components/layout/TablePageLayout.vue'
 	import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 	import EmptyState from '@/components/common/EmptyState.vue'
 	import Select from '@/components/common/Select.vue'
+	import MultiSelect from '@/components/common/MultiSelect.vue'
 	import SearchInput from '@/components/common/SearchInput.vue'
 	import Icon from '@/components/icons/Icon.vue'
 	import UseKeyModal from '@/components/keys/UseKeyModal.vue'
@@ -1343,7 +1360,10 @@ const setGroupButtonRef = (keyId: number, el: Element | ComponentPublicInstance 
 
 const formData = ref({
   name: '',
+  // group_id 仍是「默认组」；group_ids 是完整绑定集合（issue #171）。
+  // 提交时以 group_ids 为准，group_id 由后端按稳定规则解析。
   group_id: null as number | null,
+  group_ids: [] as number[],
   status: 'active' as 'active' | 'inactive',
   use_custom_key: false,
   custom_key: '',
@@ -1437,6 +1457,36 @@ const groupOptions = computed(() =>
     platform: group.platform
   }))
 )
+
+// issue #171：分组多选。
+// 直接把完整的 groupOptions 交给 MultiSelect —— 多余字段由插槽强转回 GroupOption
+// 使用（与本文件原有单选那段的写法一致），这样富渲染不需要二次查表。
+const groupOptionByID = (id: number | string) =>
+  groupOptions.value.find((opt) => opt.value === id)
+
+/**
+ * 同平台冲突的即时提示。每个平台至多绑一个分组（issue #171 的 C1）。
+ *
+ * 后端会独立校验并返回 400，这里只是让用户在提交前就看到问题 ——
+ * **不要**因为有了这个提示就省掉后端校验：前端可以被绕过。
+ */
+const groupPlatformConflict = computed(() => {
+  const byPlatform = new Map<string, string>()
+  for (const id of formData.value.group_ids) {
+    const opt = groupOptionByID(id)
+    if (!opt?.platform) continue
+    const existing = byPlatform.get(opt.platform)
+    if (existing) {
+      return t('keys.groupPlatformConflict', {
+        platform: opt.platform,
+        first: existing,
+        second: opt.label
+      })
+    }
+    byPlatform.set(opt.platform, opt.label)
+  }
+  return ''
+})
 
 // Group dropdown search
 const groupSearchQuery = ref('')
@@ -1578,6 +1628,10 @@ const editKey = (key: ApiKey) => {
   formData.value = {
     name: key.name,
     group_id: key.group_id,
+    // 后端始终返回 group_ids；`?? []` 只是防御老响应体。
+    // 若它是空数组而 group_id 非空（理论上不该出现），退回单个默认组以免表单显示成「未分组」。
+    group_ids:
+      key.group_ids?.length ? [...key.group_ids] : key.group_id != null ? [key.group_id] : [],
     status: key.status === 'quota_exhausted' || key.status === 'expired' ? 'inactive' : key.status,
     use_custom_key: false,
     custom_key: '',
@@ -1644,18 +1698,106 @@ const openGroupSelector = (key: ApiKey) => {
   }
 }
 
-const changeGroup = async (key: ApiKey, newGroupId: number | null) => {
-  groupSelectorKeyId.value = null
-  dropdownPosition.value = null
-  if (key.group_id === newGroupId) return
+/**
+ * 一把 Key 当前绑定的全部分组（issue #171）。
+ *
+ * 优先用后端返回的 groups；老响应体只有单个 group 时退回它，
+ * 这样前后端版本错配也不会把已绑分组显示成「无分组」。
+ */
+const boundGroupsOf = (key: ApiKey) => {
+  if (key.groups?.length) return key.groups
+  return key.group ? [key.group] : []
+}
 
-  try {
-    await keysAPI.update(key.id, { group_id: newGroupId })
-    appStore.showSuccess(t('keys.groupChangedSuccess'))
-    loadApiKeys()
-  } catch (error) {
-    appStore.showError(t('keys.failedToChangeGroup'))
+const boundIdsOf = (key: ApiKey): number[] => {
+  if (key.group_ids?.length) return key.group_ids
+  return key.group_id != null ? [key.group_id] : []
+}
+
+/**
+ * 行内改组的在途集合（issue #171）。
+ *
+ * 行内下拉在勾选具体分组后**保持打开**，方便连续勾多个平台；而列表数据要等
+ * loadApiKeys() 回来才更新。若第二次点击仍从 key.group_ids 读起点，算出的集合里
+ * 就没有第一次的改动 —— 整体替换语义下，这等于把刚加上的分组又提交掉了。
+ * 所以在途期间以本 ref 为唯一事实来源，请求本身再串行化一次。
+ *
+ * seq 用来判定「我是不是最后一次提交」。**不要**改成比较 ids 的引用：
+ * ref 会把对象深度包成响应式代理，读回来的 ids 与写进去的原数组不是同一个引用，
+ * 恒等判定永远为假，在途状态就再也清不掉了。
+ */
+const rowGroupPending = ref<{ keyId: number; seq: number; ids: number[] } | null>(null)
+let rowGroupSeq = 0
+let rowGroupQueue: Promise<unknown> = Promise.resolve()
+
+const pendingIdsOf = (key: ApiKey): number[] =>
+  rowGroupPending.value?.keyId === key.id ? rowGroupPending.value.ids : boundIdsOf(key)
+
+// 行内下拉的勾选态。option.value 为 null 是「无分组」那一项。
+const isRowGroupSelected = (optionValue: number | null) => {
+  const key = selectedKeyForGroup.value
+  if (!key) return false
+  const ids = pendingIdsOf(key)
+  return optionValue === null ? ids.length === 0 : ids.includes(optionValue)
+}
+
+/**
+ * 行内快捷改组：切换某个分组的绑定状态后整体提交集合（issue #171）。
+ *
+ * 从「单选替换」改过来的。写成替换的话，用户想在列表里给多分组 Key 加一个平台，
+ * 会顺手删掉它在其它平台上的绑定 —— 而列表里根本看不出发生了什么。
+ *
+ * 提交 group_ids（含空数组）而不是 group_id：空数组是「显式解绑全部」，
+ * 省略字段会让后端回退到单值兼容路径。
+ */
+const toggleRowGroup = async (key: ApiKey, optionValue: number | null) => {
+  // 起点取在途集合而不是 key.group_ids，理由见 rowGroupPending。
+  const current = pendingIdsOf(key)
+  let next: number[]
+  if (optionValue === null) {
+    if (current.length === 0) {
+      groupSelectorKeyId.value = null
+      dropdownPosition.value = null
+      return
+    }
+    next = []
+  } else {
+    next = current.includes(optionValue)
+      ? current.filter((id) => id !== optionValue)
+      : [...current, optionValue]
   }
+
+  // 「无分组」是终态操作，点完就收起；切换具体分组时保持下拉打开，
+  // 方便连续勾选多个平台。
+  if (optionValue === null) {
+    groupSelectorKeyId.value = null
+    dropdownPosition.value = null
+  }
+
+  // 立刻落到在途集合，勾选态与下一次点击的起点都以它为准。
+  const seq = ++rowGroupSeq
+  rowGroupPending.value = { keyId: key.id, seq, ids: next }
+
+  // 串行化：整体替换语义下，两个并发 PUT 的到达顺序会决定最终集合，
+  // 先发的那个后到就会把后一次改动覆盖掉。
+  rowGroupQueue = rowGroupQueue.then(async () => {
+    try {
+      await keysAPI.update(key.id, { group_ids: next })
+      appStore.showSuccess(t('keys.groupChangedSuccess'))
+      await loadApiKeys()
+    } catch (error: any) {
+      // 同平台冲突之类的校验错误由后端给出可读消息，优先展示它 ——
+      // 前端不重复实现那套校验（会漂移）。
+      appStore.showError(error?.message || t('keys.failedToChangeGroup'))
+    } finally {
+      // 只有仍是最后一次提交时才清空，否则会把更晚那次的在途状态抹掉。
+      // 失败时也要清 —— 让勾选态退回服务端事实，而不是停在一个没落库的集合上。
+      if (rowGroupPending.value?.seq === seq) {
+        rowGroupPending.value = null
+      }
+    }
+  })
+  await rowGroupQueue
 }
 
 const closeGroupSelector = (event: MouseEvent) => {
@@ -1734,7 +1876,11 @@ const handleSubmit = async () => {
     if (showEditModal.value && selectedKey.value) {
       const updates: UpdateApiKeyRequest = {
         name: formData.value.name,
-        group_id: formData.value.group_id,
+        // 只发 group_ids，**不发** group_id：两者同时发时后端要求 group_id 必须在
+        // group_ids 里，而默认组本来就该由后端按稳定规则解析。
+        // 空数组是「显式解绑全部」——这一点依赖 group_ids 的三态语义，
+        // 所以这里必须始终带上该字段，不能因为空就省略。
+        group_ids: [...formData.value.group_ids],
         ip_whitelist: ipWhitelist,
         ip_blacklist: ipBlacklist,
         quota: quota,
@@ -1752,13 +1898,15 @@ const handleSubmit = async () => {
       const customKey = formData.value.use_custom_key ? formData.value.custom_key : undefined
       await keysAPI.create(
         formData.value.name,
-        formData.value.group_id,
+        // group_id 传 undefined：绑定集合走最后那个 groupIds 参数（issue #171）。
+        undefined,
         customKey,
         ipWhitelist,
         ipBlacklist,
         quota,
         expiresInDays,
-        rateLimitData
+        rateLimitData,
+        [...formData.value.group_ids]
       )
       appStore.showSuccess(t('keys.keyCreatedSuccess'))
       // Only advance tour if active, on submit step, and creation succeeded
@@ -1804,6 +1952,7 @@ const closeModals = () => {
   formData.value = {
     name: '',
     group_id: null,
+    group_ids: [],
     status: 'active',
     use_custom_key: false,
     custom_key: '',

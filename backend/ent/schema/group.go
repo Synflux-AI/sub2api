@@ -303,6 +303,11 @@ func (Group) Edges() []ent.Edge {
 		edge.To("redeem_codes", RedeemCode.Type),
 		edge.To("subscriptions", UserSubscription.Type),
 		edge.To("usage_logs", UsageLog.Type),
+		// api_keys 是「默认分组指针」（api_keys.group_id）的反向边；
+		// bound_api_keys 是多分组绑定关系（api_key_groups 关联表）的反向边。
+		edge.From("bound_api_keys", APIKey.Type).
+			Ref("bound_groups").
+			Through("api_key_groups", APIKeyGroup.Type),
 		edge.From("accounts", Account.Type).
 			Ref("groups").
 			Through("account_groups", AccountGroup.Type),

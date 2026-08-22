@@ -157,6 +157,19 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 			AbortWithError(c, 401, "USER_INACTIVE", "User account is not active")
 			return
 		}
+
+		// ── 3b. 选出本次请求的生效分组（issue #171） ──────────────────
+		//
+		// 位置是刻意的：必须在下面两道分组门**之前**（否则多分组 Key 会被默认组的
+		// 可用性/权限判定提前拒绝，这正是 issue #144 的死因），又必须在 User 检查
+		// **之后**（选组要用到用户信息），且在 SetOpsFallbackAPIKey 之后
+		// （读 body 失败也能进 Ops 日志）。
+		//
+		// 从这里往下，apiKey 已经指向生效分组，因此原有的分组门、订阅查询、订阅限额、
+		// 余额分支、setGroupContext **全部原位不动**就自然作用于生效分组。
+		// 这是「单分组 Key 行为逐字不变」得以成立的关键：改造没有移动任何一道门。
+		apiKey = resolveEffectiveGroup(c, apiKey)
+
 		if abortIfAPIKeyGroupUnavailable(c, apiKey) {
 			return
 		}

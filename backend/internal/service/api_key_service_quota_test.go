@@ -137,6 +137,7 @@ func (s *quotaBaseAPIKeyRepoStub) ListKeysByUserID(context.Context, int64) ([]st
 func (s *quotaBaseAPIKeyRepoStub) ListKeysByGroupID(context.Context, int64) ([]string, error) {
 	panic("unexpected ListKeysByGroupID call")
 }
+
 func (s *quotaBaseAPIKeyRepoStub) IncrementQuotaUsed(context.Context, int64, float64) (float64, error) {
 	panic("unexpected IncrementQuotaUsed call")
 }

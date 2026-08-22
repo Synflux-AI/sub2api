@@ -85,6 +85,18 @@ type APIKey struct {
 
 	User  *User  `json:"user,omitempty"`
 	Group *Group `json:"group,omitempty"`
+
+	// GroupIDs 是这把 Key 绑定的**全部**分组 ID（issue #171），
+	// 按 (platform, id) 稳定排序，包含 GroupID 指向的默认组。
+	//
+	// 前端编辑表单直接把它塞回请求的 group_ids，往返无损。
+	GroupIDs []int64 `json:"group_ids"`
+	// Groups 是与 GroupIDs 同序的分组对象，带 platform 与 rate_multiplier，
+	// 这样列表页能直接渲染「每个平台走哪个分组、倍率多少」而不必再逐个查分组。
+	//
+	// 注意：这是**管理侧**接口（用户看自己的 Key / 管理员看全部），
+	// 与客户端可见的 /v1/sub2api/billing 不同 —— 那个端点刻意不暴露分组身份。
+	Groups []*Group `json:"groups,omitempty"`
 }
 
 type Group struct {

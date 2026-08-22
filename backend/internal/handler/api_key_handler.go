@@ -32,8 +32,19 @@ func NewAPIKeyHandler(apiKeyService *service.APIKeyService) *APIKeyHandler {
 
 // CreateAPIKeyRequest represents the create API key request payload
 type CreateAPIKeyRequest struct {
-	Name          string   `json:"name" binding:"required"`
-	GroupID       *int64   `json:"group_id"`        // nullable
+	Name string `json:"name" binding:"required"`
+	// GroupID 是**默认分组**。与 GroupIDs 的完整语义矩阵见
+	// service.resolveAPIKeyGroupBindingIntent 的文档注释。
+	GroupID *int64 `json:"group_id"` // nullable
+	// GroupIDs 是要绑定的分组集合（issue #171），每平台至多一个。
+	//
+	// 三态，指针类型不可改成 []int64：
+	//   nil（请求未带该字段）= 回退到 GroupID 单值兼容路径；
+	//   非 nil 空数组       = 显式「不绑任何分组」，优先于同时带上的 GroupID；
+	//   非空                = 绑定该集合，GroupID 若给出必须在其中。
+	// 若退化成 []int64 就分不清「没传」与「传了空数组」，用户点「清空分组」会被
+	// 静默改回旧的默认组。
+	GroupIDs      *[]int64 `json:"group_ids"`
 	CustomKey     *string  `json:"custom_key"`      // 可选的自定义key
 	IPWhitelist   []string `json:"ip_whitelist"`    // IP 白名单
 	IPBlacklist   []string `json:"ip_blacklist"`    // IP 黑名单
@@ -48,8 +59,12 @@ type CreateAPIKeyRequest struct {
 
 // UpdateAPIKeyRequest represents the update API key request payload
 type UpdateAPIKeyRequest struct {
-	Name        string    `json:"name"`
+	Name string `json:"name"`
+	// GroupID / GroupIDs 语义与 CreateAPIKeyRequest 完全一致（同一套矩阵）。
+	// 额外一条只对 Update 有意义：只发旧 GroupID 且这把 Key 已绑 >=2 个分组时，
+	// 表示「只改默认组」，保留其它平台的绑定 —— 不会静默删掉它们。
 	GroupID     *int64    `json:"group_id"`
+	GroupIDs    *[]int64  `json:"group_ids"`
 	Status      string    `json:"status" binding:"omitempty,oneof=active inactive"`
 	IPWhitelist *[]string `json:"ip_whitelist"` // IP 白名单（nil 不修改，空数组清空）
 	IPBlacklist *[]string `json:"ip_blacklist"` // IP 黑名单（nil 不修改，空数组清空）
@@ -127,6 +142,10 @@ func (h *APIKeyHandler) List(c *gin.Context) {
 		filters.Search = search
 	}
 	filters.Status = c.Query("status")
+	// group_id 筛选的**语义**在 issue #171 里变了：从「默认分组等于该值」变成
+	// 「绑定集合包含该分组」。查询参数名与形状都没动，改动全在 repository 的谓词里
+	// （api_key_repo.apiKeyBoundToLiveGroup），所以这里不需要任何代码变化 ——
+	// 但读到这段的人应该知道语义已经拓宽了。
 	if groupIDStr := c.Query("group_id"); groupIDStr != "" {
 		gid, err := strconv.ParseInt(groupIDStr, 10, 64)
 		if err == nil {
@@ -199,6 +218,7 @@ func (h *APIKeyHandler) Create(c *gin.Context) {
 	svcReq := service.CreateAPIKeyRequest{
 		Name:          req.Name,
 		GroupID:       req.GroupID,
+		GroupIDs:      req.GroupIDs,
 		CustomKey:     req.CustomKey,
 		IPWhitelist:   req.IPWhitelist,
 		IPBlacklist:   req.IPBlacklist,
@@ -265,6 +285,7 @@ func (h *APIKeyHandler) Update(c *gin.Context) {
 		svcReq.Name = &req.Name
 	}
 	svcReq.GroupID = req.GroupID
+	svcReq.GroupIDs = req.GroupIDs
 	if req.Status != "" {
 		svcReq.Status = &req.Status
 	}

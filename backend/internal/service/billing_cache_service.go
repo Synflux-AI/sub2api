@@ -792,9 +792,18 @@ func (s *BillingCacheService) checkRPM(ctx context.Context, user *User, group *G
 
 	// ── 第一层：分组级检查（override 或 group.rpm_limit） ──
 	if group != nil {
-		// 解析 override：优先从 auth cache snapshot，nil 时回退 DB。
+		// 解析 override：优先从 auth cache snapshot，取不到时回退 DB。
+		//
+		// 多分组（issue #171）：group 是**本次请求实际命中的分组**（由调用方传入），
+		// 所以必须按 group.ID 从 UserGroupRPMOverrides 里取，而不能读只对默认组有效的
+		// 单值 UserGroupRPMOverride —— 否则多分组 Key 会拿默认组的 override 去限流命中组。
+		// 「键不存在」= 无 override 或快照构建时查询失败，两者都回退 DB 现查（与改造前一致）。
 		var override *int
-		if user.UserGroupRPMOverride != nil {
+		if v, ok := user.UserGroupRPMOverrides[group.ID]; ok {
+			override = &v
+		} else if user.UserGroupRPMOverrides == nil && user.UserGroupRPMOverride != nil {
+			// 兼容路径：快照未装 map（例如手工构造的 User 或非快照来源），
+			// 退回旧的单值字段。此时它代表默认组，语义与改造前相同。
 			override = user.UserGroupRPMOverride
 		} else if s.userGroupRateRepo != nil {
 			dbOverride, err := s.userGroupRateRepo.GetRPMOverrideByUserAndGroup(ctx, user.ID, group.ID)

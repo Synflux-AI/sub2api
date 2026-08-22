@@ -12,7 +12,9 @@ import (
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/ent/apikey"
+	"github.com/Wei-Shaw/sub2api/ent/apikeygroup"
 	"github.com/Wei-Shaw/sub2api/ent/group"
+	"github.com/Wei-Shaw/sub2api/ent/predicate"
 	"github.com/Wei-Shaw/sub2api/ent/schema/mixins"
 	"github.com/Wei-Shaw/sub2api/ent/user"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -42,8 +44,113 @@ func (r *apiKeyRepository) activeQuery() *dbent.APIKeyQuery {
 	return r.client.APIKey.Query().Where(apikey.DeletedAtIsNil())
 }
 
+// 「按分组找 Key」有两套语义，**必须分开**，不要合并成一个谓词：
+//
+//	反查（apiKeyBoundToGroup）        —— 内部用，无视分组软删
+//	用户可见筛选（apiKeyBoundToLiveGroup / apiKeyHasNoLiveBoundGroup） —— 尊重分组软删
+//
+// 分开的理由见 apiKeyBoundToLiveGroup 的注释。
+
+// apiKeyBoundToGroup 是「Key 的绑定集合包含 groupID」的**反查**谓词：
+// 默认组指针 api_keys.group_id UNION 关联表 api_key_groups。
+//
+// issue #171 之前「绑定」等价于 group_id 单列相等；多分组绑定落地后，
+// 一个 Key 可以在多个平台各绑一个分组，只有默认组会写进 group_id。
+// 因此「按分组反查受影响的 Key」的路径（认证缓存失效、分组变更联动）都必须用这个谓词，
+// 否则非默认绑定的 Key 会被漏掉，分组改配后它的认证快照不会失效。
+//
+// 关联表分支刻意**不** join groups 表：反查的目的是找出受影响的 Key，
+// 即使分组本身已被软删也应命中（软删同样需要让这些 Key 的认证缓存失效）。
+// 反查偏向「多失效」这个安全方向。
+func apiKeyBoundToGroup(groupID int64) predicate.APIKey {
+	return apikey.Or(
+		apikey.GroupIDEQ(groupID),
+		apikey.HasAPIKeyGroupsWith(apikeygroup.GroupIDEQ(groupID)),
+	)
+}
+
+// apiKeyBoundToLiveGroup 是「Key 绑定了 groupID，且该分组仍在用（未软删）」的
+// **用户可见筛选**谓词，覆盖默认组指针与关联表两条来源。
+//
+// 与 apiKeyBoundToGroup 的唯一差别是两条分支都要求分组未软删。为什么必须分开：
+//
+//   - 反查服务于认证缓存失效。分组被软删时同样要失效这些 Key 的快照，
+//     一旦 join groups 把软删过滤掉，删组/改配后就会继续按旧快照计费 ——
+//     正是 issue #171 要防的静默错价。所以反查侧**不能**改成尊重软删。
+//   - 筛选面向用户与管理员，必须尊重软删。否则「指向已软删分组的残留绑定行」
+//     会把 Key 算作「已绑定」，于是它既不出现在「未分组」筛选里，
+//     也不出现在任何在用分组的筛选里，在列表中彻底隐身。
+//     这个状态今天就可达：清 api_keys.group_id 的路径并不清理关联行。
+//
+// 本谓词与 apiKeyHasNoLiveBoundGroup 互为补集，保证「未分组」与「各在用分组」
+// 对全部 Key 构成完备划分。
+//
+// 软删条件必须显式写：SoftDeleteMixin 的拦截器不会下沉到 HasXxxWith 子查询
+// （与 user_repo.go 里 HasAPIKeysWith 必须显式加 DeletedAtIsNil 同理）。
+func apiKeyBoundToLiveGroup(groupID int64) predicate.APIKey {
+	return apikey.Or(
+		apikey.HasGroupWith(group.IDEQ(groupID), group.DeletedAtIsNil()),
+		apikey.HasBoundGroupsWith(group.IDEQ(groupID), group.DeletedAtIsNil()),
+	)
+}
+
+// apiKeyHasNoLiveBoundGroup 是「Key 没有绑定任何在用分组」的谓词（筛选值 0）。
+//
+// 默认组指针与关联行都要判：指向已软删分组的默认组指针、以及残留的软删分组绑定行，
+// 一律视为「未绑定」。这样它与 apiKeyBoundToLiveGroup 构成完备划分，
+// 不会有 Key 在列表筛选里两边都落不到。
+func apiKeyHasNoLiveBoundGroup() predicate.APIKey {
+	return apikey.And(
+		apikey.Not(apikey.HasGroupWith(group.DeletedAtIsNil())),
+		apikey.Not(apikey.HasBoundGroupsWith(group.DeletedAtIsNil())),
+	)
+}
+
+// Create 写入 api_keys 主表；若 key.BoundGroups 非空，则在**同一事务**内一并写入
+// api_key_groups 关联行（C11：任一步失败整体回滚，不留「主表已建、绑定缺失」的中间态）。
+//
+// 事务来源：优先复用 ctx 上已有的事务（服务层跨 repo 事务），否则自开一个；
+// client 本身已绑定事务时（集成测试夹具）走 ErrTxStarted 分支直接复用。
+// 无绑定要写时保持单语句写入不开事务 —— 新行的 ID 是新分配的，不可能有残留关联行。
 func (r *apiKeyRepository) Create(ctx context.Context, key *service.APIKey) error {
-	builder := r.client.APIKey.Create().
+	bindings := service.GroupBindingsFromGroups(key.BoundGroups)
+	if len(bindings) == 0 {
+		return r.createRow(ctx, clientFromContext(ctx, r.client), key)
+	}
+
+	if existingTx := dbent.TxFromContext(ctx); existingTx != nil {
+		return r.createWithBindings(ctx, existingTx.Client(), key, bindings)
+	}
+
+	tx, err := r.client.Tx(ctx)
+	if err != nil && !errors.Is(err, dbent.ErrTxStarted) {
+		return err
+	}
+	exec := r.client
+	if err == nil {
+		defer func() { _ = tx.Rollback() }()
+		exec = tx.Client()
+	}
+
+	if err := r.createWithBindings(ctx, exec, key, bindings); err != nil {
+		return err
+	}
+
+	if tx != nil {
+		return tx.Commit()
+	}
+	return nil
+}
+
+func (r *apiKeyRepository) createWithBindings(ctx context.Context, exec *dbent.Client, key *service.APIKey, bindings []service.GroupBinding) error {
+	if err := r.createRow(ctx, exec, key); err != nil {
+		return err
+	}
+	return r.replaceBindings(ctx, exec, key.ID, bindings)
+}
+
+func (r *apiKeyRepository) createRow(ctx context.Context, exec *dbent.Client, key *service.APIKey) error {
+	builder := exec.APIKey.Create().
 		SetUserID(key.UserID).
 		SetKey(key.Key).
 		SetName(key.Name).
@@ -79,6 +186,7 @@ func (r *apiKeyRepository) GetByID(ctx context.Context, id int64) (*service.APIK
 		Where(apikey.IDEQ(id)).
 		WithUser().
 		WithGroup().
+		WithBoundGroups().
 		Only(ctx)
 	if err != nil {
 		if dbent.IsNotFound(err) {
@@ -117,6 +225,7 @@ func (r *apiKeyRepository) GetByKey(ctx context.Context, key string) (*service.A
 			})
 		}).
 		WithGroup().
+		WithBoundGroups().
 		Only(ctx)
 	if err != nil {
 		if dbent.IsNotFound(err) {
@@ -125,6 +234,77 @@ func (r *apiKeyRepository) GetByKey(ctx context.Context, key string) (*service.A
 		return nil, err
 	}
 	return apiKeyEntityToService(m), nil
+}
+
+// authGroupProjection 是认证快照所需的分组列清单，**默认组与全部绑定组共用这一份**。
+//
+// 为什么必须是唯一一份：`APIKeyAuthGroupSnapshot` 的每个字段都直接喂给热路径上的某道门
+// （计费倍率、分组 RPM、模型路由、客户端限制、利润控制…）。漏选一列不会报错，
+// 只会让对应字段拿到零值 —— 例如 `ProfitControlEnabled=false` 会让利润控制门**静默失效**。
+// 多分组之后如果默认组和绑定组各自维护一份清单，两份必然漂移，
+// 于是「同一个分组当默认组时门生效、当非默认绑定组时门失效」这种极难定位的 bug 就会出现。
+//
+// 新增快照分组字段时：改 `APIKeyAuthGroupSnapshot` → 改本函数 → 补
+// `api_key_repo_profit_projection_integration_test.go` 的对账断言。三处缺一不可。
+func authGroupProjection() []string {
+	return []string{
+		group.FieldID,
+		group.FieldName,
+		group.FieldPlatform,
+		group.FieldIsExclusive,
+		group.FieldStatus,
+		group.FieldSubscriptionType,
+		group.FieldRateMultiplier,
+		group.FieldDailyLimitUsd,
+		group.FieldWeeklyLimitUsd,
+		group.FieldMonthlyLimitUsd,
+		group.FieldAllowImageGeneration,
+		group.FieldAllowBatchImageGeneration,
+		group.FieldImageRateIndependent,
+		group.FieldImageRateMultiplier,
+		group.FieldImagePrice1k,
+		group.FieldImagePrice2k,
+		group.FieldImagePrice4k,
+		group.FieldVideoRateIndependent,
+		group.FieldVideoRateMultiplier,
+		group.FieldVideoPrice480p,
+		group.FieldVideoPrice720p,
+		group.FieldVideoPrice1080p,
+		group.FieldVideoModelPrices,
+		group.FieldWebSearchPricePerCall,
+		group.FieldSearchPricePer1k,
+		group.FieldAudioRealtimePricePerMin,
+		group.FieldAudioTtsPricePerMillionChars,
+		group.FieldAudioSttPricePerHour,
+		group.FieldLongContextPricingEnabled,
+		group.FieldModelPricing,
+		group.FieldClaudeCodeOnly,
+		group.FieldCodexCliOnly,
+		group.FieldFallbackGroupID,
+		group.FieldFallbackGroupIDOnInvalidRequest,
+		group.FieldModelRoutingEnabled,
+		group.FieldModelRouting,
+		group.FieldMcpXMLInject,
+		group.FieldSupportedModelScopes,
+		group.FieldAllowMessagesDispatch,
+		group.FieldAllowLive,
+		group.FieldDefaultMappedModel,
+		group.FieldMessagesDispatchModelConfig,
+		group.FieldModelsListConfig,
+		group.FieldRpmLimit,
+		group.FieldMaxReasoningEffort,
+		group.FieldReasoningEffortMappings,
+		group.FieldPeakRateEnabled,
+		group.FieldPeakStart,
+		group.FieldPeakEnd,
+		group.FieldPeakRateMultiplier,
+		// 分组利润控制：认证快照是调度门 enable 判定的直接来源，
+		// 漏选会让门静默失效；新增快照分组字段时必须同步本投影，
+		// 集成测试对账兜底。
+		group.FieldProfitControlEnabled,
+		group.FieldProfitMinMargin,
+		group.FieldProfitSafetyBuffer,
+	}
 }
 
 func (r *apiKeyRepository) GetByKeyForAuth(ctx context.Context, key string) (*service.APIKey, error) {
@@ -177,64 +357,12 @@ func (r *apiKeyRepository) GetByKeyForAuth(ctx context.Context, key string) (*se
 			})
 		}).
 		WithGroup(func(q *dbent.GroupQuery) {
-			q.Select(
-				group.FieldID,
-				group.FieldName,
-				group.FieldPlatform,
-				group.FieldIsExclusive,
-				group.FieldStatus,
-				group.FieldSubscriptionType,
-				group.FieldRateMultiplier,
-				group.FieldDailyLimitUsd,
-				group.FieldWeeklyLimitUsd,
-				group.FieldMonthlyLimitUsd,
-				group.FieldAllowImageGeneration,
-				group.FieldAllowBatchImageGeneration,
-				group.FieldImageRateIndependent,
-				group.FieldImageRateMultiplier,
-				group.FieldImagePrice1k,
-				group.FieldImagePrice2k,
-				group.FieldImagePrice4k,
-				group.FieldVideoRateIndependent,
-				group.FieldVideoRateMultiplier,
-				group.FieldVideoPrice480p,
-				group.FieldVideoPrice720p,
-				group.FieldVideoPrice1080p,
-				group.FieldVideoModelPrices,
-				group.FieldWebSearchPricePerCall,
-				group.FieldSearchPricePer1k,
-				group.FieldAudioRealtimePricePerMin,
-				group.FieldAudioTtsPricePerMillionChars,
-				group.FieldAudioSttPricePerHour,
-				group.FieldLongContextPricingEnabled,
-				group.FieldModelPricing,
-				group.FieldClaudeCodeOnly,
-				group.FieldCodexCliOnly,
-				group.FieldFallbackGroupID,
-				group.FieldFallbackGroupIDOnInvalidRequest,
-				group.FieldModelRoutingEnabled,
-				group.FieldModelRouting,
-				group.FieldMcpXMLInject,
-				group.FieldSupportedModelScopes,
-				group.FieldAllowMessagesDispatch,
-				group.FieldAllowLive,
-				group.FieldDefaultMappedModel,
-				group.FieldMessagesDispatchModelConfig,
-				group.FieldModelsListConfig,
-				group.FieldRpmLimit,
-				group.FieldMaxReasoningEffort,
-				group.FieldReasoningEffortMappings,
-				group.FieldPeakRateEnabled,
-				group.FieldPeakStart,
-				group.FieldPeakEnd,
-				group.FieldPeakRateMultiplier,
-				// 分组利润控制：认证快照是调度门 enable 判定的直接来源，
-				// 漏选会让门静默失效；新增快照分组字段时必须同步本投影，
-				// 集成测试对账兜底。
-				group.FieldProfitControlEnabled,
-				group.FieldProfitMinMargin,
-				group.FieldProfitSafetyBuffer,
-			)
+			q.Select(authGroupProjection()...)
+		}).
+		// 绑定集合复用**同一份**投影清单（见 authGroupProjection 的说明）。
+		// 一次 eager-load 拿全部绑定组，不产生 N+1。
+		WithBoundGroups(func(q *dbent.GroupQuery) {
+			q.Select(authGroupProjection()...)
 		}).
 		Only(ctx)
 	if err != nil {
@@ -246,18 +374,60 @@ func (r *apiKeyRepository) GetByKeyForAuth(ctx context.Context, key string) (*se
 	return apiKeyEntityToService(m), nil
 }
 
+// Update 按掩码写回 api_keys 的列；若 fields.BoundGroups 置位，
+// 则在**同一事务**内用 key.BoundGroups 整体替换 api_key_groups 里该 Key 的绑定集合（C11）。
+//
+// 注意 fields.GroupID 与 fields.BoundGroups 是两个独立开关：
+// 前者只改 api_keys.group_id（默认组指针），后者只改关联表。
+// 改默认组时通常要两个都置位，否则关联表会与 group_id 不一致。
 func (r *apiKeyRepository) Update(ctx context.Context, key *service.APIKey, fields service.APIKeyUpdateFields) error {
 	// 空掩码代表调用方不改任何列，直接返回，避免产生一次无意义的整行写。
 	if fields.IsEmpty() {
 		return nil
 	}
 
+	if !fields.BoundGroups {
+		return r.updateRow(ctx, clientFromContext(ctx, r.client), key, fields)
+	}
+
+	// 主表 + 关联表必须原子落库：复用外部事务，否则自开一个。
+	if existingTx := dbent.TxFromContext(ctx); existingTx != nil {
+		return r.updateWithBindings(ctx, existingTx.Client(), key, fields)
+	}
+
+	tx, err := r.client.Tx(ctx)
+	if err != nil && !errors.Is(err, dbent.ErrTxStarted) {
+		return err
+	}
+	exec := r.client
+	if err == nil {
+		defer func() { _ = tx.Rollback() }()
+		exec = tx.Client()
+	}
+
+	if err := r.updateWithBindings(ctx, exec, key, fields); err != nil {
+		return err
+	}
+
+	if tx != nil {
+		return tx.Commit()
+	}
+	return nil
+}
+
+func (r *apiKeyRepository) updateWithBindings(ctx context.Context, exec *dbent.Client, key *service.APIKey, fields service.APIKeyUpdateFields) error {
+	if err := r.updateRow(ctx, exec, key, fields); err != nil {
+		return err
+	}
+	return r.replaceBindings(ctx, exec, key.ID, service.GroupBindingsFromGroups(key.BoundGroups))
+}
+
+func (r *apiKeyRepository) updateRow(ctx context.Context, client *dbent.Client, key *service.APIKey, fields service.APIKeyUpdateFields) error {
 	// 使用原子操作：将软删除检查与更新合并到同一语句，避免竞态条件。
 	// 之前的实现先检查 Exist 再 UpdateOneID，若在两步之间发生软删除，
 	// 则会更新已删除的记录。
 	// 这里选择 Update().Where()，确保只有未软删除记录能被更新。
 	// 同时显式设置 updated_at，避免二次查询带来的并发可见性问题。
-	client := clientFromContext(ctx, r.client)
 	now := time.Now()
 	builder := client.APIKey.Update().
 		Where(apikey.IDEQ(key.ID), apikey.DeletedAtIsNil()).
@@ -449,10 +619,13 @@ func (r *apiKeyRepository) apiKeyListByUserIDQuery(userID int64, filters service
 		q = q.Where(apikey.StatusEQ(filters.Status))
 	}
 	if filters.GroupID != nil {
+		// 0 = 未绑定任何**在用**分组；>0 = 绑定集合包含该在用分组（默认组 OR 关联表）。
+		// 两个分支互为补集，指向已软删分组的绑定一律算「未绑定」，
+		// 避免 Key 在筛选里两边都落不到（详见 apiKeyBoundToLiveGroup 的注释）。
 		if *filters.GroupID == 0 {
-			q = q.Where(apikey.GroupIDIsNil())
+			q = q.Where(apiKeyHasNoLiveBoundGroup())
 		} else {
-			q = q.Where(apikey.GroupIDEQ(*filters.GroupID))
+			q = q.Where(apiKeyBoundToLiveGroup(*filters.GroupID))
 		}
 	}
 
@@ -469,6 +642,7 @@ func (r *apiKeyRepository) ListByUserID(ctx context.Context, userID int64, param
 
 	keysQuery := q.
 		WithGroup().
+		WithBoundGroups().
 		Offset(params.Offset()).
 		Limit(params.Limit())
 	for _, order := range apiKeyListOrder(params) {
@@ -494,6 +668,7 @@ func (r *apiKeyRepository) ListByUserID(ctx context.Context, userID int64, param
 func (r *apiKeyRepository) ListAllByUserID(ctx context.Context, userID int64, filters service.APIKeyListFilters) ([]service.APIKey, error) {
 	keys, err := r.apiKeyListByUserIDQuery(userID, filters).
 		WithGroup().
+		WithBoundGroups().
 		Order(dbent.Asc(apikey.FieldID)).
 		All(ctx)
 	if err != nil {
@@ -720,14 +895,121 @@ func (r *apiKeyRepository) ClearGroupIDByGroupID(ctx context.Context, groupID in
 	return int64(n), err
 }
 
-// UpdateGroupIDByUserAndGroup 将用户下绑定 oldGroupID 的所有 Key 迁移到 newGroupID
+// UpdateGroupIDByUserAndGroup 将用户下绑定 oldGroupID 的所有 Key 迁移到 newGroupID，
+// **同时把 api_key_groups 里的绑定行一并换掉**（issue #171）。
+//
+// 为什么关联表必须一起改：本方法唯一的调用方 adminService.ReplaceUserGroup 在同一事务里
+// 还会撤掉用户对 oldGroupID 的授权。若只改 api_keys.group_id 而留下关联行，读模型
+// （boundGroupsFromEntity 做「默认组 UNION 关联表」）会得到 {old, new} 两个分组；
+// 两者平台通常相同 —— 于是同平台双绑，选组按 (platform, id) 取到 id 更小的 old，
+// 而 old 的授权刚被撤销，认证直接 403 GROUP_NOT_ALLOWED。这是「只置 GroupID 不置
+// BoundGroups」这一类不变量破裂里最隐蔽的一条（另见 APIKeyUpdateFields.BoundGroups
+// 与 service.APIKeyService.Update 里的同款说明）。
+//
+// 迁移范围是「绑定集合**包含** oldGroupID」（apiKeyBoundToGroup：默认组 UNION 关联表），
+// 比只看默认组指针更宽。理由同上：授权被撤销之后，任何仍绑着 old 的 Key 都会 403，
+// 不只是默认组是 old 的那些。单分组数据下两者完全等价（迁移 230 保证每把 Key 的
+// 默认组同时有一条关联行），所以返回的迁移条数语义与改造前一致。
+//
+// 写关联表仍然只走 replaceBindings（整体替换），不新增定点插入路径 ——
+// 这样「Key 已经绑了 newGroupID」「残留的软删分组绑定行」这两种情况都被顺带收敛掉，
+// 不会撞 (api_key_id, platform) 唯一索引。真正的同平台冲突
+// （old 换成 new 之后与另一个在用绑定同平台）会在 CreateBulk 处翻译成
+// ErrAPIKeyGroupBindingConflict 并整体回滚，属于 fail-closed，符合预期。
 func (r *apiKeyRepository) UpdateGroupIDByUserAndGroup(ctx context.Context, userID, oldGroupID, newGroupID int64) (int64, error) {
-	client := clientFromContext(ctx, r.client)
-	n, err := client.APIKey.Update().
+	if existingTx := dbent.TxFromContext(ctx); existingTx != nil {
+		return r.updateGroupIDByUserAndGroup(ctx, existingTx.Client(), userID, oldGroupID, newGroupID)
+	}
+
+	tx, err := r.client.Tx(ctx)
+	if err != nil && !errors.Is(err, dbent.ErrTxStarted) {
+		return 0, err
+	}
+	exec := r.client
+	if err == nil {
+		defer func() { _ = tx.Rollback() }()
+		exec = tx.Client()
+	}
+
+	n, err := r.updateGroupIDByUserAndGroup(ctx, exec, userID, oldGroupID, newGroupID)
+	if err != nil {
+		return 0, err
+	}
+
+	if tx != nil {
+		if err := tx.Commit(); err != nil {
+			return 0, err
+		}
+	}
+	return n, nil
+}
+
+// updateGroupIDByUserAndGroup 是上面的事务内实现。exec 必须已绑定到调用方持有的事务：
+// 关联表替换与默认组指针改写要么一起成功、要么一起回滚，中间态就是同平台双绑。
+func (r *apiKeyRepository) updateGroupIDByUserAndGroup(ctx context.Context, exec *dbent.Client, userID, oldGroupID, newGroupID int64) (int64, error) {
+	newPlatform, err := exec.Group.Query().
+		Where(group.IDEQ(newGroupID)).
+		Select(group.FieldPlatform).
+		String(ctx)
+	if err != nil {
+		if dbent.IsNotFound(err) {
+			return 0, service.ErrGroupNotFound
+		}
+		return 0, err
+	}
+
+	// 先迁关联表。这里必须拿到每把 Key 的**完整**绑定集合才能整体替换，
+	// 所以 eager-load 两条边，交给 boundGroupsFromEntity 走与读路径同一份合并/去重/软删过滤。
+	keys, err := exec.APIKey.Query().
+		Where(apikey.DeletedAtIsNil(), apikey.UserIDEQ(userID), apiKeyBoundToGroup(oldGroupID)).
+		WithGroup().
+		WithBoundGroups().
+		All(ctx)
+	if err != nil {
+		return 0, err
+	}
+	for _, k := range keys {
+		if err := r.replaceBindings(ctx, exec, k.ID,
+			swapGroupBinding(service.GroupBindingsFromGroups(boundGroupsFromEntity(k)), oldGroupID, newGroupID, newPlatform),
+		); err != nil {
+			return 0, err
+		}
+	}
+
+	// 默认组指针：语句与改造前逐字相同，返回值语义（迁移条数）因此不变。
+	n, err := exec.APIKey.Update().
 		Where(apikey.UserIDEQ(userID), apikey.GroupIDEQ(oldGroupID), apikey.DeletedAtIsNil()).
 		SetGroupID(newGroupID).
 		Save(ctx)
-	return int64(n), err
+	if err != nil {
+		return 0, err
+	}
+	return int64(n), nil
+}
+
+// swapGroupBinding 把绑定集合里的 oldGroupID 换成 (newGroupID, newPlatform)。
+//
+// 已经绑了 newGroupID 时只做删除、不重复添加（PK 是 (api_key_id, group_id)，
+// 重复元素会撞主键）。集合里本来没有 oldGroupID 时也会补上 newGroupID ——
+// 调用方筛出来的 Key 一定与 old 有关联，走到这里说明关联只存在于默认组指针那一侧
+// （例如 old 已被软删、关联行已被清理），补上才是正确的迁移结果。
+func swapGroupBinding(bindings []service.GroupBinding, oldGroupID, newGroupID int64, newPlatform string) []service.GroupBinding {
+	out := make([]service.GroupBinding, 0, len(bindings)+1)
+	hasNew := false
+	for _, b := range bindings {
+		if b.GroupID == oldGroupID {
+			continue
+		}
+		if b.GroupID == newGroupID {
+			hasNew = true
+		}
+		out = append(out, b)
+	}
+	if !hasNew {
+		out = append(out, service.GroupBinding{GroupID: newGroupID, Platform: newPlatform})
+	}
+	service.SortGroupBindings(out)
+	return out
 }
 
 // CountByGroupID 获取分组的 API Key 数量
@@ -747,15 +1029,149 @@ func (r *apiKeyRepository) ListKeysByUserID(ctx context.Context, userID int64) (
 	return keys, nil
 }
 
+// ListKeysByGroupID 返回绑定集合包含 groupID 的所有未软删 Key 的 key 值。
+//
+// 覆盖「默认组 UNION 关联表」两条来源（apiKeyBoundToGroup）。
+// 认证缓存失效（InvalidateAuthCacheByGroupID）依赖本方法，
+// 漏掉非默认绑定的分组会导致分组改配后这些 Key 的认证快照不失效。
 func (r *apiKeyRepository) ListKeysByGroupID(ctx context.Context, groupID int64) ([]string, error) {
 	keys, err := r.activeQuery().
-		Where(apikey.GroupIDEQ(groupID)).
+		Where(apiKeyBoundToGroup(groupID)).
 		Select(apikey.FieldKey).
 		Strings(ctx)
 	if err != nil {
 		return nil, err
 	}
 	return keys, nil
+}
+
+// ListKeyIDsByBoundGroupID 返回绑定集合包含 groupID 的所有未软删 Key 的 ID，按 ID 升序。
+// 与 ListKeysByGroupID 用同一个谓词，只是投影成 ID。
+func (r *apiKeyRepository) ListKeyIDsByBoundGroupID(ctx context.Context, groupID int64) ([]int64, error) {
+	ids, err := r.activeQuery().
+		Where(apiKeyBoundToGroup(groupID)).
+		Order(dbent.Asc(apikey.FieldID)).
+		IDs(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+// ListBoundGroupIDs 返回 api_key_groups 里该 Key 的原始绑定分组 ID，按 group_id 升序。
+//
+// 「原始」= 不 join groups、不过滤已软删的分组：返回的就是持久化的绑定集合本身。
+// 这是刻意的 —— 调用方（例如 ReplaceBindings 的上游校验、分组删除后的收敛逻辑）
+// 需要看到残留的、指向已软删分组的绑定行，才可能把它们清掉。
+// 需要「可用分组」语义的读路径请用 APIKey.BoundGroups（已过滤软删）。
+func (r *apiKeyRepository) ListBoundGroupIDs(ctx context.Context, apiKeyID int64) ([]int64, error) {
+	client := clientFromContext(ctx, r.client)
+	ids, err := client.APIKeyGroup.Query().
+		Where(apikeygroup.APIKeyIDEQ(apiKeyID)).
+		Order(dbent.Asc(apikeygroup.FieldGroupID)).
+		Select(apikeygroup.FieldGroupID).
+		Ints(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]int64, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, int64(id))
+	}
+	return out, nil
+}
+
+// ReplaceBindings 以**整体替换**语义重写该 Key 在 api_key_groups 里的绑定集合。
+//
+// 语义与不变量（改动前请先读完）：
+//
+//  1. 一次调用 = 「先 DELETE 该 api_key_id 的**全部**绑定行，再批量 INSERT 传入的集合」，
+//     两步在**同一个事务**内完成（已有外部事务则复用，否则自开一个）。
+//     bindings 为空即清空该 Key 的所有绑定。
+//  2. **禁止**改成 upsert / ON CONFLICT DO UPDATE 之类的增量合并，
+//     也**禁止**在本文件之外新增「定点插入单行绑定」的公开方法。
+//     所有写 api_key_groups 的路径都必须经过这里。
+//
+// 为什么必须是整体替换：DB 上的 UNIQUE (api_key_id, platform) 不认软删 ——
+// 它只看关联行本身，不看 groups.deleted_at。而迁移 230 的回填**没有**过滤已软删的分组，
+// 所以生产库里存在「指向已软删分组的残留绑定行」。若用增量 upsert，
+// 给同一个 Key 绑一个在用的同平台分组时，会与那条残留行撞上 Postgres 23505（unique_violation），
+// 而调用方在业务上完全看不出冲突从哪来。整体替换让每次写入都把残留行一并清除，
+// 从根上消掉这类冲突，因此本项目**不需要**额外的清理迁移。
+//
+// 唯一约束冲突仍可能出现在「同一次调用里传入两个同 platform 的分组」——
+// 那是服务层校验漏网，会被翻译成 service.ErrAPIKeyGroupBindingConflict。
+func (r *apiKeyRepository) ReplaceBindings(ctx context.Context, apiKeyID int64, bindings []service.GroupBinding) error {
+	if existingTx := dbent.TxFromContext(ctx); existingTx != nil {
+		return r.replaceBindings(ctx, existingTx.Client(), apiKeyID, bindings)
+	}
+
+	tx, err := r.client.Tx(ctx)
+	if err != nil && !errors.Is(err, dbent.ErrTxStarted) {
+		return err
+	}
+	exec := r.client
+	if err == nil {
+		defer func() { _ = tx.Rollback() }()
+		exec = tx.Client()
+	}
+
+	if err := r.replaceBindings(ctx, exec, apiKeyID, bindings); err != nil {
+		return err
+	}
+
+	if tx != nil {
+		return tx.Commit()
+	}
+	return nil
+}
+
+// replaceBindings 是 ReplaceBindings 的事务内实现，同时被 Create / Update 复用，
+// 以保证「主表 + 关联表」始终在同一个事务里落库（C11）。
+// exec 必须已经绑定到调用方持有的事务。
+func (r *apiKeyRepository) replaceBindings(ctx context.Context, exec *dbent.Client, apiKeyID int64, bindings []service.GroupBinding) error {
+	// 整体替换的第一步：清空该 Key 的全部绑定行（含指向已软删分组的残留行）。
+	if _, err := exec.APIKeyGroup.Delete().
+		Where(apikeygroup.APIKeyIDEQ(apiKeyID)).
+		Exec(ctx); err != nil {
+		return err
+	}
+	if len(bindings) == 0 {
+		return nil
+	}
+
+	// 复制后排序，避免就地改动调用方切片；固定写入顺序便于对账与测试。
+	ordered := make([]service.GroupBinding, len(bindings))
+	copy(ordered, bindings)
+	service.SortGroupBindings(ordered)
+
+	creates := make([]*dbent.APIKeyGroupCreate, 0, len(ordered))
+	for _, b := range ordered {
+		creates = append(creates, exec.APIKeyGroup.Create().
+			SetAPIKeyID(apiKeyID).
+			SetGroupID(b.GroupID).
+			SetPlatform(b.Platform))
+	}
+	if err := exec.APIKeyGroup.CreateBulk(creates...).Exec(ctx); err != nil {
+		return translatePersistenceError(err, nil, service.ErrAPIKeyGroupBindingConflict)
+	}
+	return nil
+}
+
+// DeleteBindingsByGroupID 物理删除该分组的全部绑定行，返回删除行数。
+//
+// 分组走软删（UPDATE deleted_at），不会触发 FK ON DELETE CASCADE，
+// 所以分组删除路径必须显式调用本方法，参照 group_repo.DeleteCascade 对
+// user_allowed_groups / account_groups 的处理。事务感知：走 clientFromContext。
+func (r *apiKeyRepository) DeleteBindingsByGroupID(ctx context.Context, groupID int64) (int64, error) {
+	client := clientFromContext(ctx, r.client)
+	n, err := client.APIKeyGroup.Delete().
+		Where(apikeygroup.GroupIDEQ(groupID)).
+		Exec(ctx)
+	if err != nil {
+		return 0, err
+	}
+	return int64(n), nil
 }
 
 // IncrementQuotaUsed 使用 Ent 原子递增 quota_used 字段并返回新值
@@ -915,6 +1331,56 @@ func apiKeyEntityToService(m *dbent.APIKey) *service.APIKey {
 	if m.Edges.Group != nil {
 		out.Group = groupEntityToService(m.Edges.Group)
 	}
+	out.BoundGroups = boundGroupsFromEntity(m)
+	return out
+}
+
+// boundGroupsFromEntity 组装 APIKey.BoundGroups：默认组（Edges.Group）与关联表分组
+// （Edges.BoundGroups）合并、按 ID 去重、剔除已软删的分组，最后按 (Platform, ID) 稳定排序。
+//
+//   - 默认组也是绑定集合的成员，所以要一并并入 —— 迁移 230 的回填保证了
+//     api_keys.group_id 指向的分组在关联表里也有行，这里的并入是对该不变量的兜底，
+//     顺带覆盖「只 WithGroup() 没 WithBoundGroups() 」的查询。
+//   - 剔除软删是刻意的：关联表里可能残留指向已软删分组的行（见 ReplaceBindings 的说明），
+//     读路径必须把它们当作不存在。需要原始绑定集合请用 ListBoundGroupIDs。
+//
+// 返回 nil 的三种情况（**语义相同：没有可用的绑定分组**）：
+//  1. 两条边都没 eager-load；
+//  2. eager-load 了但确实没有绑定；
+//  3. 所有绑定都指向已软删的分组，被全部剔除。
+//
+// 因此下游（T4 认证快照 / T10 DTO）**不得**把 nil 当作「未加载」哨兵去区分 1 与 2/3 ——
+// 想知道某个查询是否加载了绑定，请看查询本身有没有 WithBoundGroups()／WithGroup()。
+func boundGroupsFromEntity(m *dbent.APIKey) []*service.Group {
+	total := len(m.Edges.BoundGroups)
+	if m.Edges.Group != nil {
+		total++
+	}
+	if total == 0 {
+		return nil
+	}
+
+	seen := make(map[int64]struct{}, total)
+	out := make([]*service.Group, 0, total)
+	appendGroup := func(g *dbent.Group) {
+		if g == nil || g.DeletedAt != nil {
+			return
+		}
+		if _, dup := seen[g.ID]; dup {
+			return
+		}
+		seen[g.ID] = struct{}{}
+		out = append(out, groupEntityToService(g))
+	}
+
+	appendGroup(m.Edges.Group)
+	for _, g := range m.Edges.BoundGroups {
+		appendGroup(g)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	service.SortBoundGroups(out)
 	return out
 }
 
