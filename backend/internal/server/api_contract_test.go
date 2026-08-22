@@ -2529,22 +2529,6 @@ func (r *stubApiKeyRepo) ListKeysByGroupID(ctx context.Context, groupID int64) (
 	return nil, errors.New("not implemented")
 }
 
-func (r *stubApiKeyRepo) ListBoundGroupIDs(ctx context.Context, apiKeyID int64) ([]int64, error) {
-	return nil, errors.New("not implemented")
-}
-
-func (r *stubApiKeyRepo) ReplaceBindings(ctx context.Context, apiKeyID int64, bindings []service.GroupBinding) error {
-	return errors.New("not implemented")
-}
-
-func (r *stubApiKeyRepo) ListKeyIDsByBoundGroupID(ctx context.Context, groupID int64) ([]int64, error) {
-	return nil, errors.New("not implemented")
-}
-
-func (r *stubApiKeyRepo) DeleteBindingsByGroupID(ctx context.Context, groupID int64) (int64, error) {
-	return 0, errors.New("not implemented")
-}
-
 func (r *stubApiKeyRepo) IncrementQuotaUsed(ctx context.Context, id int64, amount float64) (float64, error) {
 	return 0, errors.New("not implemented")
 }

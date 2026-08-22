@@ -146,21 +146,6 @@ func (f fakeAPIKeyRepo) ListKeysByGroupID(ctx context.Context, groupID int64) ([
 	return nil, errors.New("not implemented")
 }
 
-func (f fakeAPIKeyRepo) ListBoundGroupIDs(ctx context.Context, apiKeyID int64) ([]int64, error) {
-	return nil, errors.New("not implemented")
-}
-
-func (f fakeAPIKeyRepo) ReplaceBindings(ctx context.Context, apiKeyID int64, bindings []service.GroupBinding) error {
-	return errors.New("not implemented")
-}
-
-func (f fakeAPIKeyRepo) ListKeyIDsByBoundGroupID(ctx context.Context, groupID int64) ([]int64, error) {
-	return nil, errors.New("not implemented")
-}
-
-func (f fakeAPIKeyRepo) DeleteBindingsByGroupID(ctx context.Context, groupID int64) (int64, error) {
-	return 0, errors.New("not implemented")
-}
 func (f fakeAPIKeyRepo) IncrementQuotaUsed(ctx context.Context, id int64, amount float64) (float64, error) {
 	return 0, errors.New("not implemented")
 }

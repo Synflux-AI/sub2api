@@ -329,22 +329,6 @@ func (s *deleteGroupAPIKeyRepoStub) ListKeysByGroupID(ctx context.Context, group
 	return s.keys, nil
 }
 
-func (s *deleteGroupAPIKeyRepoStub) ListBoundGroupIDs(ctx context.Context, apiKeyID int64) ([]int64, error) {
-	panic("unexpected ListBoundGroupIDs call")
-}
-
-func (s *deleteGroupAPIKeyRepoStub) ReplaceBindings(ctx context.Context, apiKeyID int64, bindings []GroupBinding) error {
-	panic("unexpected ReplaceBindings call")
-}
-
-func (s *deleteGroupAPIKeyRepoStub) ListKeyIDsByBoundGroupID(ctx context.Context, groupID int64) ([]int64, error) {
-	panic("unexpected ListKeyIDsByBoundGroupID call")
-}
-
-func (s *deleteGroupAPIKeyRepoStub) DeleteBindingsByGroupID(ctx context.Context, groupID int64) (int64, error) {
-	panic("unexpected DeleteBindingsByGroupID call")
-}
-
 type proxyRepoStub struct {
 	deleteErr    error
 	countErr     error

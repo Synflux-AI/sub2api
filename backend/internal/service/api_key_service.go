@@ -134,7 +134,11 @@ type APIKeyRepository interface {
 	ListByGroupID(ctx context.Context, groupID int64, params pagination.PaginationParams) ([]APIKey, *pagination.PaginationResult, error)
 	SearchAPIKeys(ctx context.Context, userID int64, keyword string, limit int) ([]APIKey, error)
 	ClearGroupIDByGroupID(ctx context.Context, groupID int64) (int64, error)
-	// UpdateGroupIDByUserAndGroup 将用户下绑定 oldGroupID 的所有 Key 迁移到 newGroupID
+	// UpdateGroupIDByUserAndGroup 将用户下绑定 oldGroupID 的所有 Key 迁移到 newGroupID。
+	//
+	// issue #171 起「绑定」= 默认组指针 UNION api_key_groups 关联表，实现必须把两侧
+	// 一起迁移。只改默认组指针会留下指向 oldGroupID 的关联行，读模型据此得到同平台双绑，
+	// 而调用方 ReplaceUserGroup 紧接着就撤销了 oldGroupID 的授权 —— 结果是 403。
 	UpdateGroupIDByUserAndGroup(ctx context.Context, userID, oldGroupID, newGroupID int64) (int64, error)
 	CountByGroupID(ctx context.Context, groupID int64) (int64, error)
 	ListKeysByUserID(ctx context.Context, userID int64) ([]string, error)
@@ -142,26 +146,14 @@ type APIKeyRepository interface {
 	// （默认组 api_keys.group_id UNION 关联表 api_key_groups），用于认证缓存失效。
 	ListKeysByGroupID(ctx context.Context, groupID int64) ([]string, error)
 
-	// --- 多分组绑定（issue #171）---
-
-	// ListBoundGroupIDs 返回 api_key_groups 里该 Key 的**原始**绑定分组 ID，按 group_id 升序。
+	// 多分组绑定（issue #171）刻意**不**在本接口上开新方法。
 	//
-	// 「原始」= 不 join groups 表、不过滤已软删的分组，返回的就是持久化的绑定集合本身。
-	// 需要「可用分组」语义的读路径请用 APIKey.BoundGroups（已过滤软删）。
-	ListBoundGroupIDs(ctx context.Context, apiKeyID int64) ([]int64, error)
-
-	// ReplaceBindings 以**整体替换**语义重写该 Key 在 api_key_groups 里的绑定集合。
-	// 详见 repository 实现上的不变量说明。bindings 为空表示清空该 Key 的全部绑定。
-	ReplaceBindings(ctx context.Context, apiKeyID int64, bindings []GroupBinding) error
-
-	// ListKeyIDsByBoundGroupID 返回绑定集合包含 groupID 的所有未软删 Key 的 ID，按 ID 升序
-	// （默认组 UNION 关联表，与 ListKeysByGroupID 同一谓词）。
-	ListKeyIDsByBoundGroupID(ctx context.Context, groupID int64) ([]int64, error)
-
-	// DeleteBindingsByGroupID 物理删除该分组的全部绑定行，返回删除行数。
-	// 分组走软删（UPDATE deleted_at），不会触发 FK ON DELETE CASCADE，
-	// 所以分组删除路径必须显式调用本方法清理关联行。
-	DeleteBindingsByGroupID(ctx context.Context, groupID int64) (int64, error)
+	// api_key_groups 的读写全部封装在 repository 内部，由已有方法（Create / Update
+	// 的 fields.BoundGroups、UpdateGroupIDByUserAndGroup、group_repo.DeleteCascade）
+	// 顺带维护。服务层拿到的是组装好的 APIKey.BoundGroups，不需要、也不应该直接
+	// 操作关联表 —— 每加一个方法，仓库里所有 APIKeyRepository 测试替身都要跟着长一段
+	// 空实现，同步上游时全是冲突。
+	// 真要新增时，先确认服务层确实有调用方，再决定是否值得放进接口。
 
 	// Quota methods
 	IncrementQuotaUsed(ctx context.Context, id int64, amount float64) (float64, error)

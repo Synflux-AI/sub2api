@@ -108,22 +108,6 @@ func (s *authRepoStub) ListKeysByGroupID(ctx context.Context, groupID int64) ([]
 	return s.listKeysByGroupID(ctx, groupID)
 }
 
-func (s *authRepoStub) ListBoundGroupIDs(ctx context.Context, apiKeyID int64) ([]int64, error) {
-	panic("unexpected ListBoundGroupIDs call")
-}
-
-func (s *authRepoStub) ReplaceBindings(ctx context.Context, apiKeyID int64, bindings []GroupBinding) error {
-	panic("unexpected ReplaceBindings call")
-}
-
-func (s *authRepoStub) ListKeyIDsByBoundGroupID(ctx context.Context, groupID int64) ([]int64, error) {
-	panic("unexpected ListKeyIDsByBoundGroupID call")
-}
-
-func (s *authRepoStub) DeleteBindingsByGroupID(ctx context.Context, groupID int64) (int64, error) {
-	panic("unexpected DeleteBindingsByGroupID call")
-}
-
 func (s *authRepoStub) IncrementQuotaUsed(ctx context.Context, id int64, amount float64) (float64, error) {
 	panic("unexpected IncrementQuotaUsed call")
 }
