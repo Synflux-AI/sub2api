@@ -895,14 +895,121 @@ func (r *apiKeyRepository) ClearGroupIDByGroupID(ctx context.Context, groupID in
 	return int64(n), err
 }
 
-// UpdateGroupIDByUserAndGroup 将用户下绑定 oldGroupID 的所有 Key 迁移到 newGroupID
+// UpdateGroupIDByUserAndGroup 将用户下绑定 oldGroupID 的所有 Key 迁移到 newGroupID，
+// **同时把 api_key_groups 里的绑定行一并换掉**（issue #171）。
+//
+// 为什么关联表必须一起改：本方法唯一的调用方 adminService.ReplaceUserGroup 在同一事务里
+// 还会撤掉用户对 oldGroupID 的授权。若只改 api_keys.group_id 而留下关联行，读模型
+// （boundGroupsFromEntity 做「默认组 UNION 关联表」）会得到 {old, new} 两个分组；
+// 两者平台通常相同 —— 于是同平台双绑，选组按 (platform, id) 取到 id 更小的 old，
+// 而 old 的授权刚被撤销，认证直接 403 GROUP_NOT_ALLOWED。这是「只置 GroupID 不置
+// BoundGroups」这一类不变量破裂里最隐蔽的一条（另见 APIKeyUpdateFields.BoundGroups
+// 与 service.APIKeyService.Update 里的同款说明）。
+//
+// 迁移范围是「绑定集合**包含** oldGroupID」（apiKeyBoundToGroup：默认组 UNION 关联表），
+// 比只看默认组指针更宽。理由同上：授权被撤销之后，任何仍绑着 old 的 Key 都会 403，
+// 不只是默认组是 old 的那些。单分组数据下两者完全等价（迁移 230 保证每把 Key 的
+// 默认组同时有一条关联行），所以返回的迁移条数语义与改造前一致。
+//
+// 写关联表仍然只走 replaceBindings（整体替换），不新增定点插入路径 ——
+// 这样「Key 已经绑了 newGroupID」「残留的软删分组绑定行」这两种情况都被顺带收敛掉，
+// 不会撞 (api_key_id, platform) 唯一索引。真正的同平台冲突
+// （old 换成 new 之后与另一个在用绑定同平台）会在 CreateBulk 处翻译成
+// ErrAPIKeyGroupBindingConflict 并整体回滚，属于 fail-closed，符合预期。
 func (r *apiKeyRepository) UpdateGroupIDByUserAndGroup(ctx context.Context, userID, oldGroupID, newGroupID int64) (int64, error) {
-	client := clientFromContext(ctx, r.client)
-	n, err := client.APIKey.Update().
+	if existingTx := dbent.TxFromContext(ctx); existingTx != nil {
+		return r.updateGroupIDByUserAndGroup(ctx, existingTx.Client(), userID, oldGroupID, newGroupID)
+	}
+
+	tx, err := r.client.Tx(ctx)
+	if err != nil && !errors.Is(err, dbent.ErrTxStarted) {
+		return 0, err
+	}
+	exec := r.client
+	if err == nil {
+		defer func() { _ = tx.Rollback() }()
+		exec = tx.Client()
+	}
+
+	n, err := r.updateGroupIDByUserAndGroup(ctx, exec, userID, oldGroupID, newGroupID)
+	if err != nil {
+		return 0, err
+	}
+
+	if tx != nil {
+		if err := tx.Commit(); err != nil {
+			return 0, err
+		}
+	}
+	return n, nil
+}
+
+// updateGroupIDByUserAndGroup 是上面的事务内实现。exec 必须已绑定到调用方持有的事务：
+// 关联表替换与默认组指针改写要么一起成功、要么一起回滚，中间态就是同平台双绑。
+func (r *apiKeyRepository) updateGroupIDByUserAndGroup(ctx context.Context, exec *dbent.Client, userID, oldGroupID, newGroupID int64) (int64, error) {
+	newPlatform, err := exec.Group.Query().
+		Where(group.IDEQ(newGroupID)).
+		Select(group.FieldPlatform).
+		String(ctx)
+	if err != nil {
+		if dbent.IsNotFound(err) {
+			return 0, service.ErrGroupNotFound
+		}
+		return 0, err
+	}
+
+	// 先迁关联表。这里必须拿到每把 Key 的**完整**绑定集合才能整体替换，
+	// 所以 eager-load 两条边，交给 boundGroupsFromEntity 走与读路径同一份合并/去重/软删过滤。
+	keys, err := exec.APIKey.Query().
+		Where(apikey.DeletedAtIsNil(), apikey.UserIDEQ(userID), apiKeyBoundToGroup(oldGroupID)).
+		WithGroup().
+		WithBoundGroups().
+		All(ctx)
+	if err != nil {
+		return 0, err
+	}
+	for _, k := range keys {
+		if err := r.replaceBindings(ctx, exec, k.ID,
+			swapGroupBinding(service.GroupBindingsFromGroups(boundGroupsFromEntity(k)), oldGroupID, newGroupID, newPlatform),
+		); err != nil {
+			return 0, err
+		}
+	}
+
+	// 默认组指针：语句与改造前逐字相同，返回值语义（迁移条数）因此不变。
+	n, err := exec.APIKey.Update().
 		Where(apikey.UserIDEQ(userID), apikey.GroupIDEQ(oldGroupID), apikey.DeletedAtIsNil()).
 		SetGroupID(newGroupID).
 		Save(ctx)
-	return int64(n), err
+	if err != nil {
+		return 0, err
+	}
+	return int64(n), nil
+}
+
+// swapGroupBinding 把绑定集合里的 oldGroupID 换成 (newGroupID, newPlatform)。
+//
+// 已经绑了 newGroupID 时只做删除、不重复添加（PK 是 (api_key_id, group_id)，
+// 重复元素会撞主键）。集合里本来没有 oldGroupID 时也会补上 newGroupID ——
+// 调用方筛出来的 Key 一定与 old 有关联，走到这里说明关联只存在于默认组指针那一侧
+// （例如 old 已被软删、关联行已被清理），补上才是正确的迁移结果。
+func swapGroupBinding(bindings []service.GroupBinding, oldGroupID, newGroupID int64, newPlatform string) []service.GroupBinding {
+	out := make([]service.GroupBinding, 0, len(bindings)+1)
+	hasNew := false
+	for _, b := range bindings {
+		if b.GroupID == oldGroupID {
+			continue
+		}
+		if b.GroupID == newGroupID {
+			hasNew = true
+		}
+		out = append(out, b)
+	}
+	if !hasNew {
+		out = append(out, service.GroupBinding{GroupID: newGroupID, Platform: newPlatform})
+	}
+	service.SortGroupBindings(out)
+	return out
 }
 
 // CountByGroupID 获取分组的 API Key 数量

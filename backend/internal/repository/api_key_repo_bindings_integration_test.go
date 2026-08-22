@@ -537,3 +537,122 @@ func TestUpdateRollsBackMainRowWhenBindingWriteFailsOnPostgres(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []int64{grp.ID}, bound, "原有绑定不得被半途删除")
 }
+
+// --- UpdateGroupIDByUserAndGroup：默认组指针与关联表必须一起迁移 ---
+//
+// 这组用例钉住的回归：只改 api_keys.group_id、不动 api_key_groups 时，读模型
+// （默认组 UNION 关联表）会同时看到 old 与 new。两者平台通常相同 —— 于是同平台双绑，
+// 选组按 (platform, id) 命中 id 更小的 old，而唯一调用方 ReplaceUserGroup 紧接着就
+// 撤销了 old 的授权，认证直接 403 GROUP_NOT_ALLOWED。
+
+// 单分组 Key 是迁移 230 之后的存量数据形状，这条是最承重的一条。
+func (s *APIKeyBindingsSuite) TestUpdateGroupIDByUserAndGroupMovesBindingRow() {
+	user := s.mustUser()
+	old := s.mustGroup(service.PlatformAnthropic)
+	next := s.mustGroup(service.PlatformAnthropic)
+	key := s.mustKey(user.ID, old, old)
+
+	n, err := s.repo.UpdateGroupIDByUserAndGroup(s.ctx, user.ID, old.ID, next.ID)
+	s.Require().NoError(err)
+	s.Require().Equal(int64(1), n, "迁移条数语义不变：默认组指针命中几行就是几行")
+
+	bound, err := s.repo.ListBoundGroupIDs(s.ctx, key.ID)
+	s.Require().NoError(err)
+	s.Require().Equal([]int64{next.ID}, bound, "关联行必须跟着默认组一起迁走，不能留下 old")
+
+	got, err := s.repo.GetByID(s.ctx, key.ID)
+	s.Require().NoError(err)
+	s.Require().NotNil(got.GroupID)
+	s.Require().Equal(next.ID, *got.GroupID)
+	s.Require().Len(got.BoundGroups, 1,
+		"读模型只能看到一个分组；出现两个就是同平台双绑，选组会命中已被撤权的 old 并 403")
+	s.Require().Equal(next.ID, got.BoundGroups[0].ID)
+}
+
+// 迁移只能动 old 这一条绑定，其它平台的绑定必须原样保留。
+func (s *APIKeyBindingsSuite) TestUpdateGroupIDByUserAndGroupKeepsOtherPlatformBindings() {
+	user := s.mustUser()
+	old := s.mustGroup(service.PlatformAnthropic)
+	next := s.mustGroup(service.PlatformAnthropic)
+	openai := s.mustGroup(service.PlatformOpenAI)
+	key := s.mustKey(user.ID, old, old, openai)
+
+	_, err := s.repo.UpdateGroupIDByUserAndGroup(s.ctx, user.ID, old.ID, next.ID)
+	s.Require().NoError(err)
+
+	bound, err := s.repo.ListBoundGroupIDs(s.ctx, key.ID)
+	s.Require().NoError(err)
+	s.Require().ElementsMatch([]int64{next.ID, openai.ID}, bound,
+		"只替换 old 这一条，OpenAI 侧的绑定不得被顺手删掉")
+}
+
+// 授权被撤销之后，任何仍绑着 old 的 Key 都会 403，不只是默认组是 old 的那些，
+// 所以迁移范围是「绑定集合包含 old」而不是「默认组等于 old」。
+func (s *APIKeyBindingsSuite) TestUpdateGroupIDByUserAndGroupMigratesNonDefaultBinding() {
+	user := s.mustUser()
+	old := s.mustGroup(service.PlatformAnthropic)
+	next := s.mustGroup(service.PlatformAnthropic)
+	openai := s.mustGroup(service.PlatformOpenAI)
+	// 默认组是 openai，old 只是一条非默认绑定。
+	key := s.mustKey(user.ID, openai, openai, old)
+
+	n, err := s.repo.UpdateGroupIDByUserAndGroup(s.ctx, user.ID, old.ID, next.ID)
+	s.Require().NoError(err)
+	s.Require().Equal(int64(0), n, "默认组指针一行都没命中，返回的迁移条数应为 0")
+
+	bound, err := s.repo.ListBoundGroupIDs(s.ctx, key.ID)
+	s.Require().NoError(err)
+	s.Require().ElementsMatch([]int64{next.ID, openai.ID}, bound,
+		"非默认绑定同样要迁移，否则撤权后这把 Key 在 anthropic 上必 403")
+
+	got, err := s.repo.GetByID(s.ctx, key.ID)
+	s.Require().NoError(err)
+	s.Require().NotNil(got.GroupID)
+	s.Require().Equal(openai.ID, *got.GroupID, "默认组指针不该被这次迁移改动")
+}
+
+// 迁移必须按用户隔离：别的用户绑着同一个 old 分组的 Key 一行都不能动。
+func (s *APIKeyBindingsSuite) TestUpdateGroupIDByUserAndGroupIsScopedToUser() {
+	owner := s.mustUser()
+	other := s.mustUser()
+	old := s.mustGroup(service.PlatformAnthropic)
+	next := s.mustGroup(service.PlatformAnthropic)
+	s.mustKey(owner.ID, old, old)
+	untouched := s.mustKey(other.ID, old, old)
+
+	_, err := s.repo.UpdateGroupIDByUserAndGroup(s.ctx, owner.ID, old.ID, next.ID)
+	s.Require().NoError(err)
+
+	bound, err := s.repo.ListBoundGroupIDs(s.ctx, untouched.ID)
+	s.Require().NoError(err)
+	s.Require().Equal([]int64{old.ID}, bound, "其他用户的绑定不得被波及")
+}
+
+// 已经绑了目标分组时只做删除、不重复插入 —— 关联表主键是 (api_key_id, group_id)。
+func (s *APIKeyBindingsSuite) TestUpdateGroupIDByUserAndGroupHandlesAlreadyBoundTarget() {
+	user := s.mustUser()
+	old := s.mustGroup(service.PlatformAnthropic)
+	next := s.mustGroup(service.PlatformOpenAI)
+	key := s.mustKey(user.ID, old, old, next)
+
+	_, err := s.repo.UpdateGroupIDByUserAndGroup(s.ctx, user.ID, old.ID, next.ID)
+	s.Require().NoError(err, "目标分组已在绑定集合内时不能撞主键")
+
+	bound, err := s.repo.ListBoundGroupIDs(s.ctx, key.ID)
+	s.Require().NoError(err)
+	s.Require().Equal([]int64{next.ID}, bound, "结果是去重后的集合")
+}
+
+// old 换成 new 之后与另一条在用绑定同平台时必须整体失败（fail-closed），
+// 而不是把同平台双绑写进库里。
+func (s *APIKeyBindingsSuite) TestUpdateGroupIDByUserAndGroupRejectsSamePlatformCollision() {
+	user := s.mustUser()
+	old := s.mustGroup(service.PlatformAnthropic)
+	openai := s.mustGroup(service.PlatformOpenAI)
+	next := s.mustGroup(service.PlatformOpenAI)
+	s.mustKey(user.ID, old, old, openai)
+
+	_, err := s.repo.UpdateGroupIDByUserAndGroup(s.ctx, user.ID, old.ID, next.ID)
+	s.Require().Error(err, "迁移后会出现同平台双绑，必须整体拒绝")
+	s.Require().ErrorIs(err, service.ErrAPIKeyGroupBindingConflict)
+}
