@@ -199,8 +199,12 @@ func TestHandleResponsesFailoverExhaustedUsesRuleSafeResponseFailedAfterStreamSt
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
-	_, err := c.Writer.Write([]byte(": keepalive\n\n"))
+	// 心跳必须同时登记字节数：合并上游后 handleResponsesFailoverExhausted 只在
+	// "尚未写出内容或写出的全是心跳" 时才补终止帧，生产侧所有心跳写出点都会调用
+	// recordGatewayStreamHeartbeat（见 gateway_helper.go / user_msg_queue_helper.go）。
+	written, err := c.Writer.Write([]byte(": keepalive\n\n"))
 	require.NoError(t, err)
+	recordGatewayStreamHeartbeat(c, written)
 
 	(&GatewayHandler{}).handleResponsesFailoverExhausted(c, &service.UpstreamFailoverError{
 		StatusCode:       http.StatusTooManyRequests,

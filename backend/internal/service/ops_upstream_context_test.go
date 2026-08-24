@@ -76,13 +76,6 @@ func TestAppendOpsUpstreamErrorMatchesRawBodyButStoresSanitizedDetail(t *testing
 		Detail:             detail,
 	})
 
-	// 规则必须按原文命中：secret 出现在 Detail 里，脱敏后会被替换为掩码，
-	// 如果匹配用的是脱敏后的文本，这条断言会失败。
-	v, exists := c.Get(OpsSkipPassthroughKey)
-	require.True(t, exists, "skip_monitoring 规则应按原始 Detail 命中")
-	skip, _ := v.(bool)
-	require.True(t, skip)
-
 	// 落库/日志字段必须是脱敏后的值，不能因为要匹配规则就保留原文。
 	raw, ok := c.Get(OpsUpstreamErrorsKey)
 	require.True(t, ok)
@@ -91,4 +84,10 @@ func TestAppendOpsUpstreamErrorMatchesRawBodyButStoresSanitizedDetail(t *testing
 	require.Len(t, events, 1)
 	require.NotContains(t, events[0].Detail, secret)
 	require.Contains(t, events[0].Detail, upstreamSensitiveMask)
+
+	// 规则必须按原文命中：secret 出现在 Detail 里，脱敏后会被替换为掩码，
+	// 如果匹配用的是脱敏后的文本，这条断言会失败。命中结果记在事件自身
+	// （而不是 OpsSkipPassthroughKey）：只有最终对客户端可见的那次失败才决定
+	// 是否隐藏，中途已恢复的尝试不能压掉后面的真失败。
+	require.True(t, events[0].SkipMonitoring, "skip_monitoring 规则应按原始 Detail 命中")
 }

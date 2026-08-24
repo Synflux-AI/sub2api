@@ -7,6 +7,7 @@ import settings from './settings'
 import smartRouting from './smartRouting'
 import audit from './audit'
 import promptAudit from './promptAudit'
+import plugins from './plugins'
 
 export default {
   ...overview,
@@ -18,4 +19,5 @@ export default {
   ...smartRouting,
   ...audit,
   ...promptAudit,
+  ...plugins,
 }
