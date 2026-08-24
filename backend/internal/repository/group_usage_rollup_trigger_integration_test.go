@@ -128,14 +128,29 @@ func TestGroupUsageRollupTriggerSerializesInsertTransactionAcrossMidnight(t *tes
 	defer cancel()
 
 	schema := createGroupUsageRollupTriggerTestSchema(t, ctx, false)
+
+	// 触发器按写入会话的 TimeZone 折算日桶，而水位播种、发布与断言分处不同会话。
+	// 一次性取定写入时区的自然日并显式传给每个会话，避免各会话按自己的时区或
+	// 各自的事务时刻重新解释“今天”（集成库会话默认 UTC，UTC 傍晚已是上海次日）。
+	insertTimezone := "Asia/Shanghai"
+	var insertDate string
+	require.NoError(t, integrationDB.QueryRowContext(ctx, fmt.Sprintf(
+		"SELECT (CURRENT_TIMESTAMP AT TIME ZONE %s)::date::text",
+		pq.QuoteLiteral(insertTimezone),
+	)).Scan(&insertDate))
+
 	seedTx := beginGroupUsageRollupTriggerTestTx(t, ctx, schema)
 	_, err := seedTx.ExecContext(ctx, `
 		INSERT INTO groups (id) VALUES (10);
 		INSERT INTO users (id) VALUES (1);
-		UPDATE usage_group_rollup_state
-		SET closed_before = CURRENT_DATE
-		WHERE id = 1;
 	`)
+	require.NoError(t, err)
+	// 带参数的语句不能与上面的多语句批处理合并（预处理语句只接受单条命令）。
+	_, err = seedTx.ExecContext(ctx, `
+		UPDATE usage_group_rollup_state
+		SET closed_before = $1::date
+		WHERE id = 1
+	`, insertDate)
 	require.NoError(t, err)
 	require.NoError(t, seedTx.Commit())
 
@@ -151,16 +166,17 @@ func TestGroupUsageRollupTriggerSerializesInsertTransactionAcrossMidnight(t *tes
 
 	insertTx := beginGroupUsageRollupTriggerTestTx(t, ctx, schema)
 	defer func() { _ = insertTx.Rollback() }()
-	require.NoError(t, setGroupUsageRollupTriggerTimeZone(ctx, insertTx, "Asia/Shanghai"))
+	require.NoError(t, setGroupUsageRollupTriggerTimeZone(ctx, insertTx, insertTimezone))
 	var insertBackendPID int
 	require.NoError(t, insertTx.QueryRowContext(ctx, "SELECT pg_backend_pid()").Scan(&insertBackendPID))
 
 	insertResult := make(chan error, 1)
 	go func() {
+		// 写入会话时区下当日的最后一秒：在途写入属于 insertDate，而发布方已跨零点。
 		_, insertErr := insertTx.ExecContext(ctx, `
 			INSERT INTO usage_logs (id, user_id, group_id, actual_cost, created_at)
-			VALUES (1, 1, 10, 1.25, CURRENT_TIMESTAMP)
-		`)
+			VALUES (1, 1, 10, 1.25, $1::date + TIME '23:59:59')
+		`, insertDate)
 		insertResult <- insertErr
 	}()
 
@@ -174,9 +190,9 @@ func TestGroupUsageRollupTriggerSerializesInsertTransactionAcrossMidnight(t *tes
 
 	_, err = syncTx.ExecContext(ctx, `
 		UPDATE usage_group_rollup_state
-		SET closed_before = CURRENT_DATE + 1
+		SET closed_before = $1::date + 1
 		WHERE id = 1
-	`)
+	`, insertDate)
 	require.NoError(t, err)
 	require.NoError(t, syncTx.Commit())
 
@@ -188,17 +204,13 @@ func TestGroupUsageRollupTriggerSerializesInsertTransactionAcrossMidnight(t *tes
 	}
 	require.NoError(t, insertTx.Commit())
 
-	var currentDate string
-	require.NoError(t, integrationDB.QueryRowContext(ctx, `
-		SELECT CURRENT_DATE::text
-	`).Scan(&currentDate))
 	var closedBefore string
 	err = integrationDB.QueryRowContext(ctx, fmt.Sprintf(
 		"SELECT closed_before::text FROM %s.usage_group_rollup_state WHERE id = 1",
 		pq.QuoteIdentifier(schema),
 	)).Scan(&closedBefore)
 	require.NoError(t, err)
-	require.Equal(t, currentDate, closedBefore)
+	require.Equal(t, insertDate, closedBefore)
 }
 
 func TestGroupUsageRollupTriggerKeepsWatermarkForTodayInsert(t *testing.T) {
