@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
@@ -175,6 +176,7 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 		if err != nil {
 			if len(fs.FailedAccountIDs) == 0 {
 				cls := classifyNoAccountErrorFromGin(c, h.gatewayService, apiKey, reqModel, reqModel, effectiveAPIKeyPlatform(c, apiKey))
+				cls = classifySelectionFailureError(err, cls)
 				if !cls.ModelNotFound {
 					markOpsRoutingCapacityLimitedIfNoAvailable(c, err)
 				}
@@ -365,35 +367,39 @@ func (h *GatewayHandler) handleResponsesFailoverExhausted(c *gin.Context, lastEr
 		copyFailoverRetryAfter(c, lastErr.ResponseHeaders)
 	}
 	statusCode := http.StatusBadGateway
-	errType := "server_error"
-	message := "All available accounts exhausted"
 	if lastErr != nil && lastErr.StatusCode > 0 {
 		statusCode = lastErr.StatusCode
 	}
+	status, code, message := statusCode, "server_error", "All available accounts exhausted"
 	if lastErr != nil &&
 		lastErr.ExhaustedAction == service.ErrorHandlingExhaustedActionPassthrough &&
 		lastErr.SafeErrorType != "" && lastErr.SafeErrorMessage != "" {
-		errType = lastErr.SafeErrorType
-		message = lastErr.SafeErrorMessage
-		service.SetOpsUpstreamError(c, statusCode, message, "")
-		if streamStarted {
-			h.handleStreamingAwareError(c, statusCode, errType, message, true)
-			return
+		code, message = lastErr.SafeErrorType, lastErr.SafeErrorMessage
+		service.SetOpsUpstreamError(c, status, message, "")
+	} else if lastErr != nil && lastErr.IsCredentialFailure() {
+		status, message = credentialFailoverClientResponse(lastErr)
+	} else if lastErr != nil && lastErr.IsOpenAICapacityShed() && strings.TrimSpace(lastErr.ClientMessage) != "" {
+		status = lastErr.ClientStatusCode
+		if status <= 0 {
+			status = http.StatusServiceUnavailable
 		}
-		h.responsesErrorResponse(c, statusCode, errType, message)
-		return
-	}
-	if lastErr != nil && lastErr.IsCredentialFailure() {
-		statusCode, message = credentialFailoverClientResponse(lastErr)
+		message = lastErr.ClientMessage
 	} else if lastErr != nil && service.IsOpenAISilentRefusalErrorBody(lastErr.ResponseBody) {
-		statusCode = http.StatusBadGateway
-		errType = "upstream_error"
-		message = service.OpenAISilentRefusalClientMessage()
-		service.SetOpsUpstreamError(c, statusCode, message, "")
+		service.SetOpsUpstreamError(c, statusCode, service.OpenAISilentRefusalClientMessage(), "")
+		status, code, message = http.StatusBadGateway, "upstream_error", service.OpenAISilentRefusalClientMessage()
+	} else if lastErr != nil && statusCode == http.StatusTooManyRequests {
+		status, code, message = http.StatusTooManyRequests, "rate_limit_error", "All available accounts are currently rate-limited. Please retry later."
 	}
 	if streamStarted {
-		h.handleStreamingAwareError(c, statusCode, errType, message, true)
+		// A slot-wait heartbeat commits HTTP 200 before any upstream response.
+		// In that case a terminal frame is still required; once any semantic or
+		// official terminal bytes exist, preserve them without appending a second
+		// generic response.failed.
+		service.MarkOpsStreamError(c, code, message, status)
+		if c != nil && c.Writer != nil && (c.Writer.Size() <= 0 || gatewayStreamHasOnlyHeartbeats(c)) {
+			writeResponsesFailedSSE(c, code, message)
+		}
 		return
 	}
-	h.responsesErrorResponse(c, statusCode, errType, message)
+	h.responsesErrorResponse(c, status, code, message)
 }

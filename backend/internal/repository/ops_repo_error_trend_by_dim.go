@@ -36,7 +36,7 @@ func buildErrorTrendByDimQuery(dimension, where, bucketExpr string, limitArgInde
 	_, _ = b.WriteString("  SELECT " + dim.keyExpr + " AS k, COUNT(*) AS c\n")
 	_, _ = b.WriteString("  FROM ops_error_logs\n  " + where + "\n    AND " + errFilter + "\n")
 	_, _ = b.WriteString("  GROUP BY 1 ORDER BY c DESC, 1 ASC\n")
-	_, _ = b.WriteString(fmt.Sprintf("  LIMIT $%d\n", limitArgIndex))
+	_, _ = fmt.Fprintf(&b, "  LIMIT $%d\n", limitArgIndex)
 	_, _ = b.WriteString("),\n")
 	_, _ = b.WriteString("labeled AS (\n")
 	_, _ = b.WriteString("  SELECT COALESCE(g.k::text, '') AS key, " + labelSelect + " AS label\n")
