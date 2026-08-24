@@ -122,7 +122,7 @@ func buildErrorBreakdownQuery(dimension, where string, limitArgIndex int) (items
 	_, _ = b.WriteString("SELECT COALESCE(g.k::text, '') AS key, " + labelSelect + " AS label, g.total, g.sla, g.business_limited\n")
 	_, _ = b.WriteString("FROM g " + dim.joinSQL + "\n")
 	_, _ = b.WriteString("ORDER BY g.total DESC\n")
-	_, _ = b.WriteString(fmt.Sprintf("LIMIT $%d", limitArgIndex))
+	_, _ = fmt.Fprintf(&b, "LIMIT $%d", limitArgIndex)
 	itemsSQL = b.String()
 
 	totalsSQL = "SELECT COUNT(*) AS total,\n" +
