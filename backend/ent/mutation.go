@@ -45780,6 +45780,14 @@ type UsageLogMutation struct {
 	addduration_ms               *int
 	first_token_ms               *int
 	addfirst_token_ms            *int
+	auth_latency_ms              *int
+	addauth_latency_ms           *int
+	routing_latency_ms           *int
+	addrouting_latency_ms        *int
+	upstream_latency_ms          *int
+	addupstream_latency_ms       *int
+	response_latency_ms          *int
+	addresponse_latency_ms       *int
 	user_agent                   *string
 	ip_address                   *string
 	image_count                  *int
@@ -47717,6 +47725,286 @@ func (m *UsageLogMutation) ResetFirstTokenMs() {
 	delete(m.clearedFields, usagelog.FieldFirstTokenMs)
 }
 
+// SetAuthLatencyMs sets the "auth_latency_ms" field.
+func (m *UsageLogMutation) SetAuthLatencyMs(i int) {
+	m.auth_latency_ms = &i
+	m.addauth_latency_ms = nil
+}
+
+// AuthLatencyMs returns the value of the "auth_latency_ms" field in the mutation.
+func (m *UsageLogMutation) AuthLatencyMs() (r int, exists bool) {
+	v := m.auth_latency_ms
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAuthLatencyMs returns the old "auth_latency_ms" field's value of the UsageLog entity.
+// If the UsageLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageLogMutation) OldAuthLatencyMs(ctx context.Context) (v *int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAuthLatencyMs is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAuthLatencyMs requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAuthLatencyMs: %w", err)
+	}
+	return oldValue.AuthLatencyMs, nil
+}
+
+// AddAuthLatencyMs adds i to the "auth_latency_ms" field.
+func (m *UsageLogMutation) AddAuthLatencyMs(i int) {
+	if m.addauth_latency_ms != nil {
+		*m.addauth_latency_ms += i
+	} else {
+		m.addauth_latency_ms = &i
+	}
+}
+
+// AddedAuthLatencyMs returns the value that was added to the "auth_latency_ms" field in this mutation.
+func (m *UsageLogMutation) AddedAuthLatencyMs() (r int, exists bool) {
+	v := m.addauth_latency_ms
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearAuthLatencyMs clears the value of the "auth_latency_ms" field.
+func (m *UsageLogMutation) ClearAuthLatencyMs() {
+	m.auth_latency_ms = nil
+	m.addauth_latency_ms = nil
+	m.clearedFields[usagelog.FieldAuthLatencyMs] = struct{}{}
+}
+
+// AuthLatencyMsCleared returns if the "auth_latency_ms" field was cleared in this mutation.
+func (m *UsageLogMutation) AuthLatencyMsCleared() bool {
+	_, ok := m.clearedFields[usagelog.FieldAuthLatencyMs]
+	return ok
+}
+
+// ResetAuthLatencyMs resets all changes to the "auth_latency_ms" field.
+func (m *UsageLogMutation) ResetAuthLatencyMs() {
+	m.auth_latency_ms = nil
+	m.addauth_latency_ms = nil
+	delete(m.clearedFields, usagelog.FieldAuthLatencyMs)
+}
+
+// SetRoutingLatencyMs sets the "routing_latency_ms" field.
+func (m *UsageLogMutation) SetRoutingLatencyMs(i int) {
+	m.routing_latency_ms = &i
+	m.addrouting_latency_ms = nil
+}
+
+// RoutingLatencyMs returns the value of the "routing_latency_ms" field in the mutation.
+func (m *UsageLogMutation) RoutingLatencyMs() (r int, exists bool) {
+	v := m.routing_latency_ms
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldRoutingLatencyMs returns the old "routing_latency_ms" field's value of the UsageLog entity.
+// If the UsageLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageLogMutation) OldRoutingLatencyMs(ctx context.Context) (v *int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldRoutingLatencyMs is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldRoutingLatencyMs requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldRoutingLatencyMs: %w", err)
+	}
+	return oldValue.RoutingLatencyMs, nil
+}
+
+// AddRoutingLatencyMs adds i to the "routing_latency_ms" field.
+func (m *UsageLogMutation) AddRoutingLatencyMs(i int) {
+	if m.addrouting_latency_ms != nil {
+		*m.addrouting_latency_ms += i
+	} else {
+		m.addrouting_latency_ms = &i
+	}
+}
+
+// AddedRoutingLatencyMs returns the value that was added to the "routing_latency_ms" field in this mutation.
+func (m *UsageLogMutation) AddedRoutingLatencyMs() (r int, exists bool) {
+	v := m.addrouting_latency_ms
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearRoutingLatencyMs clears the value of the "routing_latency_ms" field.
+func (m *UsageLogMutation) ClearRoutingLatencyMs() {
+	m.routing_latency_ms = nil
+	m.addrouting_latency_ms = nil
+	m.clearedFields[usagelog.FieldRoutingLatencyMs] = struct{}{}
+}
+
+// RoutingLatencyMsCleared returns if the "routing_latency_ms" field was cleared in this mutation.
+func (m *UsageLogMutation) RoutingLatencyMsCleared() bool {
+	_, ok := m.clearedFields[usagelog.FieldRoutingLatencyMs]
+	return ok
+}
+
+// ResetRoutingLatencyMs resets all changes to the "routing_latency_ms" field.
+func (m *UsageLogMutation) ResetRoutingLatencyMs() {
+	m.routing_latency_ms = nil
+	m.addrouting_latency_ms = nil
+	delete(m.clearedFields, usagelog.FieldRoutingLatencyMs)
+}
+
+// SetUpstreamLatencyMs sets the "upstream_latency_ms" field.
+func (m *UsageLogMutation) SetUpstreamLatencyMs(i int) {
+	m.upstream_latency_ms = &i
+	m.addupstream_latency_ms = nil
+}
+
+// UpstreamLatencyMs returns the value of the "upstream_latency_ms" field in the mutation.
+func (m *UsageLogMutation) UpstreamLatencyMs() (r int, exists bool) {
+	v := m.upstream_latency_ms
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldUpstreamLatencyMs returns the old "upstream_latency_ms" field's value of the UsageLog entity.
+// If the UsageLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageLogMutation) OldUpstreamLatencyMs(ctx context.Context) (v *int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldUpstreamLatencyMs is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldUpstreamLatencyMs requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldUpstreamLatencyMs: %w", err)
+	}
+	return oldValue.UpstreamLatencyMs, nil
+}
+
+// AddUpstreamLatencyMs adds i to the "upstream_latency_ms" field.
+func (m *UsageLogMutation) AddUpstreamLatencyMs(i int) {
+	if m.addupstream_latency_ms != nil {
+		*m.addupstream_latency_ms += i
+	} else {
+		m.addupstream_latency_ms = &i
+	}
+}
+
+// AddedUpstreamLatencyMs returns the value that was added to the "upstream_latency_ms" field in this mutation.
+func (m *UsageLogMutation) AddedUpstreamLatencyMs() (r int, exists bool) {
+	v := m.addupstream_latency_ms
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearUpstreamLatencyMs clears the value of the "upstream_latency_ms" field.
+func (m *UsageLogMutation) ClearUpstreamLatencyMs() {
+	m.upstream_latency_ms = nil
+	m.addupstream_latency_ms = nil
+	m.clearedFields[usagelog.FieldUpstreamLatencyMs] = struct{}{}
+}
+
+// UpstreamLatencyMsCleared returns if the "upstream_latency_ms" field was cleared in this mutation.
+func (m *UsageLogMutation) UpstreamLatencyMsCleared() bool {
+	_, ok := m.clearedFields[usagelog.FieldUpstreamLatencyMs]
+	return ok
+}
+
+// ResetUpstreamLatencyMs resets all changes to the "upstream_latency_ms" field.
+func (m *UsageLogMutation) ResetUpstreamLatencyMs() {
+	m.upstream_latency_ms = nil
+	m.addupstream_latency_ms = nil
+	delete(m.clearedFields, usagelog.FieldUpstreamLatencyMs)
+}
+
+// SetResponseLatencyMs sets the "response_latency_ms" field.
+func (m *UsageLogMutation) SetResponseLatencyMs(i int) {
+	m.response_latency_ms = &i
+	m.addresponse_latency_ms = nil
+}
+
+// ResponseLatencyMs returns the value of the "response_latency_ms" field in the mutation.
+func (m *UsageLogMutation) ResponseLatencyMs() (r int, exists bool) {
+	v := m.response_latency_ms
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldResponseLatencyMs returns the old "response_latency_ms" field's value of the UsageLog entity.
+// If the UsageLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageLogMutation) OldResponseLatencyMs(ctx context.Context) (v *int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldResponseLatencyMs is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldResponseLatencyMs requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldResponseLatencyMs: %w", err)
+	}
+	return oldValue.ResponseLatencyMs, nil
+}
+
+// AddResponseLatencyMs adds i to the "response_latency_ms" field.
+func (m *UsageLogMutation) AddResponseLatencyMs(i int) {
+	if m.addresponse_latency_ms != nil {
+		*m.addresponse_latency_ms += i
+	} else {
+		m.addresponse_latency_ms = &i
+	}
+}
+
+// AddedResponseLatencyMs returns the value that was added to the "response_latency_ms" field in this mutation.
+func (m *UsageLogMutation) AddedResponseLatencyMs() (r int, exists bool) {
+	v := m.addresponse_latency_ms
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearResponseLatencyMs clears the value of the "response_latency_ms" field.
+func (m *UsageLogMutation) ClearResponseLatencyMs() {
+	m.response_latency_ms = nil
+	m.addresponse_latency_ms = nil
+	m.clearedFields[usagelog.FieldResponseLatencyMs] = struct{}{}
+}
+
+// ResponseLatencyMsCleared returns if the "response_latency_ms" field was cleared in this mutation.
+func (m *UsageLogMutation) ResponseLatencyMsCleared() bool {
+	_, ok := m.clearedFields[usagelog.FieldResponseLatencyMs]
+	return ok
+}
+
+// ResetResponseLatencyMs resets all changes to the "response_latency_ms" field.
+func (m *UsageLogMutation) ResetResponseLatencyMs() {
+	m.response_latency_ms = nil
+	m.addresponse_latency_ms = nil
+	delete(m.clearedFields, usagelog.FieldResponseLatencyMs)
+}
+
 // SetUserAgent sets the "user_agent" field.
 func (m *UsageLogMutation) SetUserAgent(s string) {
 	m.user_agent = &s
@@ -48581,7 +48869,7 @@ func (m *UsageLogMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *UsageLogMutation) Fields() []string {
-	fields := make([]string, 0, 49)
+	fields := make([]string, 0, 53)
 	if m.user != nil {
 		fields = append(fields, usagelog.FieldUserID)
 	}
@@ -48686,6 +48974,18 @@ func (m *UsageLogMutation) Fields() []string {
 	}
 	if m.first_token_ms != nil {
 		fields = append(fields, usagelog.FieldFirstTokenMs)
+	}
+	if m.auth_latency_ms != nil {
+		fields = append(fields, usagelog.FieldAuthLatencyMs)
+	}
+	if m.routing_latency_ms != nil {
+		fields = append(fields, usagelog.FieldRoutingLatencyMs)
+	}
+	if m.upstream_latency_ms != nil {
+		fields = append(fields, usagelog.FieldUpstreamLatencyMs)
+	}
+	if m.response_latency_ms != nil {
+		fields = append(fields, usagelog.FieldResponseLatencyMs)
 	}
 	if m.user_agent != nil {
 		fields = append(fields, usagelog.FieldUserAgent)
@@ -48807,6 +49107,14 @@ func (m *UsageLogMutation) Field(name string) (ent.Value, bool) {
 		return m.DurationMs()
 	case usagelog.FieldFirstTokenMs:
 		return m.FirstTokenMs()
+	case usagelog.FieldAuthLatencyMs:
+		return m.AuthLatencyMs()
+	case usagelog.FieldRoutingLatencyMs:
+		return m.RoutingLatencyMs()
+	case usagelog.FieldUpstreamLatencyMs:
+		return m.UpstreamLatencyMs()
+	case usagelog.FieldResponseLatencyMs:
+		return m.ResponseLatencyMs()
 	case usagelog.FieldUserAgent:
 		return m.UserAgent()
 	case usagelog.FieldIPAddress:
@@ -48914,6 +49222,14 @@ func (m *UsageLogMutation) OldField(ctx context.Context, name string) (ent.Value
 		return m.OldDurationMs(ctx)
 	case usagelog.FieldFirstTokenMs:
 		return m.OldFirstTokenMs(ctx)
+	case usagelog.FieldAuthLatencyMs:
+		return m.OldAuthLatencyMs(ctx)
+	case usagelog.FieldRoutingLatencyMs:
+		return m.OldRoutingLatencyMs(ctx)
+	case usagelog.FieldUpstreamLatencyMs:
+		return m.OldUpstreamLatencyMs(ctx)
+	case usagelog.FieldResponseLatencyMs:
+		return m.OldResponseLatencyMs(ctx)
 	case usagelog.FieldUserAgent:
 		return m.OldUserAgent(ctx)
 	case usagelog.FieldIPAddress:
@@ -49196,6 +49512,34 @@ func (m *UsageLogMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetFirstTokenMs(v)
 		return nil
+	case usagelog.FieldAuthLatencyMs:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAuthLatencyMs(v)
+		return nil
+	case usagelog.FieldRoutingLatencyMs:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetRoutingLatencyMs(v)
+		return nil
+	case usagelog.FieldUpstreamLatencyMs:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetUpstreamLatencyMs(v)
+		return nil
+	case usagelog.FieldResponseLatencyMs:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetResponseLatencyMs(v)
+		return nil
 	case usagelog.FieldUserAgent:
 		v, ok := value.(string)
 		if !ok {
@@ -49356,6 +49700,18 @@ func (m *UsageLogMutation) AddedFields() []string {
 	if m.addfirst_token_ms != nil {
 		fields = append(fields, usagelog.FieldFirstTokenMs)
 	}
+	if m.addauth_latency_ms != nil {
+		fields = append(fields, usagelog.FieldAuthLatencyMs)
+	}
+	if m.addrouting_latency_ms != nil {
+		fields = append(fields, usagelog.FieldRoutingLatencyMs)
+	}
+	if m.addupstream_latency_ms != nil {
+		fields = append(fields, usagelog.FieldUpstreamLatencyMs)
+	}
+	if m.addresponse_latency_ms != nil {
+		fields = append(fields, usagelog.FieldResponseLatencyMs)
+	}
 	if m.addimage_count != nil {
 		fields = append(fields, usagelog.FieldImageCount)
 	}
@@ -49409,6 +49765,14 @@ func (m *UsageLogMutation) AddedField(name string) (ent.Value, bool) {
 		return m.AddedDurationMs()
 	case usagelog.FieldFirstTokenMs:
 		return m.AddedFirstTokenMs()
+	case usagelog.FieldAuthLatencyMs:
+		return m.AddedAuthLatencyMs()
+	case usagelog.FieldRoutingLatencyMs:
+		return m.AddedRoutingLatencyMs()
+	case usagelog.FieldUpstreamLatencyMs:
+		return m.AddedUpstreamLatencyMs()
+	case usagelog.FieldResponseLatencyMs:
+		return m.AddedResponseLatencyMs()
 	case usagelog.FieldImageCount:
 		return m.AddedImageCount()
 	case usagelog.FieldVideoCount:
@@ -49550,6 +49914,34 @@ func (m *UsageLogMutation) AddField(name string, value ent.Value) error {
 		}
 		m.AddFirstTokenMs(v)
 		return nil
+	case usagelog.FieldAuthLatencyMs:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddAuthLatencyMs(v)
+		return nil
+	case usagelog.FieldRoutingLatencyMs:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddRoutingLatencyMs(v)
+		return nil
+	case usagelog.FieldUpstreamLatencyMs:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddUpstreamLatencyMs(v)
+		return nil
+	case usagelog.FieldResponseLatencyMs:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddResponseLatencyMs(v)
+		return nil
 	case usagelog.FieldImageCount:
 		v, ok := value.(int)
 		if !ok {
@@ -49620,6 +50012,18 @@ func (m *UsageLogMutation) ClearedFields() []string {
 	}
 	if m.FieldCleared(usagelog.FieldFirstTokenMs) {
 		fields = append(fields, usagelog.FieldFirstTokenMs)
+	}
+	if m.FieldCleared(usagelog.FieldAuthLatencyMs) {
+		fields = append(fields, usagelog.FieldAuthLatencyMs)
+	}
+	if m.FieldCleared(usagelog.FieldRoutingLatencyMs) {
+		fields = append(fields, usagelog.FieldRoutingLatencyMs)
+	}
+	if m.FieldCleared(usagelog.FieldUpstreamLatencyMs) {
+		fields = append(fields, usagelog.FieldUpstreamLatencyMs)
+	}
+	if m.FieldCleared(usagelog.FieldResponseLatencyMs) {
+		fields = append(fields, usagelog.FieldResponseLatencyMs)
 	}
 	if m.FieldCleared(usagelog.FieldUserAgent) {
 		fields = append(fields, usagelog.FieldUserAgent)
@@ -49706,6 +50110,18 @@ func (m *UsageLogMutation) ClearField(name string) error {
 		return nil
 	case usagelog.FieldFirstTokenMs:
 		m.ClearFirstTokenMs()
+		return nil
+	case usagelog.FieldAuthLatencyMs:
+		m.ClearAuthLatencyMs()
+		return nil
+	case usagelog.FieldRoutingLatencyMs:
+		m.ClearRoutingLatencyMs()
+		return nil
+	case usagelog.FieldUpstreamLatencyMs:
+		m.ClearUpstreamLatencyMs()
+		return nil
+	case usagelog.FieldResponseLatencyMs:
+		m.ClearResponseLatencyMs()
 		return nil
 	case usagelog.FieldUserAgent:
 		m.ClearUserAgent()
@@ -49849,6 +50265,18 @@ func (m *UsageLogMutation) ResetField(name string) error {
 		return nil
 	case usagelog.FieldFirstTokenMs:
 		m.ResetFirstTokenMs()
+		return nil
+	case usagelog.FieldAuthLatencyMs:
+		m.ResetAuthLatencyMs()
+		return nil
+	case usagelog.FieldRoutingLatencyMs:
+		m.ResetRoutingLatencyMs()
+		return nil
+	case usagelog.FieldUpstreamLatencyMs:
+		m.ResetUpstreamLatencyMs()
+		return nil
+	case usagelog.FieldResponseLatencyMs:
+		m.ResetResponseLatencyMs()
 		return nil
 	case usagelog.FieldUserAgent:
 		m.ResetUserAgent()

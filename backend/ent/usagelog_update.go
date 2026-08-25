@@ -732,6 +732,114 @@ func (_u *UsageLogUpdate) ClearFirstTokenMs() *UsageLogUpdate {
 	return _u
 }
 
+// SetAuthLatencyMs sets the "auth_latency_ms" field.
+func (_u *UsageLogUpdate) SetAuthLatencyMs(v int) *UsageLogUpdate {
+	_u.mutation.ResetAuthLatencyMs()
+	_u.mutation.SetAuthLatencyMs(v)
+	return _u
+}
+
+// SetNillableAuthLatencyMs sets the "auth_latency_ms" field if the given value is not nil.
+func (_u *UsageLogUpdate) SetNillableAuthLatencyMs(v *int) *UsageLogUpdate {
+	if v != nil {
+		_u.SetAuthLatencyMs(*v)
+	}
+	return _u
+}
+
+// AddAuthLatencyMs adds value to the "auth_latency_ms" field.
+func (_u *UsageLogUpdate) AddAuthLatencyMs(v int) *UsageLogUpdate {
+	_u.mutation.AddAuthLatencyMs(v)
+	return _u
+}
+
+// ClearAuthLatencyMs clears the value of the "auth_latency_ms" field.
+func (_u *UsageLogUpdate) ClearAuthLatencyMs() *UsageLogUpdate {
+	_u.mutation.ClearAuthLatencyMs()
+	return _u
+}
+
+// SetRoutingLatencyMs sets the "routing_latency_ms" field.
+func (_u *UsageLogUpdate) SetRoutingLatencyMs(v int) *UsageLogUpdate {
+	_u.mutation.ResetRoutingLatencyMs()
+	_u.mutation.SetRoutingLatencyMs(v)
+	return _u
+}
+
+// SetNillableRoutingLatencyMs sets the "routing_latency_ms" field if the given value is not nil.
+func (_u *UsageLogUpdate) SetNillableRoutingLatencyMs(v *int) *UsageLogUpdate {
+	if v != nil {
+		_u.SetRoutingLatencyMs(*v)
+	}
+	return _u
+}
+
+// AddRoutingLatencyMs adds value to the "routing_latency_ms" field.
+func (_u *UsageLogUpdate) AddRoutingLatencyMs(v int) *UsageLogUpdate {
+	_u.mutation.AddRoutingLatencyMs(v)
+	return _u
+}
+
+// ClearRoutingLatencyMs clears the value of the "routing_latency_ms" field.
+func (_u *UsageLogUpdate) ClearRoutingLatencyMs() *UsageLogUpdate {
+	_u.mutation.ClearRoutingLatencyMs()
+	return _u
+}
+
+// SetUpstreamLatencyMs sets the "upstream_latency_ms" field.
+func (_u *UsageLogUpdate) SetUpstreamLatencyMs(v int) *UsageLogUpdate {
+	_u.mutation.ResetUpstreamLatencyMs()
+	_u.mutation.SetUpstreamLatencyMs(v)
+	return _u
+}
+
+// SetNillableUpstreamLatencyMs sets the "upstream_latency_ms" field if the given value is not nil.
+func (_u *UsageLogUpdate) SetNillableUpstreamLatencyMs(v *int) *UsageLogUpdate {
+	if v != nil {
+		_u.SetUpstreamLatencyMs(*v)
+	}
+	return _u
+}
+
+// AddUpstreamLatencyMs adds value to the "upstream_latency_ms" field.
+func (_u *UsageLogUpdate) AddUpstreamLatencyMs(v int) *UsageLogUpdate {
+	_u.mutation.AddUpstreamLatencyMs(v)
+	return _u
+}
+
+// ClearUpstreamLatencyMs clears the value of the "upstream_latency_ms" field.
+func (_u *UsageLogUpdate) ClearUpstreamLatencyMs() *UsageLogUpdate {
+	_u.mutation.ClearUpstreamLatencyMs()
+	return _u
+}
+
+// SetResponseLatencyMs sets the "response_latency_ms" field.
+func (_u *UsageLogUpdate) SetResponseLatencyMs(v int) *UsageLogUpdate {
+	_u.mutation.ResetResponseLatencyMs()
+	_u.mutation.SetResponseLatencyMs(v)
+	return _u
+}
+
+// SetNillableResponseLatencyMs sets the "response_latency_ms" field if the given value is not nil.
+func (_u *UsageLogUpdate) SetNillableResponseLatencyMs(v *int) *UsageLogUpdate {
+	if v != nil {
+		_u.SetResponseLatencyMs(*v)
+	}
+	return _u
+}
+
+// AddResponseLatencyMs adds value to the "response_latency_ms" field.
+func (_u *UsageLogUpdate) AddResponseLatencyMs(v int) *UsageLogUpdate {
+	_u.mutation.AddResponseLatencyMs(v)
+	return _u
+}
+
+// ClearResponseLatencyMs clears the value of the "response_latency_ms" field.
+func (_u *UsageLogUpdate) ClearResponseLatencyMs() *UsageLogUpdate {
+	_u.mutation.ClearResponseLatencyMs()
+	return _u
+}
+
 // SetUserAgent sets the "user_agent" field.
 func (_u *UsageLogUpdate) SetUserAgent(v string) *UsageLogUpdate {
 	_u.mutation.SetUserAgent(v)
@@ -1364,6 +1472,42 @@ func (_u *UsageLogUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if _u.mutation.FirstTokenMsCleared() {
 		_spec.ClearField(usagelog.FieldFirstTokenMs, field.TypeInt)
+	}
+	if value, ok := _u.mutation.AuthLatencyMs(); ok {
+		_spec.SetField(usagelog.FieldAuthLatencyMs, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedAuthLatencyMs(); ok {
+		_spec.AddField(usagelog.FieldAuthLatencyMs, field.TypeInt, value)
+	}
+	if _u.mutation.AuthLatencyMsCleared() {
+		_spec.ClearField(usagelog.FieldAuthLatencyMs, field.TypeInt)
+	}
+	if value, ok := _u.mutation.RoutingLatencyMs(); ok {
+		_spec.SetField(usagelog.FieldRoutingLatencyMs, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedRoutingLatencyMs(); ok {
+		_spec.AddField(usagelog.FieldRoutingLatencyMs, field.TypeInt, value)
+	}
+	if _u.mutation.RoutingLatencyMsCleared() {
+		_spec.ClearField(usagelog.FieldRoutingLatencyMs, field.TypeInt)
+	}
+	if value, ok := _u.mutation.UpstreamLatencyMs(); ok {
+		_spec.SetField(usagelog.FieldUpstreamLatencyMs, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedUpstreamLatencyMs(); ok {
+		_spec.AddField(usagelog.FieldUpstreamLatencyMs, field.TypeInt, value)
+	}
+	if _u.mutation.UpstreamLatencyMsCleared() {
+		_spec.ClearField(usagelog.FieldUpstreamLatencyMs, field.TypeInt)
+	}
+	if value, ok := _u.mutation.ResponseLatencyMs(); ok {
+		_spec.SetField(usagelog.FieldResponseLatencyMs, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedResponseLatencyMs(); ok {
+		_spec.AddField(usagelog.FieldResponseLatencyMs, field.TypeInt, value)
+	}
+	if _u.mutation.ResponseLatencyMsCleared() {
+		_spec.ClearField(usagelog.FieldResponseLatencyMs, field.TypeInt)
 	}
 	if value, ok := _u.mutation.UserAgent(); ok {
 		_spec.SetField(usagelog.FieldUserAgent, field.TypeString, value)
@@ -2308,6 +2452,114 @@ func (_u *UsageLogUpdateOne) ClearFirstTokenMs() *UsageLogUpdateOne {
 	return _u
 }
 
+// SetAuthLatencyMs sets the "auth_latency_ms" field.
+func (_u *UsageLogUpdateOne) SetAuthLatencyMs(v int) *UsageLogUpdateOne {
+	_u.mutation.ResetAuthLatencyMs()
+	_u.mutation.SetAuthLatencyMs(v)
+	return _u
+}
+
+// SetNillableAuthLatencyMs sets the "auth_latency_ms" field if the given value is not nil.
+func (_u *UsageLogUpdateOne) SetNillableAuthLatencyMs(v *int) *UsageLogUpdateOne {
+	if v != nil {
+		_u.SetAuthLatencyMs(*v)
+	}
+	return _u
+}
+
+// AddAuthLatencyMs adds value to the "auth_latency_ms" field.
+func (_u *UsageLogUpdateOne) AddAuthLatencyMs(v int) *UsageLogUpdateOne {
+	_u.mutation.AddAuthLatencyMs(v)
+	return _u
+}
+
+// ClearAuthLatencyMs clears the value of the "auth_latency_ms" field.
+func (_u *UsageLogUpdateOne) ClearAuthLatencyMs() *UsageLogUpdateOne {
+	_u.mutation.ClearAuthLatencyMs()
+	return _u
+}
+
+// SetRoutingLatencyMs sets the "routing_latency_ms" field.
+func (_u *UsageLogUpdateOne) SetRoutingLatencyMs(v int) *UsageLogUpdateOne {
+	_u.mutation.ResetRoutingLatencyMs()
+	_u.mutation.SetRoutingLatencyMs(v)
+	return _u
+}
+
+// SetNillableRoutingLatencyMs sets the "routing_latency_ms" field if the given value is not nil.
+func (_u *UsageLogUpdateOne) SetNillableRoutingLatencyMs(v *int) *UsageLogUpdateOne {
+	if v != nil {
+		_u.SetRoutingLatencyMs(*v)
+	}
+	return _u
+}
+
+// AddRoutingLatencyMs adds value to the "routing_latency_ms" field.
+func (_u *UsageLogUpdateOne) AddRoutingLatencyMs(v int) *UsageLogUpdateOne {
+	_u.mutation.AddRoutingLatencyMs(v)
+	return _u
+}
+
+// ClearRoutingLatencyMs clears the value of the "routing_latency_ms" field.
+func (_u *UsageLogUpdateOne) ClearRoutingLatencyMs() *UsageLogUpdateOne {
+	_u.mutation.ClearRoutingLatencyMs()
+	return _u
+}
+
+// SetUpstreamLatencyMs sets the "upstream_latency_ms" field.
+func (_u *UsageLogUpdateOne) SetUpstreamLatencyMs(v int) *UsageLogUpdateOne {
+	_u.mutation.ResetUpstreamLatencyMs()
+	_u.mutation.SetUpstreamLatencyMs(v)
+	return _u
+}
+
+// SetNillableUpstreamLatencyMs sets the "upstream_latency_ms" field if the given value is not nil.
+func (_u *UsageLogUpdateOne) SetNillableUpstreamLatencyMs(v *int) *UsageLogUpdateOne {
+	if v != nil {
+		_u.SetUpstreamLatencyMs(*v)
+	}
+	return _u
+}
+
+// AddUpstreamLatencyMs adds value to the "upstream_latency_ms" field.
+func (_u *UsageLogUpdateOne) AddUpstreamLatencyMs(v int) *UsageLogUpdateOne {
+	_u.mutation.AddUpstreamLatencyMs(v)
+	return _u
+}
+
+// ClearUpstreamLatencyMs clears the value of the "upstream_latency_ms" field.
+func (_u *UsageLogUpdateOne) ClearUpstreamLatencyMs() *UsageLogUpdateOne {
+	_u.mutation.ClearUpstreamLatencyMs()
+	return _u
+}
+
+// SetResponseLatencyMs sets the "response_latency_ms" field.
+func (_u *UsageLogUpdateOne) SetResponseLatencyMs(v int) *UsageLogUpdateOne {
+	_u.mutation.ResetResponseLatencyMs()
+	_u.mutation.SetResponseLatencyMs(v)
+	return _u
+}
+
+// SetNillableResponseLatencyMs sets the "response_latency_ms" field if the given value is not nil.
+func (_u *UsageLogUpdateOne) SetNillableResponseLatencyMs(v *int) *UsageLogUpdateOne {
+	if v != nil {
+		_u.SetResponseLatencyMs(*v)
+	}
+	return _u
+}
+
+// AddResponseLatencyMs adds value to the "response_latency_ms" field.
+func (_u *UsageLogUpdateOne) AddResponseLatencyMs(v int) *UsageLogUpdateOne {
+	_u.mutation.AddResponseLatencyMs(v)
+	return _u
+}
+
+// ClearResponseLatencyMs clears the value of the "response_latency_ms" field.
+func (_u *UsageLogUpdateOne) ClearResponseLatencyMs() *UsageLogUpdateOne {
+	_u.mutation.ClearResponseLatencyMs()
+	return _u
+}
+
 // SetUserAgent sets the "user_agent" field.
 func (_u *UsageLogUpdateOne) SetUserAgent(v string) *UsageLogUpdateOne {
 	_u.mutation.SetUserAgent(v)
@@ -2970,6 +3222,42 @@ func (_u *UsageLogUpdateOne) sqlSave(ctx context.Context) (_node *UsageLog, err 
 	}
 	if _u.mutation.FirstTokenMsCleared() {
 		_spec.ClearField(usagelog.FieldFirstTokenMs, field.TypeInt)
+	}
+	if value, ok := _u.mutation.AuthLatencyMs(); ok {
+		_spec.SetField(usagelog.FieldAuthLatencyMs, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedAuthLatencyMs(); ok {
+		_spec.AddField(usagelog.FieldAuthLatencyMs, field.TypeInt, value)
+	}
+	if _u.mutation.AuthLatencyMsCleared() {
+		_spec.ClearField(usagelog.FieldAuthLatencyMs, field.TypeInt)
+	}
+	if value, ok := _u.mutation.RoutingLatencyMs(); ok {
+		_spec.SetField(usagelog.FieldRoutingLatencyMs, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedRoutingLatencyMs(); ok {
+		_spec.AddField(usagelog.FieldRoutingLatencyMs, field.TypeInt, value)
+	}
+	if _u.mutation.RoutingLatencyMsCleared() {
+		_spec.ClearField(usagelog.FieldRoutingLatencyMs, field.TypeInt)
+	}
+	if value, ok := _u.mutation.UpstreamLatencyMs(); ok {
+		_spec.SetField(usagelog.FieldUpstreamLatencyMs, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedUpstreamLatencyMs(); ok {
+		_spec.AddField(usagelog.FieldUpstreamLatencyMs, field.TypeInt, value)
+	}
+	if _u.mutation.UpstreamLatencyMsCleared() {
+		_spec.ClearField(usagelog.FieldUpstreamLatencyMs, field.TypeInt)
+	}
+	if value, ok := _u.mutation.ResponseLatencyMs(); ok {
+		_spec.SetField(usagelog.FieldResponseLatencyMs, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedResponseLatencyMs(); ok {
+		_spec.AddField(usagelog.FieldResponseLatencyMs, field.TypeInt, value)
+	}
+	if _u.mutation.ResponseLatencyMsCleared() {
+		_spec.ClearField(usagelog.FieldResponseLatencyMs, field.TypeInt)
 	}
 	if value, ok := _u.mutation.UserAgent(); ok {
 		_spec.SetField(usagelog.FieldUserAgent, field.TypeString, value)

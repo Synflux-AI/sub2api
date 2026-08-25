@@ -84,6 +84,14 @@ const (
 	FieldDurationMs = "duration_ms"
 	// FieldFirstTokenMs holds the string denoting the first_token_ms field in the database.
 	FieldFirstTokenMs = "first_token_ms"
+	// FieldAuthLatencyMs holds the string denoting the auth_latency_ms field in the database.
+	FieldAuthLatencyMs = "auth_latency_ms"
+	// FieldRoutingLatencyMs holds the string denoting the routing_latency_ms field in the database.
+	FieldRoutingLatencyMs = "routing_latency_ms"
+	// FieldUpstreamLatencyMs holds the string denoting the upstream_latency_ms field in the database.
+	FieldUpstreamLatencyMs = "upstream_latency_ms"
+	// FieldResponseLatencyMs holds the string denoting the response_latency_ms field in the database.
+	FieldResponseLatencyMs = "response_latency_ms"
 	// FieldUserAgent holds the string denoting the user_agent field in the database.
 	FieldUserAgent = "user_agent"
 	// FieldIPAddress holds the string denoting the ip_address field in the database.
@@ -199,6 +207,10 @@ var Columns = []string{
 	FieldStream,
 	FieldDurationMs,
 	FieldFirstTokenMs,
+	FieldAuthLatencyMs,
+	FieldRoutingLatencyMs,
+	FieldUpstreamLatencyMs,
+	FieldResponseLatencyMs,
 	FieldUserAgent,
 	FieldIPAddress,
 	FieldImageCount,
@@ -483,6 +495,26 @@ func ByDurationMs(opts ...sql.OrderTermOption) OrderOption {
 // ByFirstTokenMs orders the results by the first_token_ms field.
 func ByFirstTokenMs(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldFirstTokenMs, opts...).ToFunc()
+}
+
+// ByAuthLatencyMs orders the results by the auth_latency_ms field.
+func ByAuthLatencyMs(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldAuthLatencyMs, opts...).ToFunc()
+}
+
+// ByRoutingLatencyMs orders the results by the routing_latency_ms field.
+func ByRoutingLatencyMs(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldRoutingLatencyMs, opts...).ToFunc()
+}
+
+// ByUpstreamLatencyMs orders the results by the upstream_latency_ms field.
+func ByUpstreamLatencyMs(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldUpstreamLatencyMs, opts...).ToFunc()
+}
+
+// ByResponseLatencyMs orders the results by the response_latency_ms field.
+func ByResponseLatencyMs(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldResponseLatencyMs, opts...).ToFunc()
 }
 
 // ByUserAgent orders the results by the user_agent field.

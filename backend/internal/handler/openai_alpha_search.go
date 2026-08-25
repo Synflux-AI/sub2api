@@ -273,6 +273,7 @@ func (h *OpenAIGatewayHandler) recordAlphaSearchUsage(
 	userAgent := c.GetHeader("User-Agent")
 	clientIP := ip.GetClientIP(c)
 	sessionID := service.ExtractClientSessionID(c)
+	phaseLatency := phaseLatencyFromContext(c)
 	requestPayloadHash := service.HashUsageRequestPayload(body)
 	inboundEndpoint := GetInboundEndpoint(c)
 	upstreamEndpoint := GetUpstreamEndpoint(c, account.Platform)
@@ -280,6 +281,7 @@ func (h *OpenAIGatewayHandler) recordAlphaSearchUsage(
 
 	h.submitMandatoryUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
 		if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
+			PhaseLatency:       phaseLatency,
 			Result:             result,
 			APIKey:             apiKey,
 			User:               apiKey.User,

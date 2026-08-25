@@ -555,6 +555,66 @@ func TestGatewayServiceRecordUsage_PrefersClientRequestIDOverUpstreamRequestID(t
 	require.Equal(t, "trace-gateway-789", *usageRepo.lastLog.TraceID)
 }
 
+// TestGatewayServiceRecordUsage_CarriesPhaseLatencyToUsageLog 证明 handler 在请求 ctx 内
+// 快照的四段耗时能穿过异步计费路径落到用量行上（写库跑在 batcher 上，拿不到 *gin.Context）。
+func TestGatewayServiceRecordUsage_CarriesPhaseLatencyToUsageLog(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{}
+	billingRepo := &openAIRecordUsageBillingRepoStub{result: &UsageBillingApplyResult{Applied: true}}
+	svc := newGatewayRecordUsageServiceWithBillingRepoForTest(usageRepo, billingRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{})
+
+	auth, routing, upstream, response := 7, 19296, 29201, 460
+	err := svc.RecordUsage(context.Background(), &RecordUsageInput{
+		Result: &ForwardResult{
+			RequestID: "req-phase-latency",
+			Usage:     ClaudeUsage{InputTokens: 10, OutputTokens: 6},
+			Model:     "claude-sonnet-4",
+			Duration:  time.Second,
+		},
+		APIKey:  &APIKey{ID: 507},
+		User:    &User{ID: 607},
+		Account: &Account{ID: 707},
+		PhaseLatency: PhaseLatency{
+			AuthLatencyMs:     &auth,
+			RoutingLatencyMs:  &routing,
+			UpstreamLatencyMs: &upstream,
+			ResponseLatencyMs: &response,
+		},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, usageRepo.lastLog)
+	require.Equal(t, auth, *usageRepo.lastLog.AuthLatencyMs)
+	require.Equal(t, routing, *usageRepo.lastLog.RoutingLatencyMs)
+	require.Equal(t, upstream, *usageRepo.lastLog.UpstreamLatencyMs)
+	require.Equal(t, response, *usageRepo.lastLog.ResponseLatencyMs)
+}
+
+// 未插桩的平台路径：整组保持 nil，落库成 NULL 而不是 0。
+func TestGatewayServiceRecordUsage_PhaseLatencyStaysNilWhenUninstrumented(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{}
+	billingRepo := &openAIRecordUsageBillingRepoStub{result: &UsageBillingApplyResult{Applied: true}}
+	svc := newGatewayRecordUsageServiceWithBillingRepoForTest(usageRepo, billingRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{})
+
+	err := svc.RecordUsage(context.Background(), &RecordUsageInput{
+		Result: &ForwardResult{
+			RequestID: "req-no-phase-latency",
+			Usage:     ClaudeUsage{InputTokens: 10, OutputTokens: 6},
+			Model:     "claude-sonnet-4",
+			Duration:  time.Second,
+		},
+		APIKey:  &APIKey{ID: 508},
+		User:    &User{ID: 608},
+		Account: &Account{ID: 708},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, usageRepo.lastLog)
+	require.Nil(t, usageRepo.lastLog.AuthLatencyMs)
+	require.Nil(t, usageRepo.lastLog.RoutingLatencyMs)
+	require.Nil(t, usageRepo.lastLog.UpstreamLatencyMs)
+	require.Nil(t, usageRepo.lastLog.ResponseLatencyMs)
+}
+
 func TestGatewayServiceRecordUsage_GeneratesRequestIDWhenAllSourcesMissing(t *testing.T) {
 	usageRepo := &openAIRecordUsageLogRepoStub{}
 	billingRepo := &openAIRecordUsageBillingRepoStub{result: &UsageBillingApplyResult{Applied: true}}

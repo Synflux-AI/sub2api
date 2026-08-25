@@ -527,6 +527,13 @@ type UsageLog struct {
 	DurationMs   *int   `json:"duration_ms"`
 	FirstTokenMs *int   `json:"first_token_ms"`
 
+	// 分阶段耗时（鉴权 / 路由 / 上游 / 响应）。null = 未测到，0 = 不足 1ms。
+	// 尚未插桩的平台路径整组为 null，前端按缺值降级。
+	AuthLatencyMs     *int `json:"auth_latency_ms"`
+	RoutingLatencyMs  *int `json:"routing_latency_ms"`
+	UpstreamLatencyMs *int `json:"upstream_latency_ms"`
+	ResponseLatencyMs *int `json:"response_latency_ms"`
+
 	// 图片生成字段
 	ImageCount          int            `json:"image_count"`
 	ImageSize           *string        `json:"image_size"`

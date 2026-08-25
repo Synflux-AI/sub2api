@@ -178,8 +178,12 @@ type UsageLog struct {
 	OpenAIWSMode bool
 	DurationMs   *int
 	FirstTokenMs *int
-	UserAgent    *string
-	IPAddress    *string
+	// PhaseLatency 分阶段耗时（鉴权 / 路由 / 上游 / 响应）。
+	// 由 handler 在请求 ctx 内从 gin.Context 读出后经 RecordUsageInput 传入 ——
+	// 写库是异步 batcher，拿不到 *gin.Context。
+	PhaseLatency
+	UserAgent *string
+	IPAddress *string
 	// SessionID is the explicit client-provided request correlation identifier
 	// (e.g. the session_id / X-Session-Id headers). Nil when the client sent no
 	// valid session header. It is never derived from prompt_cache_key or content.

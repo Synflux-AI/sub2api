@@ -54,6 +54,7 @@ type RecordUsageInput struct {
 	QuotaPlatform      string             // user×platform 配额计量平台：handler 在请求 ctx 内经 QuotaPlatform() 算定后传入（后扣运行在 worker 池 background ctx 上，取不到 ForcePlatform）
 
 	ChannelUsageFields // 渠道映射信息（由 handler 在 Forward 前解析）
+	PhaseLatency       // 分阶段耗时（由 handler 在请求 ctx 内从 gin.Context 读出）
 }
 
 // APIKeyQuotaUpdater defines the interface for updating API Key quota and rate limit usage
@@ -681,6 +682,7 @@ func (s *GatewayService) RecordUsage(ctx context.Context, input *RecordUsageInpu
 		APIKeyService:      input.APIKeyService,
 		QuotaPlatform:      input.QuotaPlatform,
 		ChannelUsageFields: input.ChannelUsageFields,
+		PhaseLatency:       input.PhaseLatency,
 	}, &recordUsageOpts{})
 }
 
@@ -705,6 +707,7 @@ type RecordUsageLongContextInput struct {
 	QuotaPlatform         string             // user×platform 配额计量平台：handler 在请求 ctx 内经 QuotaPlatform() 算定后传入（后扣运行在 worker 池 background ctx 上，取不到 ForcePlatform）
 
 	ChannelUsageFields // 渠道映射信息（由 handler 在 Forward 前解析）
+	PhaseLatency       // 分阶段耗时（由 handler 在请求 ctx 内从 gin.Context 读出）
 }
 
 // RecordUsageWithLongContext 记录使用量并扣费，支持长上下文双倍计费（用于 Gemini）
@@ -726,6 +729,7 @@ func (s *GatewayService) RecordUsageWithLongContext(ctx context.Context, input *
 		APIKeyService:      input.APIKeyService,
 		QuotaPlatform:      input.QuotaPlatform,
 		ChannelUsageFields: input.ChannelUsageFields,
+		PhaseLatency:       input.PhaseLatency,
 	}, &recordUsageOpts{
 		LongContextThreshold:  input.LongContextThreshold,
 		LongContextMultiplier: input.LongContextMultiplier,
@@ -750,6 +754,7 @@ type recordUsageCoreInput struct {
 	APIKeyService      APIKeyQuotaUpdater
 	QuotaPlatform      string
 	ChannelUsageFields
+	PhaseLatency
 }
 
 // responseModelBillingCostEpsilon 吸收两次成本计算之间的浮点末位误差，
@@ -1300,6 +1305,7 @@ func (s *GatewayService) buildRecordUsageLog(
 		Stream:                result.Stream,
 		DurationMs:            &durationMs,
 		FirstTokenMs:          result.FirstTokenMs,
+		PhaseLatency:          input.PhaseLatency,
 		ImageCount:            result.ImageCount,
 		ImageSize:             optionalTrimmedStringPtr(result.ImageSize),
 		ImageInputSize:        optionalTrimmedStringPtr(result.ImageInputSize),

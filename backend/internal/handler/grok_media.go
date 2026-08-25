@@ -660,6 +660,7 @@ func recordGrokMediaUsage(
 	userAgent := c.GetHeader("User-Agent")
 	clientIP := ip.GetClientIP(c)
 	sessionID := service.ExtractClientSessionID(c)
+	phaseLatency := phaseLatencyFromContext(c)
 	payloadForHash := body
 	if len(payloadForHash) == 0 && strings.TrimSpace(requestID) != "" {
 		payloadForHash = []byte(requestID)
@@ -688,6 +689,7 @@ func recordGrokMediaUsage(
 	}
 	h.submitOpenAIUsageRecordTask(c.Request.Context(), result, func(ctx context.Context) {
 		if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
+			PhaseLatency:       phaseLatency,
 			Result:             result,
 			APIKey:             apiKey,
 			User:               apiKey.User,

@@ -63,6 +63,36 @@ func TestUsageLogFromService_ExposesTraceIDToUserAndAdmin(t *testing.T) {
 	require.Equal(t, "client:billing-id", UsageLogFromService(log).RequestID)
 }
 
+func TestUsageLogFromService_ExposesPhaseLatencyToUserAndAdmin(t *testing.T) {
+	t.Parallel()
+
+	auth, routing, upstream, response := 7, 19296, 29201, 460
+	log := &service.UsageLog{
+		RequestID: "req-phase-latency",
+		PhaseLatency: service.PhaseLatency{
+			AuthLatencyMs:     &auth,
+			RoutingLatencyMs:  &routing,
+			UpstreamLatencyMs: &upstream,
+			ResponseLatencyMs: &response,
+		},
+	}
+
+	// 用户与管理员都能看到：判断「慢在我们这儿还是慢在上游」不是管理员专属信息。
+	for name, dto := range map[string]*UsageLog{"user": UsageLogFromService(log), "admin": &UsageLogFromServiceAdmin(log).UsageLog} {
+		require.Equal(t, auth, *dto.AuthLatencyMs, name)
+		require.Equal(t, routing, *dto.RoutingLatencyMs, name)
+		require.Equal(t, upstream, *dto.UpstreamLatencyMs, name)
+		require.Equal(t, response, *dto.ResponseLatencyMs, name)
+	}
+
+	// 未插桩的平台路径整组为 null，且字段照常出现在 JSON 里（无 omitempty），
+	// 前端据此走「暂无阶段耗时数据」的降级分支，而不是把缺失当成 0。
+	absentJSON, err := json.Marshal(UsageLogFromService(&service.UsageLog{RequestID: "req-absent"}))
+	require.NoError(t, err)
+	require.Contains(t, string(absentJSON), `"auth_latency_ms":null`)
+	require.Contains(t, string(absentJSON), `"response_latency_ms":null`)
+}
+
 func TestUsageLogFromService_PrefersRequestTypeForLegacyFields(t *testing.T) {
 	t.Parallel()
 

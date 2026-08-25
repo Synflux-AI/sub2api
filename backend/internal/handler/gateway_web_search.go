@@ -212,6 +212,7 @@ func (h *GatewayHandler) WebSearch(c *gin.Context) {
 	}
 
 	userAgent := c.GetHeader("User-Agent")
+	phaseLatency := phaseLatencyFromContext(c)
 	clientIP := ip.GetClientIP(c)
 	inboundEndpoint := GetInboundEndpoint(c)
 	upstreamEndpoint := GetUpstreamEndpoint(c, account.Platform)
@@ -230,6 +231,7 @@ func (h *GatewayHandler) WebSearch(c *gin.Context) {
 	}
 	h.submitMandatoryUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
 		if err := h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
+			PhaseLatency: phaseLatency,
 			Result: &service.ForwardResult{
 				RequestID:   searchRequestID,
 				Model:       "grok-" + strings.ReplaceAll(searchLabel, "_", "-"),
