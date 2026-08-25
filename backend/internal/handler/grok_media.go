@@ -197,6 +197,7 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 		maxAccountSwitches = 3
 	}
 	routingStart := time.Now()
+	defer setOpsRoutingLatencyMsIfAbsent(c, routingStart)
 	requiredCapability := grokMediaRequiredCapability(endpoint)
 
 	for {

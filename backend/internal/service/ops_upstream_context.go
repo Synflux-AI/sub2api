@@ -2,10 +2,12 @@ package service
 
 import (
 	"encoding/json"
+	"net/http"
 	"strings"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 	"github.com/gin-gonic/gin"
 )
 
@@ -518,4 +520,31 @@ func safeUpstreamURL(rawURL string) string {
 		rawURL = rawURL[:idx]
 	}
 	return rawURL
+}
+
+// timedGatewayUpstreamDoWithTLS 发出网关转发的上游请求，并顺手记下「上游」阶段耗时。
+//
+// 只计到拿到响应头为止：读 body / 流式转发属于「响应」阶段（见 handler 侧的
+// setOpsResponseLatencyMs）。Set 放在 err 判断之前 —— 上游超时正是最需要这个数字的场景。
+//
+// 存在的理由是防漏：Anthropic 侧的上游出口散在 5 个文件里（主转发、两个兼容端点、
+// API Key 透传、Bedrock），逐点插桩漏了任何一个，那条路径的「上游」就是空的，
+// 而「响应」会把整段上游等待吞掉 —— 瀑布图上「上游 0ms、响应顶满」，比没有数据更误导人。
+// 走这个包装就不会漏。
+//
+// ponytail: 一次请求内的多次上游尝试（failover 重试）会互相覆盖，最终留下最后一次的
+// 数字，早前尝试的等待会被算进「响应」。这与 OpenAI 系及 ops_error_logs 的既有口径一致，
+// 故沿用；要精确到「累计上游等待」需要同时改三侧口径，另议。
+func (s *GatewayService) timedGatewayUpstreamDoWithTLS(
+	c *gin.Context,
+	req *http.Request,
+	proxyURL string,
+	accountID int64,
+	accountConcurrency int,
+	profile *tlsfingerprint.Profile,
+) (*http.Response, error) {
+	upstreamStart := time.Now()
+	resp, err := s.httpUpstream.DoWithTLS(req, proxyURL, accountID, accountConcurrency, profile)
+	SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
+	return resp, err
 }

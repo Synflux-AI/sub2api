@@ -389,12 +389,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 
 		// 发送请求
 		account.ApplyCustomHeaders(upstreamReq)
-		// 上游耗时口径与 OpenAI 系一致（见 openai_gateway_forward.go 的 doOpenAIUpstream 处）：
-		// 只计到拿到响应头为止，读 body / 流式转发算「响应」阶段。Set 放在 err 判断之前，
-		// 失败也记 —— 上游超时正是最需要这个数字的场景。
-		upstreamStart := time.Now()
-		resp, err = s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, tlsProfile)
-		SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
+		resp, err = s.timedGatewayUpstreamDoWithTLS(c, upstreamReq, proxyURL, account.ID, account.Concurrency, tlsProfile)
 		if err != nil {
 			if resp != nil && resp.Body != nil {
 				_ = resp.Body.Close()
@@ -477,7 +472,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 					releaseRetryCtx()
 					if buildErr == nil {
 						account.ApplyCustomHeaders(retryReq)
-						retryResp, retryErr := s.httpUpstream.DoWithTLS(retryReq, proxyURL, account.ID, account.Concurrency, tlsProfile)
+						retryResp, retryErr := s.timedGatewayUpstreamDoWithTLS(c, retryReq, proxyURL, account.ID, account.Concurrency, tlsProfile)
 						if retryErr == nil {
 							if retryResp.StatusCode < 400 {
 								// 重试请求被上游接受后同步 ParsedRequest，保证 usage/日志看到真实请求体。
@@ -519,7 +514,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 									releaseRetryCtx2()
 									if buildErr2 == nil {
 										account.ApplyCustomHeaders(retryReq2)
-										retryResp2, retryErr2 := s.httpUpstream.DoWithTLS(retryReq2, proxyURL, account.ID, account.Concurrency, tlsProfile)
+										retryResp2, retryErr2 := s.timedGatewayUpstreamDoWithTLS(c, retryReq2, proxyURL, account.ID, account.Concurrency, tlsProfile)
 										if retryErr2 == nil {
 											if retryResp2.StatusCode < 400 {
 												// 二阶段工具块降级成功时也必须更新当前 body。
@@ -622,7 +617,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 						releaseBudgetRetryCtx()
 						if buildErr == nil {
 							account.ApplyCustomHeaders(budgetRetryReq)
-							budgetRetryResp, retryErr := s.httpUpstream.DoWithTLS(budgetRetryReq, proxyURL, account.ID, account.Concurrency, tlsProfile)
+							budgetRetryResp, retryErr := s.timedGatewayUpstreamDoWithTLS(c, budgetRetryReq, proxyURL, account.ID, account.Concurrency, tlsProfile)
 							if retryErr == nil {
 								if budgetRetryResp.StatusCode < 400 {
 									// budget 修正请求成功后，ParsedRequest 也要描述被接受的修正版。

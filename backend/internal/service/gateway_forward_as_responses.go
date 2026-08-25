@@ -139,11 +139,7 @@ func (s *GatewayService) ForwardAsResponses(
 
 	// 11. Send request
 	account.ApplyCustomHeaders(upstreamReq)
-	// 上游耗时只计到拿到响应头为止，读 body / 流式转发算「响应」阶段；口径与
-	// gateway_forward.go 及 OpenAI 系一致。Set 在 err 判断之前，上游超时也要留下数字。
-	upstreamStart := time.Now()
-	resp, err := s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
-	SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
+	resp, err := s.timedGatewayUpstreamDoWithTLS(c, upstreamReq, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
 	if err != nil {
 		if resp != nil && resp.Body != nil {
 			_ = resp.Body.Close()

@@ -76,3 +76,34 @@ func TestPhaseLatencyKeys_ClaudeNativeCoverage(t *testing.T) {
 		require.Equal(t, int64(42), *got)
 	}
 }
+
+// TestSetOpsRoutingLatencyMsIfAbsent_RecordsOnEarlyExit 覆盖路由阶段中途失败：
+// 并发槽超时、余额复核不过、没有可用账号都会在 Forward 之前 return，
+// 此前这些错误一个路由数字都没有 —— 恰恰是最需要路由诊断的场景。
+func TestSetOpsRoutingLatencyMsIfAbsent_RecordsOnEarlyExit(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+
+	setOpsRoutingLatencyMsIfAbsent(c, time.Now().Add(-300*time.Millisecond))
+
+	got := getContextLatencyMs(c, service.OpsRoutingLatencyMsKey)
+	require.NotNil(t, got)
+	require.Greater(t, *got, int64(250))
+	require.Less(t, *got, int64(400))
+}
+
+// 正常路径在 Forward 之前已显式记过「到 Forward 为止」的跨度，函数退出时的兜底
+// 绝不能覆盖它 —— 否则整个 Forward 都会被算进路由，上游耗时凭空出现在路由里。
+func TestSetOpsRoutingLatencyMsIfAbsent_DoesNotOverwrite(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	service.SetOpsLatencyMs(c, service.OpsRoutingLatencyMsKey, 42)
+
+	setOpsRoutingLatencyMsIfAbsent(c, time.Now().Add(-5*time.Second))
+
+	got := getContextLatencyMs(c, service.OpsRoutingLatencyMsKey)
+	require.NotNil(t, got)
+	require.Equal(t, int64(42), *got, "已有值必须原样保留")
+}
+
+func TestSetOpsRoutingLatencyMsIfAbsent_NilContext(t *testing.T) {
+	require.NotPanics(t, func() { setOpsRoutingLatencyMsIfAbsent(nil, time.Now()) })
+}

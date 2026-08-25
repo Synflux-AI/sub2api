@@ -235,6 +235,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 	// 错误详情抽屉的「请求时序」卡对它恒为空。
 	service.SetOpsLatencyMs(c, service.OpsAuthLatencyMsKey, time.Since(requestStart).Milliseconds())
 	routingStart := time.Now()
+	defer setOpsRoutingLatencyMsIfAbsent(c, routingStart)
 
 	// 1. 首先获取用户并发槽位
 	userReleaseFunc, err := h.concurrencyHelper.AcquireUserSlotWithWait(c, subject.UserID, subject.Concurrency, reqStream, &streamStarted)
