@@ -91,12 +91,12 @@ func (r *usageLogRepository) GetUserUsageTrend(ctx context.Context, startTime, e
 
 func (r *usageLogRepository) GetUserUsageTrendWithUsageFilters(ctx context.Context, startTime, endTime time.Time, granularity string, limit int, sortBy string, filters UsageLogFilters) (results []UserUsageTrendPoint, err error) {
 	dateFormat := safeDateFormat(granularity)
-	orderBy := "SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens)"
+	orderBy := "SUM(tokens)"
 	switch sortBy {
 	case "actual_cost":
 		orderBy = "SUM(actual_cost)"
 	case "requests":
-		orderBy = "COUNT(*)"
+		orderBy = "SUM(requests)"
 	}
 	conditions := []string{"created_at >= $1", "created_at < $2"}
 	args := []any{startTime, endTime}
@@ -109,34 +109,42 @@ func (r *usageLogRepository) GetUserUsageTrendWithUsageFilters(ctx context.Conte
 	args = append(args, limit)
 
 	query := fmt.Sprintf(`
-		WITH filtered AS (
-			SELECT * FROM usage_logs
+		WITH per_user_bucket AS MATERIALIZED (
+			SELECT
+				TO_CHAR(created_at, '%s') as date,
+				user_id,
+				COUNT(*) as requests,
+				COALESCE(SUM(input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens), 0) as tokens,
+				COALESCE(SUM(total_cost), 0) as cost,
+				COALESCE(SUM(actual_cost), 0) as actual_cost
+			FROM usage_logs
 			WHERE %s
+			GROUP BY 1, 2
 		), top_users AS (
 			SELECT user_id
-			FROM filtered
+			FROM per_user_bucket
 			GROUP BY user_id
 			ORDER BY %s DESC, user_id ASC
 			LIMIT $%d
 		)
 		SELECT
-			TO_CHAR(u.created_at, '%s') as date,
+			u.date,
 			CASE WHEN top.user_id IS NULL THEN 0 ELSE u.user_id END as user_id,
 			CASE WHEN top.user_id IS NULL THEN '__others__' ELSE u.user_id::text END as key,
 			CASE WHEN top.user_id IS NULL THEN '其他' ELSE '' END as label,
 			CASE WHEN top.user_id IS NULL THEN '' ELSE COALESCE(us.email, '') END as email,
 			CASE WHEN top.user_id IS NULL THEN '' ELSE COALESCE(us.username, '') END as username,
 			CASE WHEN top.user_id IS NULL THEN '' ELSE COALESCE(us.notes, '') END as notes,
-			COUNT(*) as requests,
-			COALESCE(SUM(u.input_tokens + u.output_tokens + u.cache_creation_tokens + u.cache_read_tokens), 0) as tokens,
-			COALESCE(SUM(u.total_cost), 0) as cost,
-			COALESCE(SUM(u.actual_cost), 0) as actual_cost
-		FROM filtered u
+			SUM(u.requests) as requests,
+			SUM(u.tokens) as tokens,
+			SUM(u.cost) as cost,
+			SUM(u.actual_cost) as actual_cost
+		FROM per_user_bucket u
 		LEFT JOIN top_users top ON u.user_id = top.user_id
 		LEFT JOIN users us ON u.user_id = us.id
 		GROUP BY 1, 2, 3, 4, 5, 6, 7
 		ORDER BY date ASC, tokens DESC
-	`, strings.Join(conditions, " AND "), orderBy, limitArg, dateFormat)
+	`, dateFormat, strings.Join(conditions, " AND "), orderBy, limitArg)
 
 	rows, err := r.sql.QueryContext(ctx, query, args...)
 	if err != nil {
