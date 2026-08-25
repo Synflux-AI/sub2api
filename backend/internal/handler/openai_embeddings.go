@@ -200,13 +200,7 @@ func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
 			return h.gatewayService.ForwardEmbeddings(c.Request.Context(), c, account, forwardBody, "")
 		}()
 
-		forwardDurationMs := time.Since(forwardStart).Milliseconds()
-		upstreamLatencyMs, _ := getContextInt64(c, service.OpsUpstreamLatencyMsKey)
-		responseLatencyMs := forwardDurationMs
-		if upstreamLatencyMs > 0 && forwardDurationMs > upstreamLatencyMs {
-			responseLatencyMs = forwardDurationMs - upstreamLatencyMs
-		}
-		service.SetOpsLatencyMs(c, service.OpsResponseLatencyMsKey, responseLatencyMs)
+		setOpsResponseLatencyMs(c, forwardStart)
 
 		if err != nil {
 			var failoverErr *service.UpstreamFailoverError

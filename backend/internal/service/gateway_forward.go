@@ -389,7 +389,12 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 
 		// 发送请求
 		account.ApplyCustomHeaders(upstreamReq)
+		// 上游耗时口径与 OpenAI 系一致（见 openai_gateway_forward.go 的 doOpenAIUpstream 处）：
+		// 只计到拿到响应头为止，读 body / 流式转发算「响应」阶段。Set 放在 err 判断之前，
+		// 失败也记 —— 上游超时正是最需要这个数字的场景。
+		upstreamStart := time.Now()
 		resp, err = s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, tlsProfile)
+		SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 		if err != nil {
 			if resp != nil && resp.Body != nil {
 				_ = resp.Body.Close()

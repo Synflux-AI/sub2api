@@ -1685,6 +1685,23 @@ func contextLatencyMsIntPtr(c *gin.Context, key string) *int {
 	return &value
 }
 
+// setOpsResponseLatencyMs 记录「响应」阶段耗时：Forward 总耗时减去上游取响应头的耗时，
+// 剩下的就是读 body / 流式转发客户端的时间。
+//
+// 上游耗时由 service 层在发出上游请求处写入。取不到（该平台路径未插桩、或请求在拿到
+// 响应头之前就失败）时整段记为响应 —— 宁可让「响应」偏大，也不猜一个上游耗时。
+//
+// 此前这段算术在 9 个 handler 里各抄一份，本函数是唯一实现。
+func setOpsResponseLatencyMs(c *gin.Context, forwardStart time.Time) {
+	forwardDurationMs := time.Since(forwardStart).Milliseconds()
+	responseLatencyMs := forwardDurationMs
+	if upstreamLatencyMs, ok := getContextInt64(c, service.OpsUpstreamLatencyMsKey); ok &&
+		upstreamLatencyMs > 0 && forwardDurationMs > upstreamLatencyMs {
+		responseLatencyMs = forwardDurationMs - upstreamLatencyMs
+	}
+	service.SetOpsLatencyMs(c, service.OpsResponseLatencyMsKey, responseLatencyMs)
+}
+
 func applyOpsLatencyFieldsFromContext(c *gin.Context, entry *service.OpsInsertErrorLogInput) {
 	if c == nil || entry == nil {
 		return
