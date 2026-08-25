@@ -440,6 +440,22 @@ type ChannelUsageFields struct {
 	ModelMappingChain  string // 映射链描述，如 "a→b→c"
 }
 
+// PhaseLatency 分阶段耗时快照（嵌入到 UsageLog 与各平台的 RecordUsageInput 中）。
+//
+// 四段在请求内顺序发生：鉴权 → 路由 → 上游取响应头 → 读取/流式响应体。
+// 值由 handler 在请求 ctx 内从 gin.Context 同步读出（SetOpsLatencyMs 写入的那几个 key），
+// 因为用量写库跑在异步 batcher 上，拿不到 *gin.Context —— 与 UserAgent / IPAddress 同一套搭车方式。
+//
+// nil = 未测到（例如该平台路径尚未插桩，或请求在该阶段前就结束）；
+// 0 = 测到但不足 1ms。两者语义不同，落库时不要把 nil 补成 0。
+// 首字 TTFT 不在此结构体里：UsageLog.FirstTokenMs 已经承载。
+type PhaseLatency struct {
+	AuthLatencyMs     *int
+	RoutingLatencyMs  *int
+	UpstreamLatencyMs *int
+	ResponseLatencyMs *int
+}
+
 // SupportedModel 渠道的一个支持模型条目（无通配符、可直接展示给用户）
 type SupportedModel struct {
 	Name     string               // 用户侧模型名

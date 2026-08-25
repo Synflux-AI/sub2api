@@ -308,6 +308,7 @@ func (h *OpenAIGatewayHandler) recordGrokVoiceUsage(
 	userAgent := c.GetHeader("User-Agent")
 	clientIP := ip.GetClientIP(c)
 	sessionID := service.ExtractClientSessionID(c)
+	phaseLatency := phaseLatencyFromContext(c)
 	requestPayloadHash := service.HashUsageRequestPayload(body)
 	if requestPayloadHash == "" {
 		requestPayloadHash = service.HashUsageRequestPayload([]byte(endpoint))
@@ -322,6 +323,7 @@ func (h *OpenAIGatewayHandler) recordGrokVoiceUsage(
 
 	h.submitMandatoryUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
 		if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
+			PhaseLatency:       phaseLatency,
 			Result:             result,
 			APIKey:             apiKey,
 			User:               apiKey.User,

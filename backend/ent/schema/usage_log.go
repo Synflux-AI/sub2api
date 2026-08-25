@@ -138,6 +138,22 @@ func (UsageLog) Fields() []ent.Field {
 		field.Int("first_token_ms").
 			Optional().
 			Nillable(),
+		// 分阶段耗时：鉴权 / 路由 / 上游 / 响应。四段在请求内顺序发生，
+		// 此前只写入 ops_error_logs（错误路径），成功请求丢弃。
+		// NULL = 未测到，0 = 测到但不足 1ms —— 两者语义不同，不要补 0。
+		// TTFT 不在此列：first_token_ms 已经承载。
+		field.Int("auth_latency_ms").
+			Optional().
+			Nillable(),
+		field.Int("routing_latency_ms").
+			Optional().
+			Nillable(),
+		field.Int("upstream_latency_ms").
+			Optional().
+			Nillable(),
+		field.Int("response_latency_ms").
+			Optional().
+			Nillable(),
 		field.String("user_agent").
 			MaxLen(512).
 			Optional().

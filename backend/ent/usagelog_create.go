@@ -477,6 +477,62 @@ func (_c *UsageLogCreate) SetNillableFirstTokenMs(v *int) *UsageLogCreate {
 	return _c
 }
 
+// SetAuthLatencyMs sets the "auth_latency_ms" field.
+func (_c *UsageLogCreate) SetAuthLatencyMs(v int) *UsageLogCreate {
+	_c.mutation.SetAuthLatencyMs(v)
+	return _c
+}
+
+// SetNillableAuthLatencyMs sets the "auth_latency_ms" field if the given value is not nil.
+func (_c *UsageLogCreate) SetNillableAuthLatencyMs(v *int) *UsageLogCreate {
+	if v != nil {
+		_c.SetAuthLatencyMs(*v)
+	}
+	return _c
+}
+
+// SetRoutingLatencyMs sets the "routing_latency_ms" field.
+func (_c *UsageLogCreate) SetRoutingLatencyMs(v int) *UsageLogCreate {
+	_c.mutation.SetRoutingLatencyMs(v)
+	return _c
+}
+
+// SetNillableRoutingLatencyMs sets the "routing_latency_ms" field if the given value is not nil.
+func (_c *UsageLogCreate) SetNillableRoutingLatencyMs(v *int) *UsageLogCreate {
+	if v != nil {
+		_c.SetRoutingLatencyMs(*v)
+	}
+	return _c
+}
+
+// SetUpstreamLatencyMs sets the "upstream_latency_ms" field.
+func (_c *UsageLogCreate) SetUpstreamLatencyMs(v int) *UsageLogCreate {
+	_c.mutation.SetUpstreamLatencyMs(v)
+	return _c
+}
+
+// SetNillableUpstreamLatencyMs sets the "upstream_latency_ms" field if the given value is not nil.
+func (_c *UsageLogCreate) SetNillableUpstreamLatencyMs(v *int) *UsageLogCreate {
+	if v != nil {
+		_c.SetUpstreamLatencyMs(*v)
+	}
+	return _c
+}
+
+// SetResponseLatencyMs sets the "response_latency_ms" field.
+func (_c *UsageLogCreate) SetResponseLatencyMs(v int) *UsageLogCreate {
+	_c.mutation.SetResponseLatencyMs(v)
+	return _c
+}
+
+// SetNillableResponseLatencyMs sets the "response_latency_ms" field if the given value is not nil.
+func (_c *UsageLogCreate) SetNillableResponseLatencyMs(v *int) *UsageLogCreate {
+	if v != nil {
+		_c.SetResponseLatencyMs(*v)
+	}
+	return _c
+}
+
 // SetUserAgent sets the "user_agent" field.
 func (_c *UsageLogCreate) SetUserAgent(v string) *UsageLogCreate {
 	_c.mutation.SetUserAgent(v)
@@ -1124,6 +1180,22 @@ func (_c *UsageLogCreate) createSpec() (*UsageLog, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.FirstTokenMs(); ok {
 		_spec.SetField(usagelog.FieldFirstTokenMs, field.TypeInt, value)
 		_node.FirstTokenMs = &value
+	}
+	if value, ok := _c.mutation.AuthLatencyMs(); ok {
+		_spec.SetField(usagelog.FieldAuthLatencyMs, field.TypeInt, value)
+		_node.AuthLatencyMs = &value
+	}
+	if value, ok := _c.mutation.RoutingLatencyMs(); ok {
+		_spec.SetField(usagelog.FieldRoutingLatencyMs, field.TypeInt, value)
+		_node.RoutingLatencyMs = &value
+	}
+	if value, ok := _c.mutation.UpstreamLatencyMs(); ok {
+		_spec.SetField(usagelog.FieldUpstreamLatencyMs, field.TypeInt, value)
+		_node.UpstreamLatencyMs = &value
+	}
+	if value, ok := _c.mutation.ResponseLatencyMs(); ok {
+		_spec.SetField(usagelog.FieldResponseLatencyMs, field.TypeInt, value)
+		_node.ResponseLatencyMs = &value
 	}
 	if value, ok := _c.mutation.UserAgent(); ok {
 		_spec.SetField(usagelog.FieldUserAgent, field.TypeString, value)
@@ -1927,6 +1999,102 @@ func (u *UsageLogUpsert) AddFirstTokenMs(v int) *UsageLogUpsert {
 // ClearFirstTokenMs clears the value of the "first_token_ms" field.
 func (u *UsageLogUpsert) ClearFirstTokenMs() *UsageLogUpsert {
 	u.SetNull(usagelog.FieldFirstTokenMs)
+	return u
+}
+
+// SetAuthLatencyMs sets the "auth_latency_ms" field.
+func (u *UsageLogUpsert) SetAuthLatencyMs(v int) *UsageLogUpsert {
+	u.Set(usagelog.FieldAuthLatencyMs, v)
+	return u
+}
+
+// UpdateAuthLatencyMs sets the "auth_latency_ms" field to the value that was provided on create.
+func (u *UsageLogUpsert) UpdateAuthLatencyMs() *UsageLogUpsert {
+	u.SetExcluded(usagelog.FieldAuthLatencyMs)
+	return u
+}
+
+// AddAuthLatencyMs adds v to the "auth_latency_ms" field.
+func (u *UsageLogUpsert) AddAuthLatencyMs(v int) *UsageLogUpsert {
+	u.Add(usagelog.FieldAuthLatencyMs, v)
+	return u
+}
+
+// ClearAuthLatencyMs clears the value of the "auth_latency_ms" field.
+func (u *UsageLogUpsert) ClearAuthLatencyMs() *UsageLogUpsert {
+	u.SetNull(usagelog.FieldAuthLatencyMs)
+	return u
+}
+
+// SetRoutingLatencyMs sets the "routing_latency_ms" field.
+func (u *UsageLogUpsert) SetRoutingLatencyMs(v int) *UsageLogUpsert {
+	u.Set(usagelog.FieldRoutingLatencyMs, v)
+	return u
+}
+
+// UpdateRoutingLatencyMs sets the "routing_latency_ms" field to the value that was provided on create.
+func (u *UsageLogUpsert) UpdateRoutingLatencyMs() *UsageLogUpsert {
+	u.SetExcluded(usagelog.FieldRoutingLatencyMs)
+	return u
+}
+
+// AddRoutingLatencyMs adds v to the "routing_latency_ms" field.
+func (u *UsageLogUpsert) AddRoutingLatencyMs(v int) *UsageLogUpsert {
+	u.Add(usagelog.FieldRoutingLatencyMs, v)
+	return u
+}
+
+// ClearRoutingLatencyMs clears the value of the "routing_latency_ms" field.
+func (u *UsageLogUpsert) ClearRoutingLatencyMs() *UsageLogUpsert {
+	u.SetNull(usagelog.FieldRoutingLatencyMs)
+	return u
+}
+
+// SetUpstreamLatencyMs sets the "upstream_latency_ms" field.
+func (u *UsageLogUpsert) SetUpstreamLatencyMs(v int) *UsageLogUpsert {
+	u.Set(usagelog.FieldUpstreamLatencyMs, v)
+	return u
+}
+
+// UpdateUpstreamLatencyMs sets the "upstream_latency_ms" field to the value that was provided on create.
+func (u *UsageLogUpsert) UpdateUpstreamLatencyMs() *UsageLogUpsert {
+	u.SetExcluded(usagelog.FieldUpstreamLatencyMs)
+	return u
+}
+
+// AddUpstreamLatencyMs adds v to the "upstream_latency_ms" field.
+func (u *UsageLogUpsert) AddUpstreamLatencyMs(v int) *UsageLogUpsert {
+	u.Add(usagelog.FieldUpstreamLatencyMs, v)
+	return u
+}
+
+// ClearUpstreamLatencyMs clears the value of the "upstream_latency_ms" field.
+func (u *UsageLogUpsert) ClearUpstreamLatencyMs() *UsageLogUpsert {
+	u.SetNull(usagelog.FieldUpstreamLatencyMs)
+	return u
+}
+
+// SetResponseLatencyMs sets the "response_latency_ms" field.
+func (u *UsageLogUpsert) SetResponseLatencyMs(v int) *UsageLogUpsert {
+	u.Set(usagelog.FieldResponseLatencyMs, v)
+	return u
+}
+
+// UpdateResponseLatencyMs sets the "response_latency_ms" field to the value that was provided on create.
+func (u *UsageLogUpsert) UpdateResponseLatencyMs() *UsageLogUpsert {
+	u.SetExcluded(usagelog.FieldResponseLatencyMs)
+	return u
+}
+
+// AddResponseLatencyMs adds v to the "response_latency_ms" field.
+func (u *UsageLogUpsert) AddResponseLatencyMs(v int) *UsageLogUpsert {
+	u.Add(usagelog.FieldResponseLatencyMs, v)
+	return u
+}
+
+// ClearResponseLatencyMs clears the value of the "response_latency_ms" field.
+func (u *UsageLogUpsert) ClearResponseLatencyMs() *UsageLogUpsert {
+	u.SetNull(usagelog.FieldResponseLatencyMs)
 	return u
 }
 
@@ -2920,6 +3088,118 @@ func (u *UsageLogUpsertOne) UpdateFirstTokenMs() *UsageLogUpsertOne {
 func (u *UsageLogUpsertOne) ClearFirstTokenMs() *UsageLogUpsertOne {
 	return u.Update(func(s *UsageLogUpsert) {
 		s.ClearFirstTokenMs()
+	})
+}
+
+// SetAuthLatencyMs sets the "auth_latency_ms" field.
+func (u *UsageLogUpsertOne) SetAuthLatencyMs(v int) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetAuthLatencyMs(v)
+	})
+}
+
+// AddAuthLatencyMs adds v to the "auth_latency_ms" field.
+func (u *UsageLogUpsertOne) AddAuthLatencyMs(v int) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddAuthLatencyMs(v)
+	})
+}
+
+// UpdateAuthLatencyMs sets the "auth_latency_ms" field to the value that was provided on create.
+func (u *UsageLogUpsertOne) UpdateAuthLatencyMs() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateAuthLatencyMs()
+	})
+}
+
+// ClearAuthLatencyMs clears the value of the "auth_latency_ms" field.
+func (u *UsageLogUpsertOne) ClearAuthLatencyMs() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearAuthLatencyMs()
+	})
+}
+
+// SetRoutingLatencyMs sets the "routing_latency_ms" field.
+func (u *UsageLogUpsertOne) SetRoutingLatencyMs(v int) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetRoutingLatencyMs(v)
+	})
+}
+
+// AddRoutingLatencyMs adds v to the "routing_latency_ms" field.
+func (u *UsageLogUpsertOne) AddRoutingLatencyMs(v int) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddRoutingLatencyMs(v)
+	})
+}
+
+// UpdateRoutingLatencyMs sets the "routing_latency_ms" field to the value that was provided on create.
+func (u *UsageLogUpsertOne) UpdateRoutingLatencyMs() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateRoutingLatencyMs()
+	})
+}
+
+// ClearRoutingLatencyMs clears the value of the "routing_latency_ms" field.
+func (u *UsageLogUpsertOne) ClearRoutingLatencyMs() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearRoutingLatencyMs()
+	})
+}
+
+// SetUpstreamLatencyMs sets the "upstream_latency_ms" field.
+func (u *UsageLogUpsertOne) SetUpstreamLatencyMs(v int) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetUpstreamLatencyMs(v)
+	})
+}
+
+// AddUpstreamLatencyMs adds v to the "upstream_latency_ms" field.
+func (u *UsageLogUpsertOne) AddUpstreamLatencyMs(v int) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddUpstreamLatencyMs(v)
+	})
+}
+
+// UpdateUpstreamLatencyMs sets the "upstream_latency_ms" field to the value that was provided on create.
+func (u *UsageLogUpsertOne) UpdateUpstreamLatencyMs() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateUpstreamLatencyMs()
+	})
+}
+
+// ClearUpstreamLatencyMs clears the value of the "upstream_latency_ms" field.
+func (u *UsageLogUpsertOne) ClearUpstreamLatencyMs() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearUpstreamLatencyMs()
+	})
+}
+
+// SetResponseLatencyMs sets the "response_latency_ms" field.
+func (u *UsageLogUpsertOne) SetResponseLatencyMs(v int) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetResponseLatencyMs(v)
+	})
+}
+
+// AddResponseLatencyMs adds v to the "response_latency_ms" field.
+func (u *UsageLogUpsertOne) AddResponseLatencyMs(v int) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddResponseLatencyMs(v)
+	})
+}
+
+// UpdateResponseLatencyMs sets the "response_latency_ms" field to the value that was provided on create.
+func (u *UsageLogUpsertOne) UpdateResponseLatencyMs() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateResponseLatencyMs()
+	})
+}
+
+// ClearResponseLatencyMs clears the value of the "response_latency_ms" field.
+func (u *UsageLogUpsertOne) ClearResponseLatencyMs() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearResponseLatencyMs()
 	})
 }
 
@@ -4118,6 +4398,118 @@ func (u *UsageLogUpsertBulk) UpdateFirstTokenMs() *UsageLogUpsertBulk {
 func (u *UsageLogUpsertBulk) ClearFirstTokenMs() *UsageLogUpsertBulk {
 	return u.Update(func(s *UsageLogUpsert) {
 		s.ClearFirstTokenMs()
+	})
+}
+
+// SetAuthLatencyMs sets the "auth_latency_ms" field.
+func (u *UsageLogUpsertBulk) SetAuthLatencyMs(v int) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetAuthLatencyMs(v)
+	})
+}
+
+// AddAuthLatencyMs adds v to the "auth_latency_ms" field.
+func (u *UsageLogUpsertBulk) AddAuthLatencyMs(v int) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddAuthLatencyMs(v)
+	})
+}
+
+// UpdateAuthLatencyMs sets the "auth_latency_ms" field to the value that was provided on create.
+func (u *UsageLogUpsertBulk) UpdateAuthLatencyMs() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateAuthLatencyMs()
+	})
+}
+
+// ClearAuthLatencyMs clears the value of the "auth_latency_ms" field.
+func (u *UsageLogUpsertBulk) ClearAuthLatencyMs() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearAuthLatencyMs()
+	})
+}
+
+// SetRoutingLatencyMs sets the "routing_latency_ms" field.
+func (u *UsageLogUpsertBulk) SetRoutingLatencyMs(v int) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetRoutingLatencyMs(v)
+	})
+}
+
+// AddRoutingLatencyMs adds v to the "routing_latency_ms" field.
+func (u *UsageLogUpsertBulk) AddRoutingLatencyMs(v int) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddRoutingLatencyMs(v)
+	})
+}
+
+// UpdateRoutingLatencyMs sets the "routing_latency_ms" field to the value that was provided on create.
+func (u *UsageLogUpsertBulk) UpdateRoutingLatencyMs() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateRoutingLatencyMs()
+	})
+}
+
+// ClearRoutingLatencyMs clears the value of the "routing_latency_ms" field.
+func (u *UsageLogUpsertBulk) ClearRoutingLatencyMs() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearRoutingLatencyMs()
+	})
+}
+
+// SetUpstreamLatencyMs sets the "upstream_latency_ms" field.
+func (u *UsageLogUpsertBulk) SetUpstreamLatencyMs(v int) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetUpstreamLatencyMs(v)
+	})
+}
+
+// AddUpstreamLatencyMs adds v to the "upstream_latency_ms" field.
+func (u *UsageLogUpsertBulk) AddUpstreamLatencyMs(v int) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddUpstreamLatencyMs(v)
+	})
+}
+
+// UpdateUpstreamLatencyMs sets the "upstream_latency_ms" field to the value that was provided on create.
+func (u *UsageLogUpsertBulk) UpdateUpstreamLatencyMs() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateUpstreamLatencyMs()
+	})
+}
+
+// ClearUpstreamLatencyMs clears the value of the "upstream_latency_ms" field.
+func (u *UsageLogUpsertBulk) ClearUpstreamLatencyMs() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearUpstreamLatencyMs()
+	})
+}
+
+// SetResponseLatencyMs sets the "response_latency_ms" field.
+func (u *UsageLogUpsertBulk) SetResponseLatencyMs(v int) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetResponseLatencyMs(v)
+	})
+}
+
+// AddResponseLatencyMs adds v to the "response_latency_ms" field.
+func (u *UsageLogUpsertBulk) AddResponseLatencyMs(v int) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddResponseLatencyMs(v)
+	})
+}
+
+// UpdateResponseLatencyMs sets the "response_latency_ms" field to the value that was provided on create.
+func (u *UsageLogUpsertBulk) UpdateResponseLatencyMs() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateResponseLatencyMs()
+	})
+}
+
+// ClearResponseLatencyMs clears the value of the "response_latency_ms" field.
+func (u *UsageLogUpsertBulk) ClearResponseLatencyMs() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearResponseLatencyMs()
 	})
 }
 

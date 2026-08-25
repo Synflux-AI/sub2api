@@ -569,6 +569,7 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 		forceCacheBilling := fs.ForceCacheBilling
 		quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
 		sessionID := service.ExtractClientSessionID(c)
+		phaseLatency := phaseLatencyFromContext(c)
 		// 长上下文规则由计费服务统一持有（模型广场展示同源），入口只负责声明自己适用该规则。
 		var longContextThreshold int
 		var longContextMultiplier float64
@@ -578,6 +579,7 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 		}
 		h.submitUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
 			if err := h.gatewayService.RecordUsageWithLongContext(ctx, &service.RecordUsageLongContextInput{
+				PhaseLatency:          phaseLatency,
 				Result:                result,
 				QuotaPlatform:         quotaPlatform,
 				APIKey:                apiKey,

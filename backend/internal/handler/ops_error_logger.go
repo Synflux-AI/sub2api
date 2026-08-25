@@ -1657,6 +1657,34 @@ func isTokenCountRequestPath(path string) bool {
 	return strings.Contains(path, "/count_tokens") || strings.Contains(path, "/responses/input_tokens")
 }
 
+// phaseLatencyFromContext 把四段耗时从 gin.Context 快照成用量行可携带的值。
+//
+// 必须在**请求 ctx 内**、提交异步计费任务之前调用：用量写库跑在 worker 池 + batcher 上，
+// 只拿到 context.Context；而 gin 会把 *gin.Context 放回 sync.Pool 复用，等到 worker 里再
+// c.Get() 就是数据竞争，还可能读到另一个请求的值。与 userAgent / clientIP 同一套搭车方式。
+//
+// 与 applyOpsLatencyFieldsFromContext 共用 getContextLatencyMs，保证 usage_logs 与
+// ops_error_logs 两侧口径一致。首字 TTFT 不在这里：用量行用 result.FirstTokenMs。
+func phaseLatencyFromContext(c *gin.Context) service.PhaseLatency {
+	return service.PhaseLatency{
+		AuthLatencyMs:     contextLatencyMsIntPtr(c, service.OpsAuthLatencyMsKey),
+		RoutingLatencyMs:  contextLatencyMsIntPtr(c, service.OpsRoutingLatencyMsKey),
+		UpstreamLatencyMs: contextLatencyMsIntPtr(c, service.OpsUpstreamLatencyMsKey),
+		ResponseLatencyMs: contextLatencyMsIntPtr(c, service.OpsResponseLatencyMsKey),
+	}
+}
+
+// contextLatencyMsIntPtr 是 getContextLatencyMs 的 *int 版本（usage_logs 这几列是 INT，
+// ops_error_logs 是 BIGINT）。缺值返回 nil —— NULL 表示「未测到」，与测到的 0ms 不同义。
+func contextLatencyMsIntPtr(c *gin.Context, key string) *int {
+	ms := getContextLatencyMs(c, key)
+	if ms == nil {
+		return nil
+	}
+	value := int(*ms)
+	return &value
+}
+
 func applyOpsLatencyFieldsFromContext(c *gin.Context, entry *service.OpsInsertErrorLogInput) {
 	if c == nil || entry == nil {
 		return
