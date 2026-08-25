@@ -17,12 +17,22 @@
 -- usage_logs is partitioned (035_usage_logs_partitioning.sql); ADD COLUMN on the
 -- parent propagates to every partition. IF NOT EXISTS keeps it idempotent.
 -- On PostgreSQL 11+ adding a nullable column without a default is a metadata-only
--- change -- no table rewrite -- but it still takes a brief ACCESS EXCLUSIVE lock,
--- so run it with a lock_timeout so it cannot queue behind a long analytics query
--- and stall the insert path.
+-- change -- no table rewrite -- but it still takes a brief ACCESS EXCLUSIVE lock.
+--
+-- lock_timeout is set here rather than left to the operator: migrations run
+-- automatically at startup (internal/repository/ent.go) inside a transaction, so
+-- there is no human in the loop to set it. Without it, an ALTER that lands while a
+-- long analytics query holds a conflicting lock waits under the runner's shared
+-- 10-minute context -- and every read and write arriving behind it queues too,
+-- stalling usage traffic for most of a deployment. Failing startup fast is the far
+-- cheaper outcome: the deploy retries, the queue never forms. Values match the
+-- house precedent in 033_ops_monitoring_vnext.sql.
 --
 -- No index: the detail drawer reads a single row by id. Filtering or sorting by
 -- phase latency would need one, and that is the expensive part -- not added.
+SET LOCAL lock_timeout = '5s';
+SET LOCAL statement_timeout = '10min';
+
 ALTER TABLE usage_logs ADD COLUMN IF NOT EXISTS auth_latency_ms INT;
 ALTER TABLE usage_logs ADD COLUMN IF NOT EXISTS routing_latency_ms INT;
 ALTER TABLE usage_logs ADD COLUMN IF NOT EXISTS upstream_latency_ms INT;
