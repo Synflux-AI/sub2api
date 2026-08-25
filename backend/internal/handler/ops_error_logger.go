@@ -1685,6 +1685,44 @@ func contextLatencyMsIntPtr(c *gin.Context, key string) *int {
 	return &value
 }
 
+// setOpsRoutingLatencyMsIfAbsent 兜住「路由阶段中途失败」的情况。
+//
+// 正常路径在最后一次 Forward 之前显式记一次路由耗时；但并发槽等待超时、余额复核不过、
+// 没有可用账号这些失败会在那之前就 return，此前它们一个路由数字都没有 —— 恰恰是最需要
+// 路由诊断的场景。handler 在 routingStart 之后 defer 本函数即可覆盖所有早退出口。
+//
+// defer 的时机是安全的：ops 错误日志主路径在 OpsErrorLoggerMiddleware 的 defer 里、
+// c.Next() 之后才写，而 handler 自己的 defer 先于它执行。
+//
+// 「已有值就不覆盖」是关键：正常路径显式记录的是「到 Forward 为止」的正确跨度，
+// 若在函数退出时重算会把整个 Forward 也算进路由。
+func setOpsRoutingLatencyMsIfAbsent(c *gin.Context, routingStart time.Time) {
+	if c == nil {
+		return
+	}
+	if _, exists := c.Get(service.OpsRoutingLatencyMsKey); exists {
+		return
+	}
+	service.SetOpsLatencyMs(c, service.OpsRoutingLatencyMsKey, time.Since(routingStart).Milliseconds())
+}
+
+// setOpsResponseLatencyMs 记录「响应」阶段耗时：Forward 总耗时减去上游取响应头的耗时，
+// 剩下的就是读 body / 流式转发客户端的时间。
+//
+// 上游耗时由 service 层在发出上游请求处写入。取不到（该平台路径未插桩、或请求在拿到
+// 响应头之前就失败）时整段记为响应 —— 宁可让「响应」偏大，也不猜一个上游耗时。
+//
+// 此前这段算术在 9 个 handler 里各抄一份，本函数是唯一实现。
+func setOpsResponseLatencyMs(c *gin.Context, forwardStart time.Time) {
+	forwardDurationMs := time.Since(forwardStart).Milliseconds()
+	responseLatencyMs := forwardDurationMs
+	if upstreamLatencyMs, ok := getContextInt64(c, service.OpsUpstreamLatencyMsKey); ok &&
+		upstreamLatencyMs > 0 && forwardDurationMs > upstreamLatencyMs {
+		responseLatencyMs = forwardDurationMs - upstreamLatencyMs
+	}
+	service.SetOpsLatencyMs(c, service.OpsResponseLatencyMsKey, responseLatencyMs)
+}
+
 func applyOpsLatencyFieldsFromContext(c *gin.Context, entry *service.OpsInsertErrorLogInput) {
 	if c == nil || entry == nil {
 		return

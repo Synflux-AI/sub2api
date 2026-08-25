@@ -118,6 +118,7 @@ func (h *OpenAIGatewayHandler) AlphaSearch(c *gin.Context) {
 	switchCount := 0
 	var oauth429FailoverState service.OpenAIOAuth429FailoverState
 	routingStart := time.Now()
+	defer setOpsRoutingLatencyMsIfAbsent(c, routingStart)
 
 	// 分组利润控制：alpha search 文本入口请求级装门并固定 pricingAt
 	//（记录路径经 service.OpenAIPricingAtFromContext 从请求 ctx 回读）。

@@ -197,7 +197,7 @@ func (s *GatewayService) executeBedrockUpstream(
 		}
 
 		account.ApplyCustomHeaders(upstreamReq)
-		resp, err = s.httpUpstream.DoWithTLS(upstreamReq, proxyURL, account.ID, account.Concurrency, nil)
+		resp, err = s.timedGatewayUpstreamDoWithTLS(c, upstreamReq, proxyURL, account.ID, account.Concurrency, nil)
 		if err != nil {
 			if resp != nil && resp.Body != nil {
 				_ = resp.Body.Close()
