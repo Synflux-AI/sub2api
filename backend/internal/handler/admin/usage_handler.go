@@ -136,6 +136,16 @@ func (h *UsageHandler) List(c *gin.Context) {
 	requestID := strings.TrimSpace(c.Query("request_id"))
 	traceID := strings.TrimSpace(c.Query("trace_id"))
 	billingMode := strings.TrimSpace(c.Query("billing_mode"))
+	var outputTokens *int
+	if raw := strings.TrimSpace(c.Query("output_tokens")); raw != "" {
+		value, err := strconv.ParseInt(raw, 10, 32)
+		if err != nil || value < 0 {
+			response.BadRequest(c, "Invalid output_tokens")
+			return
+		}
+		parsed := int(value)
+		outputTokens = &parsed
+	}
 
 	var requestType *int16
 	var stream *bool
@@ -219,6 +229,7 @@ func (h *UsageHandler) List(c *gin.Context) {
 		TraceID:               traceID,
 		Model:                 model,
 		Models:                models,
+		OutputTokens:          outputTokens,
 		ModelFilterSource:     usagestats.ModelSourceRequested,
 		RequestType:           requestType,
 		Stream:                stream,
