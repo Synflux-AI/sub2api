@@ -120,6 +120,34 @@ func TestAdminUsageListRequestIDFilter(t *testing.T) {
 	require.Equal(t, "req-0123", repo.listFilters.RequestID)
 }
 
+func TestAdminUsageListOutputTokensZero(t *testing.T) {
+	repo := &adminUsageRepoCapture{}
+	router := newAdminUsageRequestTypeTestRouter(repo)
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/usage?output_tokens=0", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.NotNil(t, repo.listFilters.OutputTokens)
+	require.Zero(t, *repo.listFilters.OutputTokens)
+}
+
+func TestAdminUsageListInvalidOutputTokens(t *testing.T) {
+	for _, value := range []string{"-1", "invalid"} {
+		t.Run(value, func(t *testing.T) {
+			repo := &adminUsageRepoCapture{}
+			router := newAdminUsageRequestTypeTestRouter(repo)
+
+			req := httptest.NewRequest(http.MethodGet, "/admin/usage?output_tokens="+value, nil)
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, req)
+
+			require.Equal(t, http.StatusBadRequest, rec.Code)
+		})
+	}
+}
+
 func TestAdminUsageListInvalidExactTotal(t *testing.T) {
 	repo := &adminUsageRepoCapture{}
 	router := newAdminUsageRequestTypeTestRouter(repo)

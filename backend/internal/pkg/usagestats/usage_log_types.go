@@ -310,6 +310,8 @@ type UsageLogFilters struct {
 	TraceID    string
 	Model      string
 	Models     []string
+	// nil means no filter; zero is a valid exact match.
+	OutputTokens *int
 	// ModelFilterSource controls how Model is matched. Empty preserves raw usage_logs.model semantics.
 	ModelFilterSource     string
 	RequestType           *int16

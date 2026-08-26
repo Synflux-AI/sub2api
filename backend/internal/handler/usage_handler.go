@@ -227,6 +227,15 @@ func (h *UsageHandler) List(c *gin.Context) {
 	if !ok {
 		return
 	}
+	if raw := strings.TrimSpace(c.Query("output_tokens")); raw != "" {
+		value, err := strconv.ParseInt(raw, 10, 32)
+		if err != nil || value < 0 {
+			response.BadRequest(c, "Invalid output_tokens")
+			return
+		}
+		outputTokens := int(value)
+		parsed.Filters.OutputTokens = &outputTokens
+	}
 
 	params := pagination.PaginationParams{
 		Page:      page,

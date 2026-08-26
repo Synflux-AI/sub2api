@@ -688,6 +688,23 @@ func (s *UsageLogRepoSuite) TestListWithFilters() {
 	s.Require().Equal(int64(1), page.Total)
 }
 
+func (s *UsageLogRepoSuite) TestListWithFilters_OutputTokensZero() {
+	user := mustCreateUser(s.T(), s.client, &service.User{Email: "filters-output-zero@test.com"})
+	apiKey := mustCreateApiKey(s.T(), s.client, &service.APIKey{UserID: user.ID, Key: "sk-filters-output-zero", Name: "k"})
+	account := mustCreateAccount(s.T(), s.client, &service.Account{Name: "acc-filters-output-zero"})
+
+	s.createUsageLog(user, apiKey, account, 10, 0, 0.5, time.Now())
+	s.createUsageLog(user, apiKey, account, 10, 1, 0.5, time.Now().Add(time.Second))
+	outputTokens := 0
+	filters := usagestats.UsageLogFilters{UserID: user.ID, OutputTokens: &outputTokens}
+
+	logs, page, err := s.repo.ListWithFilters(s.ctx, pagination.PaginationParams{Page: 1, PageSize: 10}, filters)
+	s.Require().NoError(err)
+	s.Require().Len(logs, 1)
+	s.Require().Zero(logs[0].OutputTokens)
+	s.Require().Equal(int64(1), page.Total)
+}
+
 // --- GetDashboardStats ---
 
 func (s *UsageLogRepoSuite) TestDashboardStats_TodayTotalsAndPerformance() {
