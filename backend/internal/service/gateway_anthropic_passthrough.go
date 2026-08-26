@@ -480,6 +480,10 @@ type anthropicPassthroughSSEEvent struct {
 	raw       []byte
 	eventName string
 	data      []byte
+	// hasDataLine 记录本事件里是否真有 `data:` 行。data 可能来自畸形裸 JSON 错误体的
+	// 补齐（见 bareAnthropicPassthroughErrorPayload），那种补齐不算「向客户端发过输出」，
+	// 所以语义判定只认这个标志，不认 len(data)（#190）。
+	hasDataLine bool
 }
 
 type anthropicPassthroughStreamRuleMatch struct {
@@ -515,11 +519,40 @@ func buildAnthropicPassthroughSSEEvent(lines []string, terminated bool) anthropi
 	if terminated {
 		_ = raw.WriteByte('\n')
 	}
-	return anthropicPassthroughSSEEvent{
-		raw:       []byte(raw.String()),
-		eventName: eventName,
-		data:      []byte(strings.Join(dataLines, "\n")),
+	event := anthropicPassthroughSSEEvent{
+		raw:         []byte(raw.String()),
+		eventName:   eventName,
+		data:        []byte(strings.Join(dataLines, "\n")),
+		hasDataLine: len(dataLines) > 0,
 	}
+	if !event.hasDataLine {
+		// 上游偶发在 200 流里直接写一行没有 `data:` 前缀的 JSON 错误体。原样丢弃会让
+		// 错误处理规则一级匹配彻底拿不到上游原文（#190），这里只在「零 data 行 + 整块是
+		// 单个合法 JSON 对象 + type == error」三重收窄下把它补进 data 供分类使用；
+		// 对客转发的 event.raw 不受影响。
+		if payload, ok := bareAnthropicPassthroughErrorPayload(event.raw); ok {
+			event.data = payload
+		}
+	}
+	return event
+}
+
+// bareAnthropicPassthroughErrorPayload 判断整个事件块是否就是一个 Anthropic 错误对象
+// 本身（没有任何 SSE 字段前缀）。json.Unmarshal 到 map 同时排掉数组、标量与尾随垃圾。
+func bareAnthropicPassthroughErrorPayload(raw []byte) ([]byte, bool) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || trimmed[0] != '{' {
+		return nil, false
+	}
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(trimmed, &fields) != nil {
+		return nil, false
+	}
+	var eventType string
+	if err := json.Unmarshal(fields["type"], &eventType); err != nil || eventType != "error" {
+		return nil, false
+	}
+	return trimmed, true
 }
 
 func anthropicPassthroughSSEError(event anthropicPassthroughSSEEvent) (int, string, string, bool) {
@@ -563,19 +596,25 @@ func anthropicPassthroughSSEEventIsSemantic(event anthropicPassthroughSSEEvent) 
 	if _, _, _, isError := anthropicPassthroughSSEError(event); isError {
 		return false
 	}
+	// SSE 里不带 data 字段的事件不承载 payload，不该算「已向客户端发出输出」。真实输出
+	// 一律以 `data:` 承载。谓词与 processEvent 里的 TrimSpace(data) != "" 保持一致，
+	// 这样 semanticEventForwarded == true ⇒ firstTokenMs != nil 才成立（#190）。
+	if !event.hasDataLine || len(bytes.TrimSpace(event.data)) == 0 {
+		return false
+	}
 	if strings.EqualFold(strings.TrimSpace(event.eventName), "ping") {
 		return false
 	}
 	if gjson.GetBytes(event.data, "type").String() == "ping" {
 		return false
 	}
-	for _, line := range strings.Split(strings.TrimSuffix(string(event.raw), "\n"), "\n") {
-		trimmed := strings.TrimSpace(line)
-		if trimmed != "" && !strings.HasPrefix(trimmed, ":") {
-			return true
-		}
+	// [DONE] 由 anthropicStreamEventIsTerminal 单独判终止，不是语义输出。
+	if string(bytes.TrimSpace(event.data)) == "[DONE]" {
+		return false
 	}
-	return false
+	// 走到这里必然存在一条携带非空 payload 的 `data:` 行（注释行与空事件已被上面的
+	// hasDataLine 闸门挡掉），即真实语义输出。
+	return true
 }
 
 func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthrough(
