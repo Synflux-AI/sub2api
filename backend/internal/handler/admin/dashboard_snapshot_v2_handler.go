@@ -184,6 +184,7 @@ func (h *DashboardHandler) buildSnapshotV2Response(
 			filters.AccountID,
 			filters.GroupID,
 			filters.Model,
+			nil,
 			filters.RequestType,
 			filters.Stream,
 			filters.BillingType,

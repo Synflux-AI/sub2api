@@ -26,6 +26,19 @@ func hasUsageFilterLists(filters usagestats.UsageLogFilters) bool {
 	return len(filters.UserIDs) > 0 || len(filters.APIKeyIDs) > 0 || len(filters.AccountIDs) > 0 || len(filters.GroupIDs) > 0 || len(filters.Models) > 0
 }
 
+func parseDashboardOutputTokens(c *gin.Context) (*int, error) {
+	raw := strings.TrimSpace(c.Query("output_tokens"))
+	if raw == "" {
+		return nil, nil
+	}
+	value, err := strconv.ParseInt(raw, 10, 32)
+	if err != nil || value < 0 {
+		return nil, errors.New("invalid output_tokens")
+	}
+	parsed := int(value)
+	return &parsed, nil
+}
+
 // NewDashboardHandler creates a new admin dashboard handler
 func NewDashboardHandler(dashboardService *service.DashboardService, aggregationService *service.DashboardAggregationService) *DashboardHandler {
 	return &DashboardHandler{
@@ -232,6 +245,11 @@ func (h *DashboardHandler) GetUsageTrend(c *gin.Context) {
 		return
 	}
 	model, models := parseUsageModelFilter(c)
+	outputTokens, err := parseDashboardOutputTokens(c)
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
 	var requestType *int16
 	var stream *bool
 	var billingType *int8
@@ -279,9 +297,9 @@ func (h *DashboardHandler) GetUsageTrend(c *gin.Context) {
 
 	// group_by=model 返回按天×模型的明细行(每行带 model),默认行为不变;该路径不走快照缓存。
 	if c.Query("group_by") == "model" {
-		filters := usagestats.UsageLogFilters{UserID: userID, UserIDs: userIDs, APIKeyID: apiKeyID, APIKeyIDs: apiKeyIDs, AccountID: accountID, AccountIDs: accountIDs, GroupID: groupID, GroupIDs: groupIDs, Model: model, Models: models, ModelFilterSource: usagestats.ModelSourceRequested, RequestType: requestType, Stream: stream, BillingType: billingType, UpstreamModelMismatch: upstreamModelMismatch}
+		filters := usagestats.UsageLogFilters{UserID: userID, UserIDs: userIDs, APIKeyID: apiKeyID, APIKeyIDs: apiKeyIDs, AccountID: accountID, AccountIDs: accountIDs, GroupID: groupID, GroupIDs: groupIDs, Model: model, Models: models, ModelFilterSource: usagestats.ModelSourceRequested, OutputTokens: outputTokens, RequestType: requestType, Stream: stream, BillingType: billingType, UpstreamModelMismatch: upstreamModelMismatch}
 		var trend []usagestats.TrendModelDataPoint
-		if hasUsageFilterLists(filters) {
+		if hasUsageFilterLists(filters) || filters.OutputTokens != nil {
 			trend, err = h.dashboardService.GetUsageTrendByModelWithUsageFilters(c.Request.Context(), startTime, endTime, granularity, filters)
 		} else {
 			trend, err = h.dashboardService.GetUsageTrendByModelWithFilters(c.Request.Context(), startTime, endTime, granularity, userID, apiKeyID, accountID, groupID, model, requestType, stream, billingType, upstreamModelMismatch)
@@ -299,13 +317,13 @@ func (h *DashboardHandler) GetUsageTrend(c *gin.Context) {
 		return
 	}
 
-	filters := usagestats.UsageLogFilters{UserID: userID, UserIDs: userIDs, APIKeyID: apiKeyID, APIKeyIDs: apiKeyIDs, AccountID: accountID, AccountIDs: accountIDs, GroupID: groupID, GroupIDs: groupIDs, Model: model, Models: models, ModelFilterSource: usagestats.ModelSourceRequested, RequestType: requestType, Stream: stream, BillingType: billingType, UpstreamModelMismatch: upstreamModelMismatch, IncludeLatency: includeLatency}
+	filters := usagestats.UsageLogFilters{UserID: userID, UserIDs: userIDs, APIKeyID: apiKeyID, APIKeyIDs: apiKeyIDs, AccountID: accountID, AccountIDs: accountIDs, GroupID: groupID, GroupIDs: groupIDs, Model: model, Models: models, ModelFilterSource: usagestats.ModelSourceRequested, OutputTokens: outputTokens, RequestType: requestType, Stream: stream, BillingType: billingType, UpstreamModelMismatch: upstreamModelMismatch, IncludeLatency: includeLatency}
 	var trend []usagestats.TrendDataPoint
 	var hit bool
 	if hasUsageFilterLists(filters) {
 		trend, err = h.dashboardService.GetUsageTrendWithUsageFilters(c.Request.Context(), startTime, endTime, granularity, filters)
 	} else {
-		trend, hit, err = h.getUsageTrendCached(c.Request.Context(), startTime, endTime, granularity, userID, apiKeyID, accountID, groupID, model, requestType, stream, billingType, upstreamModelMismatch, includeLatency)
+		trend, hit, err = h.getUsageTrendCached(c.Request.Context(), startTime, endTime, granularity, userID, apiKeyID, accountID, groupID, model, outputTokens, requestType, stream, billingType, upstreamModelMismatch, includeLatency)
 	}
 	if err != nil {
 		response.Error(c, 500, "Failed to get usage trend")
@@ -561,10 +579,25 @@ func (h *DashboardHandler) GetUserUsageTrend(c *gin.Context) {
 		return
 	}
 	model, models := parseUsageModelFilter(c)
+	outputTokens, err := parseDashboardOutputTokens(c)
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	var stream *bool
+	if raw := strings.TrimSpace(c.Query("stream")); raw != "" {
+		value, err := strconv.ParseBool(raw)
+		if err != nil {
+			response.BadRequest(c, "Invalid stream value, use true or false")
+			return
+		}
+		stream = &value
+	}
 	filters := usagestats.UsageLogFilters{
 		UserID: userID, UserIDs: userIDs, APIKeyID: apiKeyID, APIKeyIDs: apiKeyIDs,
 		AccountID: accountID, AccountIDs: accountIDs, GroupID: groupID, GroupIDs: groupIDs,
 		Model: model, Models: models, ModelFilterSource: usagestats.ModelSourceRequested,
+		OutputTokens: outputTokens, Stream: stream,
 	}
 
 	trend, hit, err := h.getUserUsageTrendCached(c.Request.Context(), startTime, endTime, granularity, limit, sortBy, filters)

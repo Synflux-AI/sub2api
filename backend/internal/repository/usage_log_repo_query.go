@@ -117,10 +117,7 @@ func (r *usageLogRepository) ListWithFilters(ctx context.Context, params paginat
 		args = append(args, traceID)
 	}
 	conditions, args = appendUsageLogModelWhereConditions(conditions, args, filters.Model, filters.Models, filters.ModelFilterSource)
-	if filters.OutputTokens != nil {
-		conditions = append(conditions, fmt.Sprintf("output_tokens = $%d", len(args)+1))
-		args = append(args, *filters.OutputTokens)
-	}
+	conditions, args = appendOutputTokensWhereCondition(conditions, args, filters.OutputTokens)
 	conditions, args = appendRequestTypeOrStreamWhereCondition(conditions, args, filters.RequestType, filters.Stream)
 	if filters.BillingType != nil {
 		conditions = append(conditions, fmt.Sprintf("billing_type = $%d", len(args)+1))

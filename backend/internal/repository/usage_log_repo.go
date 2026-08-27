@@ -209,6 +209,14 @@ func appendRequestTypeOrStreamWhereCondition(conditions []string, args []any, re
 	return conditions, args
 }
 
+func appendOutputTokensWhereCondition(conditions []string, args []any, outputTokens *int) ([]string, []any) {
+	if outputTokens != nil {
+		conditions = append(conditions, fmt.Sprintf("output_tokens = $%d", len(args)+1))
+		args = append(args, *outputTokens)
+	}
+	return conditions, args
+}
+
 // buildRequestTypeFilterCondition 在 request_type 过滤时兼容 legacy 字段，避免历史数据漏查。
 func buildRequestTypeFilterCondition(startArgIndex int, requestType int16) (string, []any) {
 	return buildRequestTypeFilterConditionWithAlias(startArgIndex, requestType, "")

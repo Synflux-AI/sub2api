@@ -452,6 +452,53 @@ func TestUsageLogRepositoryGetUsageTrendWithFiltersRequestTypePriority(t *testin
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestUsageLogRepositoryTrendsApplyOutputTokensAndStream(t *testing.T) {
+	start := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	end := start.Add(24 * time.Hour)
+	outputTokens := 0
+	stream := false
+	filters := usagestats.UsageLogFilters{OutputTokens: &outputTokens, Stream: &stream}
+
+	t.Run("total trend", func(t *testing.T) {
+		db, mock := newSQLMock(t)
+		repo := &usageLogRepository{sql: db}
+		mock.ExpectQuery(`AND output_tokens = \$3 AND stream = \$4`).
+			WithArgs(start, end, outputTokens, stream).
+			WillReturnRows(sqlmock.NewRows([]string{"date", "requests", "input_tokens", "output_tokens", "cache_creation_tokens", "cache_read_tokens", "total_tokens", "cost", "actual_cost"}))
+
+		rows, err := repo.GetUsageTrendWithUsageFilters(context.Background(), start, end, "day", filters)
+		require.NoError(t, err)
+		require.Empty(t, rows)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("model trend", func(t *testing.T) {
+		db, mock := newSQLMock(t)
+		repo := &usageLogRepository{sql: db}
+		mock.ExpectQuery(`AND output_tokens = \$3 AND stream = \$4`).
+			WithArgs(start, end, outputTokens, stream).
+			WillReturnRows(sqlmock.NewRows([]string{"date", "model", "requests", "input_tokens", "output_tokens", "cache_creation_tokens", "cache_read_tokens", "total_tokens", "cost", "actual_cost"}))
+
+		rows, err := repo.GetUsageTrendByModelWithUsageFilters(context.Background(), start, end, "day", filters)
+		require.NoError(t, err)
+		require.Empty(t, rows)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("user trend", func(t *testing.T) {
+		db, mock := newSQLMock(t)
+		repo := &usageLogRepository{sql: db}
+		mock.ExpectQuery(`(?s)WITH filtered AS .*output_tokens = \$3.*stream = \$4.*LIMIT \$5`).
+			WithArgs(start, end, outputTokens, stream, 8).
+			WillReturnRows(sqlmock.NewRows([]string{"date", "user_id", "key", "label", "email", "username", "notes", "requests", "tokens", "cost", "actual_cost"}))
+
+		rows, err := repo.GetUserUsageTrendWithUsageFilters(context.Background(), start, end, "day", 8, "total_tokens", filters)
+		require.NoError(t, err)
+		require.Empty(t, rows)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+}
+
 func TestUsageLogRepositoryGetUsageTrendWithUsageFiltersRequestedModelSource(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := &usageLogRepository{sql: db}
