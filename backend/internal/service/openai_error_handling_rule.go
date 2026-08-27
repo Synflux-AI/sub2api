@@ -111,24 +111,44 @@ func (s *OpenAIGatewayService) openAIErrorHandlingRulesActive(ctx context.Contex
 	return settings, true
 }
 
+// openAIErrorHandlingRuleInput 是 OpenAI 执行层的一次提问。用结构体而不是位置参数：
+// 里面有三个 int/bool，位置传参很容易在新增接入点时错位。
+type openAIErrorHandlingRuleInput struct {
+	Account    *Account
+	StatusCode int
+	Header     http.Header
+	Body       []byte
+	ReqModel   string
+
+	// BuiltinWillFailover 是内置分类的结论（shouldFailoverOpenAIUpstreamResponse 的
+	// 最终值）。不参与匹配，只决定「规则接管时要替内置补跑什么」：内置判定不换号时，
+	// 调用方拿到非 nil 错误就会早退，从而跳过 handleErrorResponse /
+	// handleOpenAIImagesErrorResponse 这条链 —— 那条链里有两件不能丢的事，见下。
+	BuiltinWillFailover bool
+
+	// SyntheticStatus 表示 StatusCode 是合成的（传输层错误没有 HTTP 响应，喂给引擎
+	// 之前合成了 502）。合成状态码只用于**匹配**，绝不能写进 ops_error_logs 的顶层
+	// upstream_status_code：那一列为 NULL 正是「这是传输层失败、根本没有 HTTP 响应」
+	// 的判定依据（#189 就是靠 `upstream_status_code IS NULL` 把那 128 条捞出来的）。
+	SyntheticStatus bool
+}
+
 // openAIErrorHandlingRuleOverride 问一次规则引擎，命中就返回规则版的 failover 错误。
 //
 // handled == false 时调用方必须原样走内置路径 —— 未命中的请求一行行为都不能变。
-//
-// builtinWillFailover 是内置分类的结论（shouldFailoverOpenAIUpstreamResponse 的最终值）。
-// 它不参与匹配，只决定「规则接管时要替内置补跑什么」：内置判定不换号时，调用方拿到
-// 非 nil 错误就会早退，从而跳过 handleErrorResponse / handleOpenAIImagesErrorResponse
-// 这条链，那条链里有两件不能丢的事 —— 见下面两处注释。
 func (s *OpenAIGatewayService) openAIErrorHandlingRuleOverride(
 	ctx context.Context,
 	c *gin.Context,
-	account *Account,
-	statusCode int,
-	respHeader http.Header,
-	respBody []byte,
-	reqModel string,
-	builtinWillFailover bool,
+	in openAIErrorHandlingRuleInput,
 ) (*UpstreamFailoverError, bool) {
+	account := in.Account
+	statusCode := in.StatusCode
+	respBody := in.Body
+	respHeader := in.Header
+	if respHeader == nil {
+		respHeader = http.Header{}
+	}
+
 	settings, active := s.openAIErrorHandlingRulesActive(ctx, account)
 	if !active {
 		return nil, false
@@ -139,7 +159,7 @@ func (s *OpenAIGatewayService) openAIErrorHandlingRuleOverride(
 	// 那里，等于把另一个管理台功能无声关掉。两个功能语义重叠（都能「原样返回上游错误」），
 	// 且透传规则是更专用、更早存在的那个，所以它匹配上时本引擎让路。
 	// 内置要换号的分支不受影响：那条分支上本来就问不到透传规则。
-	if !builtinWillFailover && openAIErrorPassthroughRuleMatches(c, account.Platform, statusCode, respBody) {
+	if !in.BuiltinWillFailover && openAIErrorPassthroughRuleMatches(c, account.Platform, statusCode, respBody) {
 		return nil, false
 	}
 
@@ -167,8 +187,8 @@ func (s *OpenAIGatewayService) openAIErrorHandlingRuleOverride(
 	// handleOpenAIAccountUpstreamError），规则只接管动作；内置不换号时那条记账在
 	// 被跳过的 handleErrorResponse 链里，必须在这里补，否则一个稳定报错的账号
 	// 永远不会进入冷却，会被一直调度。
-	if !builtinWillFailover {
-		s.handleOpenAIAccountUpstreamError(ctx, account, statusCode, respHeader, respBody, reqModel)
+	if !in.BuiltinWillFailover {
+		s.handleOpenAIAccountUpstreamError(ctx, account, statusCode, respHeader, respBody, in.ReqModel)
 	}
 
 	failoverErr := &UpstreamFailoverError{
@@ -200,7 +220,7 @@ func (s *OpenAIGatewayService) openAIErrorHandlingRuleOverride(
 		failoverErr.NextAccountAction = NextAccountRetry
 	}
 
-	s.logOpenAIErrorHandlingRuleDecision(ctx, c, account, statusCode, respHeader, respBody, reqModel, decision)
+	s.logOpenAIErrorHandlingRuleDecision(ctx, c, account, in, decision)
 	return failoverErr, true
 }
 
@@ -221,12 +241,17 @@ func (s *OpenAIGatewayService) openAITransportErrorRuleOverride(
 	if err != nil {
 		return nil
 	}
-	failoverErr, handled := s.openAIErrorHandlingRuleOverride(
-		ctx, c, account, openAITransportRuleSyntheticStatus, http.Header{}, body, "",
+	failoverErr, handled := s.openAIErrorHandlingRuleOverride(ctx, c, openAIErrorHandlingRuleInput{
+		Account:    account,
+		StatusCode: openAITransportRuleSyntheticStatus,
+		Header:     http.Header{},
+		Body:       body,
 		// 传输层失败上，内置只有「一律 failover」一种意见，没有「本地写响应」那条链，
-		// 所以按 builtinWillFailover=true 传：不必替内置补记账，也不该给透传规则让路
+		// 所以按 BuiltinWillFailover=true 传：不必替内置补记账，也不该给透传规则让路
 		// （透传规则匹配的是真实的上游响应，这里的 502 是合成的）。
-		true)
+		BuiltinWillFailover: true,
+		SyntheticStatus:     true,
+	})
 	if !handled {
 		return nil
 	}
@@ -258,12 +283,15 @@ func (s *OpenAIGatewayService) logOpenAIErrorHandlingRuleDecision(
 	ctx context.Context,
 	c *gin.Context,
 	account *Account,
-	statusCode int,
-	respHeader http.Header,
-	respBody []byte,
-	reqModel string,
+	in openAIErrorHandlingRuleInput,
 	decision errorHandlingRuleDecision,
 ) {
+	statusCode := in.StatusCode
+	respBody := in.Body
+	respHeader := in.Header
+	if respHeader == nil {
+		respHeader = http.Header{}
+	}
 	effectiveAction := openAIErrorHandlingRuleEffectiveAction(decision)
 	upstreamMsg := extractUpstreamErrorMessage(respBody)
 	upstreamDetail := ""
@@ -275,13 +303,21 @@ func (s *OpenAIGatewayService) logOpenAIErrorHandlingRuleDecision(
 	// 规则命中会让调用方跳过 handleErrorResponse 一类的内置错误处理链，而
 	// setOpsUpstreamError 原先只在那条链里调。不补的话，被规则接管的请求在
 	// ops_error_logs 里 upstream_status_code 是 NULL —— 正是 #189 用来定案的那几列。
-	setOpsUpstreamError(c, statusCode, sanitizeUpstreamErrorMessage(strings.TrimSpace(upstreamMsg)), upstreamDetail)
+	//
+	// 但**合成**状态码不能写进去：传输层失败根本没有 HTTP 响应，那一列为 NULL 正是
+	// 「这是传输层失败」的判定依据（#189 就是靠 `upstream_status_code IS NULL` 把那
+	// 128 条捞出来的）。传 0 让 setOpsUpstreamError 只落 message、不动状态码。
+	opsStatusCode := statusCode
+	if in.SyntheticStatus {
+		opsStatusCode = 0
+	}
+	setOpsUpstreamError(c, opsStatusCode, sanitizeUpstreamErrorMessage(strings.TrimSpace(upstreamMsg)), upstreamDetail)
 
 	appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 		Platform:           account.Platform,
 		AccountID:          account.ID,
 		AccountName:        account.Name,
-		UpstreamStatusCode: statusCode,
+		UpstreamStatusCode: opsStatusCode,
 		UpstreamRequestID:  respHeader.Get("x-request-id"),
 		Kind:               "error_handling_rule_" + effectiveAction,
 		Message:            upstreamMsg,
@@ -294,12 +330,15 @@ func (s *OpenAIGatewayService) logOpenAIErrorHandlingRuleDecision(
 		zap.String("rule_action", decision.ConfiguredAction),
 		zap.String("outcome", effectiveAction),
 		zap.String("exhausted_action", decision.ExhaustedAction),
-		zap.Int("upstream_status_code", statusCode),
+		zap.Int("upstream_status_code", opsStatusCode),
+		// 合成 502 只用于匹配，单独记一条，免得排查时把它当成真实上游状态码。
+		zap.Bool("synthetic_status", in.SyntheticStatus),
+		zap.Int("matched_status_code", statusCode),
 		zap.String("upstream_request_id", respHeader.Get("x-request-id")),
 		zap.Int64("account_id", account.ID),
 		zap.String("account_name", account.Name),
 		zap.String("platform", account.Platform),
-		zap.String("upstream_model", reqModel),
+		zap.String("upstream_model", in.ReqModel),
 		zap.Int("rule_retry_limit", decision.RetryLimit),
 		zap.String("upstream_message", truncateString(sanitizeUpstreamErrorMessage(upstreamMsg), 256)),
 	)

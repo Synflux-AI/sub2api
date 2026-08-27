@@ -1815,8 +1815,10 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 		upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
 		// 规则先算好，副作用仍照原顺序跑；未命中时下面一行行为不变。
 		builtinWillFailover := s.shouldFailoverOpenAIUpstreamResponse(resp.StatusCode, upstreamMsg, respBody)
-		ruleErr, ruleHandled := s.openAIErrorHandlingRuleOverride(
-			upstreamCtx, c, account, resp.StatusCode, resp.Header, respBody, requestModel, builtinWillFailover)
+		ruleErr, ruleHandled := s.openAIErrorHandlingRuleOverride(upstreamCtx, c, openAIErrorHandlingRuleInput{
+			Account: account, StatusCode: resp.StatusCode, Header: resp.Header, Body: respBody,
+			ReqModel: requestModel, BuiltinWillFailover: builtinWillFailover,
+		})
 		if builtinWillFailover {
 			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 				Platform:           account.Platform,

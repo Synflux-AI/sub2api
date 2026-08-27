@@ -259,9 +259,10 @@ func TestOpenAIErrorHandlingRuleOverride_NoMatchLeavesBuiltinPath(t *testing.T) 
 	})
 	c, _ := newOpenAITransportErrTestContext()
 
-	ruleErr, handled := svc.openAIErrorHandlingRuleOverride(
-		context.Background(), c, openAIRuleAccount(),
-		http.StatusBadGateway, http.Header{}, []byte(`{"error":{"message":"bad gateway"}}`), "gpt-image-1", true)
+	ruleErr, handled := svc.openAIErrorHandlingRuleOverride(context.Background(), c, openAIErrorHandlingRuleInput{
+		Account: openAIRuleAccount(), StatusCode: http.StatusBadGateway,
+		Body: []byte(`{"error":{"message":"bad gateway"}}`), ReqModel: "gpt-image-1", BuiltinWillFailover: true,
+	})
 
 	require.False(t, handled)
 	require.Nil(t, ruleErr)
@@ -275,9 +276,10 @@ func TestOpenAIErrorHandlingRuleOverride_HTTPErrorResponseMatches(t *testing.T) 
 	})
 	c, _ := newOpenAITransportErrTestContext()
 
-	ruleErr, handled := svc.openAIErrorHandlingRuleOverride(
-		context.Background(), c, openAIRuleAccount(),
-		http.StatusTooManyRequests, http.Header{}, []byte(`{"error":{"message":"rate limited"}}`), "gpt-image-1", true)
+	ruleErr, handled := svc.openAIErrorHandlingRuleOverride(context.Background(), c, openAIErrorHandlingRuleInput{
+		Account: openAIRuleAccount(), StatusCode: http.StatusTooManyRequests,
+		Body: []byte(`{"error":{"message":"rate limited"}}`), ReqModel: "gpt-image-1", BuiltinWillFailover: true,
+	})
 
 	require.True(t, handled)
 	require.NotNil(t, ruleErr)
@@ -319,9 +321,10 @@ func TestOpenAIErrorHandlingRule_SafeErrorFilledForEveryAction(t *testing.T) {
 			})
 			c, _ := newOpenAITransportErrTestContext()
 
-			ruleErr, handled := svc.openAIErrorHandlingRuleOverride(
-				context.Background(), c, openAIRuleAccount(),
-				http.StatusInternalServerError, http.Header{}, body, "gpt-4o", true)
+			ruleErr, handled := svc.openAIErrorHandlingRuleOverride(context.Background(), c, openAIErrorHandlingRuleInput{
+				Account: openAIRuleAccount(), StatusCode: http.StatusInternalServerError,
+				Body: body, ReqModel: "gpt-4o", BuiltinWillFailover: true,
+			})
 
 			require.True(t, handled)
 			require.Equal(t, "server_error", ruleErr.SafeErrorType)
@@ -342,9 +345,10 @@ func TestOpenAIErrorHandlingRule_KindUsesEffectiveAction(t *testing.T) {
 	})
 	c, _ := newOpenAITransportErrTestContext()
 
-	_, handled := svc.openAIErrorHandlingRuleOverride(
-		context.Background(), c, openAIRuleAccount(),
-		http.StatusInternalServerError, http.Header{}, []byte(`{"error":{"message":"boom"}}`), "gpt-4o", true)
+	_, handled := svc.openAIErrorHandlingRuleOverride(context.Background(), c, openAIErrorHandlingRuleInput{
+		Account: openAIRuleAccount(), StatusCode: http.StatusInternalServerError,
+		Body: []byte(`{"error":{"message":"boom"}}`), ReqModel: "gpt-4o", BuiltinWillFailover: true,
+	})
 
 	require.True(t, handled)
 	events := opsUpstreamErrorEvents(t, c)
@@ -362,14 +366,43 @@ func TestOpenAIErrorHandlingRule_RecordsTopLevelOpsUpstreamError(t *testing.T) {
 	})
 	c, _ := newOpenAITransportErrTestContext()
 
-	_, handled := svc.openAIErrorHandlingRuleOverride(
-		context.Background(), c, openAIRuleAccount(),
-		http.StatusInternalServerError, http.Header{}, []byte(`{"error":{"message":"boom"}}`), "gpt-4o", true)
+	_, handled := svc.openAIErrorHandlingRuleOverride(context.Background(), c, openAIErrorHandlingRuleInput{
+		Account: openAIRuleAccount(), StatusCode: http.StatusInternalServerError,
+		Body: []byte(`{"error":{"message":"boom"}}`), ReqModel: "gpt-4o", BuiltinWillFailover: true,
+	})
 
 	require.True(t, handled)
 	status, ok := c.Get(OpsUpstreamStatusCodeKey)
 	require.True(t, ok, "顶层 upstream_status_code 必须落下")
 	require.Equal(t, http.StatusInternalServerError, status)
+}
+
+// 反面：传输层错误的合成 502 **绝不能**写进顶层 upstream_status_code。
+// 那一列为 NULL 正是「这是传输层失败、根本没有 HTTP 响应」的判定依据 —— #189 就是靠
+// `upstream_status_code IS NULL` 把那 128 条 lost-ping 捞出来的。写成 502 会让它们
+// 与真实上游 502 在库里彻底混同。
+func TestOpenAIErrorHandlingRule_SyntheticStatusNotRecordedAsUpstreamStatus(t *testing.T) {
+	svc := newOpenAIRuleService(t, nil, ErrorHandlingRule{
+		ID: "images-lost-ping", StatusCodes: []int{502}, Keywords: []string{"connection lost"},
+		Action: ErrorHandlingActionFailover, Platforms: []string{PlatformOpenAI},
+	})
+	c, _ := newOpenAITransportErrTestContext()
+
+	err := svc.handleOpenAIUpstreamTransportError(context.Background(), c, openAIRuleAccount(), openAILostPingErr, false)
+
+	var failoverErr *UpstreamFailoverError
+	require.True(t, errors.As(err, &failoverErr))
+	require.Equal(t, "images-lost-ping", failoverErr.ErrorRuleID, "规则要命中，否则本用例没意义")
+
+	_, ok := c.Get(OpsUpstreamStatusCodeKey)
+	require.False(t, ok, "合成状态码只用于匹配，不得落进 ops_error_logs 顶层列")
+
+	// upstream_errors 明细里同样保持 0（= 无 HTTP 响应），但 Kind 仍要带规则前缀。
+	events := opsUpstreamErrorEvents(t, c)
+	require.NotEmpty(t, events)
+	last := events[len(events)-1]
+	require.Equal(t, "error_handling_rule_failover", last.Kind)
+	require.Zero(t, last.UpstreamStatusCode)
 }
 
 // 「错误透传规则」优先。内置判定不换号时，原本是由 handleErrorResponse 一类的链去问
@@ -384,16 +417,17 @@ func TestOpenAIErrorHandlingRule_YieldsToErrorPassthroughRule(t *testing.T) {
 
 	c, _ := newOpenAITransportErrTestContext()
 	BindErrorPassthroughService(c, newMatchAllErrorPassthroughService(t))
-	_, handled := svc.openAIErrorHandlingRuleOverride(
-		context.Background(), c, openAIRuleAccount(),
-		http.StatusBadRequest, http.Header{}, body, "gpt-4o", false)
+	_, handled := svc.openAIErrorHandlingRuleOverride(context.Background(), c, openAIErrorHandlingRuleInput{
+		Account: openAIRuleAccount(), StatusCode: http.StatusBadRequest, Body: body, ReqModel: "gpt-4o",
+	})
 	require.False(t, handled, "内置不换号 + 透传规则命中 ⇒ 错误处理规则让路")
 
 	// 内置要换号的分支不受影响：那条分支上本来就问不到透传规则。
 	c2, _ := newOpenAITransportErrTestContext()
 	BindErrorPassthroughService(c2, newMatchAllErrorPassthroughService(t))
-	_, handled2 := svc.openAIErrorHandlingRuleOverride(
-		context.Background(), c2, openAIRuleAccount(),
-		http.StatusBadRequest, http.Header{}, body, "gpt-4o", true)
+	_, handled2 := svc.openAIErrorHandlingRuleOverride(context.Background(), c2, openAIErrorHandlingRuleInput{
+		Account: openAIRuleAccount(), StatusCode: http.StatusBadRequest, Body: body, ReqModel: "gpt-4o",
+		BuiltinWillFailover: true,
+	})
 	require.True(t, handled2)
 }
