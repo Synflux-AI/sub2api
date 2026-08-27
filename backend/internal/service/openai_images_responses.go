@@ -1794,18 +1794,10 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 	resp, err := s.doOpenAIUpstream(upstreamReq, proxyURL, account)
 	SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 	if err != nil {
-		safeErr := sanitizeUpstreamErrorMessage(err.Error())
-		setOpsUpstreamError(c, 0, safeErr, "")
-		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
-			Platform:           account.Platform,
-			AccountID:          account.ID,
-			AccountName:        account.Name,
-			UpstreamStatusCode: 0,
-			UpstreamURL:        safeUpstreamURL(upstreamReq.URL.String()),
-			Kind:               "request_error",
-			Message:            safeErr,
-		})
-		return nil, fmt.Errorf("upstream request failed: %s", safeErr)
+		// 与 forwardOpenAIImagesAPIKey 同因：传输层失败必须走统一 helper 返回
+		// *UpstreamFailoverError，handler 才会换号；ops 记录也由 helper 独家负责。
+		return nil, s.handleOpenAIUpstreamTransportErrorWithURL(
+			upstreamCtx, c, account, err, false, safeUpstreamURL(upstreamReq.URL.String()))
 	}
 	if resp.StatusCode >= 400 {
 		respBody := s.readUpstreamErrorBody(resp)
@@ -1821,7 +1813,13 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 		resp.Body = io.NopCloser(bytes.NewReader(respBody))
 		upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(respBody))
 		upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
-		if s.shouldFailoverOpenAIUpstreamResponse(resp.StatusCode, upstreamMsg, respBody) {
+		// 规则先算好，副作用仍照原顺序跑；未命中时下面一行行为不变。
+		builtinWillFailover := s.shouldFailoverOpenAIUpstreamResponse(resp.StatusCode, upstreamMsg, respBody)
+		ruleErr, ruleHandled := s.openAIErrorHandlingRuleOverride(upstreamCtx, c, openAIErrorHandlingRuleInput{
+			Account: account, StatusCode: resp.StatusCode, Header: resp.Header, Body: respBody,
+			ReqModel: requestModel, BuiltinWillFailover: builtinWillFailover,
+		})
+		if builtinWillFailover {
 			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 				Platform:           account.Platform,
 				AccountID:          account.ID,
@@ -1833,6 +1831,9 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 				Message:            upstreamMsg,
 			})
 			shouldDisable := s.handleFailoverSideEffects(upstreamCtx, resp, account, respBody, requestModel)
+			if ruleHandled {
+				return nil, ruleErr
+			}
 			return nil, s.newOpenAIAccountFailoverError(
 				account,
 				resp.StatusCode,
@@ -1842,6 +1843,9 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 				shouldDisable,
 				!shouldDisable && account.IsPoolMode() && account.IsPoolModeRetryableStatus(resp.StatusCode),
 			)
+		}
+		if ruleHandled {
+			return nil, ruleErr
 		}
 		return s.handleOpenAIImagesErrorResponse(upstreamCtx, resp, c, account, requestModel)
 	}

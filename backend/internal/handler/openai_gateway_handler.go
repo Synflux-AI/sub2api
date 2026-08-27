@@ -1465,6 +1465,24 @@ func (h *OpenAIGatewayHandler) handleAnthropicFailoverExhausted(c *gin.Context, 
 	if failoverErr != nil {
 		copyFailoverRetryAfter(c, failoverErr.ResponseHeaders)
 	}
+	// 错误处理规则的终态策略优先于下面所有内置特判，与 handleFailoverExhausted 同序。
+	// 这条分支不能漏：failoverOpenAIUpstreamHTTPError 是三条 *_anthropic_native 路径的
+	// 汇聚点，而 /v1/messages 的耗尽走的是本函数 —— 少了它，规则配的 passthrough 只
+	// 执行了「不再换号」的一半，客户端拿到的仍是 mapUpstreamError 的通用体。
+	// SafeErrorType/Message 缺一不可：那是脱敏过的安全文本，缺了就退回内置映射。
+	if failoverErr != nil &&
+		failoverErr.ExhaustedAction == service.ErrorHandlingExhaustedActionPassthrough &&
+		failoverErr.SafeErrorType != "" && failoverErr.SafeErrorMessage != "" {
+		service.SetOpsUpstreamError(c, failoverErr.StatusCode, failoverErr.SafeErrorMessage, "")
+		h.anthropicStreamingAwareError(
+			c,
+			failoverErr.StatusCode,
+			failoverErr.SafeErrorType,
+			failoverErr.SafeErrorMessage,
+			streamStarted,
+		)
+		return
+	}
 	if failoverErr != nil && failoverErr.IsCredentialFailure() {
 		status, message := credentialFailoverClientResponse(failoverErr)
 		h.anthropicStreamingAwareError(c, status, "api_error", message, streamStarted)
@@ -2787,6 +2805,23 @@ func (h *OpenAIGatewayHandler) handleConcurrencyError(c *gin.Context, err error,
 func (h *OpenAIGatewayHandler) handleFailoverExhausted(c *gin.Context, failoverErr *service.UpstreamFailoverError, streamStarted bool) {
 	if failoverErr == nil {
 		h.handleFailoverExhaustedSimple(c, http.StatusBadGateway, streamStarted)
+		return
+	}
+	// 错误处理规则的终态策略优先于下面所有内置特判：管理员显式配了「耗尽后把上游
+	// 错误原样返回」，就不该被 body-too-large / 凭据失败 / 限流映射改写。
+	// 插入位置与 GatewayHandler.handleFailoverExhausted 对齐（那边也是第一个分支）。
+	// SafeErrorType/Message 缺一不可：那是脱敏过的安全文本，缺了就退回内置映射，
+	// 绝不把裸上游响应体吐给客户端。
+	if failoverErr.ExhaustedAction == service.ErrorHandlingExhaustedActionPassthrough &&
+		failoverErr.SafeErrorType != "" && failoverErr.SafeErrorMessage != "" {
+		service.SetOpsUpstreamError(c, failoverErr.StatusCode, failoverErr.SafeErrorMessage, "")
+		h.handleStreamingAwareError(
+			c,
+			failoverErr.StatusCode,
+			failoverErr.SafeErrorType,
+			failoverErr.SafeErrorMessage,
+			streamStarted || c.Writer.Written(),
+		)
 		return
 	}
 	if failoverErr.IsOpenAIRequestBodyTooLarge() {

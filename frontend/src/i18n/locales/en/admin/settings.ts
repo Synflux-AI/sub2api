@@ -1056,7 +1056,16 @@ export default {
       errorHandlingRule: {
         title: 'Error Handling Rules',
         description:
-          'Match upstream error responses by status code and/or keyword, then apply the configured action. Applies only to Anthropic Claude Console API Key accounts. For deterministic errors that reproduce on any account (prompt is too long, max_tokens over limit), prefer "Return to client" so they do not burn the retry budget and drain the account pool.',
+          'Match upstream error responses by status code and/or keyword, then apply the configured action. Each rule applies to the platforms you tick; Anthropic and OpenAI are supported today. For deterministic errors that reproduce on any account (prompt is too long, max_tokens over limit), prefer "Return to client" so they do not burn the retry budget and drain the account pool.',
+        platforms: 'Applies To',
+        platformsHint:
+          'Tick at least one. "All platforms" means ticking every platform. Legacy rules without this field are treated as Anthropic-only.',
+        platformsRequired: 'Select at least one platform',
+        maxUpstreamLatency: 'Upstream Latency Ceiling (ms)',
+        maxUpstreamLatencyHint:
+          'Only match when this attempt\'s upstream latency is below this value; 0 disables the condition. An unknown latency never satisfies a configured ceiling. It measures a single upstream attempt, and on streaming requests it stops at the response headers (TTFB), not the whole stream. Use it to avoid retrying slow failures the upstream has already billed.',
+        invalidMaxUpstreamLatency:
+          'Upstream latency ceiling must be an integer between 0 and {max}',
         enabled: 'Enable Error Handling Rules',
         enabledHint: 'Independent switch, not affected by the "Enable Request Rectifier" master switch',
         defaultRetryCount: 'Default In-Place Retry Count',

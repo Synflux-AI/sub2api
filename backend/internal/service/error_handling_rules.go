@@ -36,6 +36,20 @@ type ErrorHandlingRule struct {
 	Action          string   `json:"action"`
 	RetryCount      *int     `json:"retry_count"`
 	ExhaustedAction string   `json:"exhausted_action"`
+	// Platforms 是这条规则适用的平台，小写归一。用裸切片而不是指针：validate 要求
+	// 非空（「全平台」= 全部勾上），于是空值永远不是合法的提交值，len==0 就唯一地
+	// 表示「存量配置没有这个字段」，normalize 补 ["anthropic"]，升级后行为零变化。
+	//
+	// 代价是以后新增平台不会被老规则自动纳入。这是有意的：规则的动作是重试/换号/透传，
+	// 自动扩展到一个没验证过的新平台，风险大于便利。
+	Platforms []string `json:"platforms"`
+	// MaxUpstreamLatencyMs 只在 >0 时生效：仅当本次上游耗时**低于**该值才允许命中。
+	// 0 是天然哨兵——「阈值 0ms」不是合法配置值（会永不命中），所以裸 int 无歧义。
+	//
+	// 动机：2026-08-26 那 128 条 images 502 死在 41~56s，图很可能已生成已被上游计费，
+	// 重试等于重复扣费；而 08-24 那次 latency 从 504ms 铺到 69.8s，504ms 那批重试完全免费。
+	// 耗时门限让「失败得早就重试、失败得晚就直接返回」可配置。
+	MaxUpstreamLatencyMs int `json:"max_upstream_latency_ms"`
 }
 
 type ErrorHandlingRuleSettings struct {
@@ -51,6 +65,9 @@ const (
 	errorHandlingRuleMaxKeywordLen         = 500
 	errorHandlingRuleMaxRetryCount         = maxRetryAttempts - 1
 	errorHandlingRulePriorityMax           = 999
+	// errorHandlingRuleMaxUpstreamLatencyMs 是「上游耗时上限」的配置上限（1 小时）。
+	// 超过这个量级的阈值等价于不限制，填进来多半是把毫秒当成了秒。
+	errorHandlingRuleMaxUpstreamLatencyMs = 3_600_000
 
 	errorHandlingRuleCacheTTL  = 60 * time.Second
 	errorHandlingRuleErrorTTL  = 5 * time.Second
@@ -82,6 +99,77 @@ func (r *ErrorHandlingRule) IsEnabled() bool {
 	return r.Enabled == nil || *r.Enabled
 }
 
+// errorHandlingRuleSupportedPlatforms 是规则引擎**真正接线了**的平台。
+// 只有这些平台能被勾选：勾一个引擎没接线的平台等于给管理员一个不生效的开关。
+var errorHandlingRuleSupportedPlatforms = map[string]struct{}{
+	PlatformAnthropic: {},
+	PlatformOpenAI:    {},
+}
+
+// MatchesPlatform 报告规则是否适用于该平台。空列表只可能出现在「还没 normalize」的
+// 中间态（normalize 会补成 ["anthropic"]），此时不做过滤。
+func (r *ErrorHandlingRule) MatchesPlatform(platform string) bool {
+	return r.matchesNormalizedPlatform(normalizeErrorHandlingRulePlatform(platform))
+}
+
+// matchesNormalizedPlatform 是热路径版本：platform 必须已经 trim+lower。
+// 平台名在 normalize 时已经归一，这里不再逐条 ToLower。
+func (r *ErrorHandlingRule) matchesNormalizedPlatform(platform string) bool {
+	if len(r.Platforms) == 0 || platform == "" {
+		return true
+	}
+	for _, p := range r.Platforms {
+		if p == platform {
+			return true
+		}
+	}
+	return false
+}
+
+// MatchesUpstreamLatency 报告本次上游耗时是否满足规则的耗时门限。
+//
+// latencyMs <= 0 表示「本次耗时未知」（接入点没插桩，或上游还没开始计时），此时
+// **不满足**任何已配置的阈值。这是 fail-closed：本字段的动机就是防重复扣费，
+// 若按 0 < 阈值 放行，一条本意为「只在快速失败时重试」的规则会在所有没量到耗时的
+// 路径上无条件重试。
+func (r *ErrorHandlingRule) MatchesUpstreamLatency(latencyMs int) bool {
+	if r.MaxUpstreamLatencyMs <= 0 {
+		return true
+	}
+	if latencyMs <= 0 {
+		return false
+	}
+	return latencyMs < r.MaxUpstreamLatencyMs
+}
+
+func normalizeErrorHandlingRulePlatform(platform string) string {
+	return strings.ToLower(strings.TrimSpace(platform))
+}
+
+// normalizeErrorHandlingRulePlatforms trim + 小写 + 去空 + 去重，保留提交顺序。
+func normalizeErrorHandlingRulePlatforms(platforms []string) []string {
+	if len(platforms) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(platforms))
+	out := make([]string, 0, len(platforms))
+	for _, p := range platforms {
+		p = normalizeErrorHandlingRulePlatform(p)
+		if p == "" {
+			continue
+		}
+		if _, dup := seen[p]; dup {
+			continue
+		}
+		seen[p] = struct{}{}
+		out = append(out, p)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 // HasEnabledErrorHandlingRule 报告是否存在至少一条启用的规则。全部规则被禁用时，
 // 热路径没必要为了 decide 一遍而去读错误响应体。
 func HasEnabledErrorHandlingRule(rules []ErrorHandlingRule) bool {
@@ -93,16 +181,54 @@ func HasEnabledErrorHandlingRule(rules []ErrorHandlingRule) bool {
 	return false
 }
 
+// HasEnabledErrorHandlingRuleForPlatform 是 HasEnabledErrorHandlingRule 的平台感知版本：
+// 一条都没勾这个平台时，热路径同样不必读错误响应体。
+func HasEnabledErrorHandlingRuleForPlatform(rules []ErrorHandlingRule, platform string) bool {
+	normalized := normalizeErrorHandlingRulePlatform(platform)
+	for i := range rules {
+		if rules[i].IsEnabled() && rules[i].matchesNormalizedPlatform(normalized) {
+			return true
+		}
+	}
+	return false
+}
+
+// errorHandlingRuleMatchFilter 是匹配时的平台/耗时上下文。
+// Platform 为空表示调用方没有平台上下文，不做平台过滤。
+type errorHandlingRuleMatchFilter struct {
+	Platform          string
+	UpstreamLatencyMs int
+}
+
+// matchErrorHandlingRule 是不带平台/耗时上下文的匹配入口。
 func matchErrorHandlingRule(rules []ErrorHandlingRule, statusCode int, respBody []byte) *ErrorHandlingRule {
+	return matchErrorHandlingRuleFiltered(rules, errorHandlingRuleMatchFilter{}, statusCode, respBody)
+}
+
+// matchErrorHandlingRuleFiltered 按数组顺序（= 优先级序）取首个命中的规则。
+// 判断顺序是「便宜的先做」：平台与耗时都是纯比较，放在读响应体之前。
+func matchErrorHandlingRuleFiltered(
+	rules []ErrorHandlingRule,
+	filter errorHandlingRuleMatchFilter,
+	statusCode int,
+	respBody []byte,
+) *ErrorHandlingRule {
 	if len(rules) == 0 {
 		return nil
 	}
 
+	platform := normalizeErrorHandlingRulePlatform(filter.Platform)
 	var bodyLower string
 	bodyLowered := false
 	for i := range rules {
 		rule := &rules[i]
 		if !rule.IsEnabled() {
+			continue
+		}
+		if !rule.matchesNormalizedPlatform(platform) {
+			continue
+		}
+		if !rule.MatchesUpstreamLatency(filter.UpstreamLatencyMs) {
 			continue
 		}
 		if len(rule.StatusCodes) == 0 && len(rule.Keywords) == 0 {
@@ -189,6 +315,14 @@ func normalizeErrorHandlingRules(rules []ErrorHandlingRule) {
 		if rule.ID == "" {
 			rule.ID = fmt.Sprintf("rule-%d", i+1)
 		}
+		// 平台名归一（trim + 小写 + 去重），热路径就不必每次 ToLower。
+		// 归一后为空 = 存量配置没有这个字段：收窄成 anthropic，升级后行为零变化。
+		// 「全平台」由管理员把所有平台勾上表达，validate 要求非空，所以空值不会是
+		// 一个合法的提交值，这里不存在「显式空 = 全平台」的歧义。
+		rule.Platforms = normalizeErrorHandlingRulePlatforms(rule.Platforms)
+		if len(rule.Platforms) == 0 {
+			rule.Platforms = []string{PlatformAnthropic}
+		}
 	}
 	// 把「priority 升序」落成数组顺序，matchErrorHandlingRule 就能继续保持
 	// 「按数组顺序取首个命中」的单一语义。normalize 是读写两条路径的必经之地，
@@ -252,6 +386,16 @@ func validateErrorHandlingRuleSettings(settings *ErrorHandlingRuleSettings) erro
 		}
 		if rule.RetryCount != nil && (*rule.RetryCount < 0 || *rule.RetryCount > errorHandlingRuleMaxRetryCount) {
 			return invalid("rule %d: retry_count must be between 0 and %d", i+1, errorHandlingRuleMaxRetryCount)
+		}
+		// normalize 已经把空列表补成 ["anthropic"]，所以这里只会拦到管理员显式勾了
+		// 引擎没接线的平台。勾了不生效比报错更坏：管理员会以为规则在跑。
+		for _, platform := range rule.Platforms {
+			if _, ok := errorHandlingRuleSupportedPlatforms[platform]; !ok {
+				return invalid("rule %d: unsupported platform %q", i+1, platform)
+			}
+		}
+		if rule.MaxUpstreamLatencyMs < 0 || rule.MaxUpstreamLatencyMs > errorHandlingRuleMaxUpstreamLatencyMs {
+			return invalid("rule %d: max_upstream_latency_ms must be between 0 and %d", i+1, errorHandlingRuleMaxUpstreamLatencyMs)
 		}
 	}
 	return nil

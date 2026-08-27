@@ -217,8 +217,23 @@ func (h *OpenAIGatewayHandler) AlphaSearch(c *gin.Context) {
 			)
 			return
 		}
+		// 错误处理规则接在 handleOpenAIUpstreamTransportError 这个 21 调用点的共享
+		// helper 上，本入口的传输层错误也会经过它。规则配 passthrough 时会置
+		// NextAccountStop，不看这个字段的话动作会被静默降级成「继续换号」。
+		if !failoverErr.ShouldRetryNextAccount() {
+			reqLog.Warn("openai_alpha_search.upstream_failover_stopped",
+				zap.Int64("account_id", account.ID),
+				zap.Int("upstream_status", failoverErr.StatusCode),
+				zap.String("error_rule_id", failoverErr.ErrorRuleID),
+			)
+			h.handleFailoverExhausted(c, failoverErr, false)
+			return
+		}
 		if failoverErr.RetryableOnSameAccount {
-			retryLimit := account.GetPoolModeRetryCount()
+			// 走 effectiveSameAccountRetryLimit 而不是裸的 GetPoolModeRetryCount()：
+			// 规则给的 RuleRetryLimit 要能覆盖账号的 pool-mode 基数，否则非 pool-mode
+			// 账号上规则配的 retry 会静默退化成换号。
+			retryLimit := effectiveSameAccountRetryLimit(failoverErr, account)
 			if sameAccountRetryAllowed(failoverErr, sameAccountRetryCount[account.ID], retryLimit) {
 				sameAccountRetryCount[account.ID]++
 				retryDelay := sameAccountRetryDelayFor(failoverErr, sameAccountRetryCount[account.ID])

@@ -100,7 +100,22 @@ func (s *OpenAIGatewayService) failoverOpenAIUpstreamHTTPError(
 	if account != nil && account.Platform == PlatformGrok {
 		s.handleGrokAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody)
 	}
+	// 错误处理规则：这个 helper 是 8 条 OpenAI 转发路径（chat_completions / raw /
+	// messages / responses 及各 anthropic_native、chat_fallback 变体）的共同汇聚点，
+	// 接一次就够。未命中时 ruleHandled=false，下面一行行为不变。
+	//
+	// 位置在 shouldFailover 定稿之后：规则要知道内置的最终结论，才能在「内置不换号」
+	// 的分支上替内置补跑账号记账、并给「错误透传规则」让路。
+	ruleErr, ruleHandled := s.openAIErrorHandlingRuleOverride(ctx, c, openAIErrorHandlingRuleInput{
+		Account: account, StatusCode: resp.StatusCode, Header: resp.Header, Body: respBody,
+		ReqModel: upstreamModel, BuiltinWillFailover: shouldFailover,
+	})
 	if !shouldFailover {
+		// 内置分类认为不必换号，但规则可以覆盖（例如把某类确定性 4xx 配成透传）。
+		// 账号记账已由 override 内部补跑，这里只落动作。
+		if ruleHandled {
+			return ruleErr
+		}
 		return nil
 	}
 	upstreamDetail := ""
@@ -124,6 +139,10 @@ func (s *OpenAIGatewayService) failoverOpenAIUpstreamHTTPError(
 	shouldDisable := tempUnscheduled
 	if account.Platform != PlatformGrok && !tempUnscheduled {
 		shouldDisable = s.handleOpenAIAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody, upstreamModel)
+	}
+	// 副作用（停号等）已按原顺序跑完，规则只接管「动作」。
+	if ruleHandled {
+		return ruleErr
 	}
 	return s.newOpenAIAccountFailoverError(
 		account,
@@ -230,7 +249,7 @@ func (s *OpenAIGatewayService) sendCCUpstreamRequest(
 	if account.Proxy != nil {
 		proxyURL = account.Proxy.URL()
 	}
-	resp, err := s.doOpenAIUpstream(upstreamReq, proxyURL, account)
+	resp, err := s.timedDoOpenAIUpstream(c, upstreamReq, proxyURL, account)
 	if err != nil {
 		return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)
 	}

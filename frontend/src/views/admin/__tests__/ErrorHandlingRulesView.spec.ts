@@ -590,6 +590,10 @@ describe("admin ErrorHandlingRulesView", () => {
       action: "retry",
       retry_count: null,
       exhausted_action: "passthrough",
+      // #189：存量规则没有 platforms，回填成 anthropic 后必须显式发出去 ——
+      // 省略这个 key 会被后端当成存量规则，绕一圈还是 anthropic，但语义就靠不住了。
+      platforms: ["anthropic"],
+      max_upstream_latency_ms: 0,
     });
   });
 
@@ -763,5 +767,143 @@ describe("admin ErrorHandlingRulesView", () => {
           !("keywords_text" in rule),
       ),
     ).toBe(true);
+  });
+
+  // ==================== #189 适用平台 / 上游耗时上限 ====================
+
+  it("treats a legacy rule without platforms as anthropic-only", async () => {
+    getErrorHandlingRuleSettings.mockResolvedValue({
+      enabled: true,
+      default_retry_count: 1,
+      rules: [RULE_A],
+    });
+
+    const wrapper = mountView();
+    await flushPromises();
+    await wrapper
+      .get('[data-testid="error-handling-rule-save"]')
+      .trigger("click");
+    await flushPromises();
+
+    const payload = updateErrorHandlingRuleSettings.mock.calls[0][0];
+    expect(payload.rules[0].platforms).toEqual(["anthropic"]);
+    expect(payload.rules[0].max_upstream_latency_ms).toBe(0);
+  });
+
+  it("defaults a newly created rule to anthropic", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+
+    await wrapper
+      .get('[data-testid="error-handling-rule-add"]')
+      .trigger("click");
+    await dialog(wrapper)
+      .get('[data-testid="error-handling-rule-status-codes"]')
+      .setValue("500");
+    await submitDialog(wrapper);
+    await wrapper
+      .get('[data-testid="error-handling-rule-save"]')
+      .trigger("click");
+    await flushPromises();
+
+    const payload = updateErrorHandlingRuleSettings.mock.calls[0][0];
+    expect(payload.rules[0].platforms).toEqual(["anthropic"]);
+  });
+
+  // 「全平台」是靠全部勾上表达的，所以一个都不勾必须在提交前拦住：空数组到了后端
+  // 会被 normalize 当成存量配置，静默收窄成 anthropic —— 与管理员的意图相反。
+  it("blocks the dialog when no platform is selected", async () => {
+    getErrorHandlingRuleSettings.mockResolvedValue({
+      enabled: true,
+      default_retry_count: 1,
+      rules: [{ ...RULE_A, platforms: ["anthropic"] }],
+    });
+
+    const wrapper = mountView();
+    await flushPromises();
+    await openEditDialog(wrapper, 0);
+
+    await dialog(wrapper)
+      .get('[data-testid="error-handling-rule-platform-anthropic"]')
+      .setValue(false);
+    await submitDialog(wrapper);
+
+    expect(wrapper.find('[data-testid="rule-dialog"]').exists()).toBe(true);
+    expect(
+      wrapper
+        .get('[data-testid="error-handling-rule-dialog-error"]')
+        .text(),
+    ).toContain("platformsRequired");
+  });
+
+  it("round-trips platforms and the upstream latency ceiling through the dialog", async () => {
+    getErrorHandlingRuleSettings.mockResolvedValue({
+      enabled: true,
+      default_retry_count: 1,
+      rules: [
+        {
+          ...RULE_B,
+          platforms: ["openai"],
+          max_upstream_latency_ms: 5000,
+          exhausted_action: "default",
+        },
+      ],
+    });
+
+    const wrapper = mountView();
+    await flushPromises();
+    await openEditDialog(wrapper, 0);
+
+    const openai = dialog(wrapper).get(
+      '[data-testid="error-handling-rule-platform-openai"]',
+    );
+    expect((openai.element as HTMLInputElement).checked).toBe(true);
+    const anthropic = dialog(wrapper).get(
+      '[data-testid="error-handling-rule-platform-anthropic"]',
+    );
+    expect((anthropic.element as HTMLInputElement).checked).toBe(false);
+    expect(
+      (
+        dialog(wrapper).get(
+          '[data-testid="error-handling-rule-max-upstream-latency"]',
+        ).element as HTMLInputElement
+      ).value,
+    ).toBe("5000");
+
+    await anthropic.setValue(true);
+    await dialog(wrapper)
+      .get('[data-testid="error-handling-rule-max-upstream-latency"]')
+      .setValue("8000");
+    await submitDialog(wrapper);
+    await wrapper
+      .get('[data-testid="error-handling-rule-save"]')
+      .trigger("click");
+    await flushPromises();
+
+    const payload = updateErrorHandlingRuleSettings.mock.calls[0][0];
+    expect(payload.rules[0].platforms).toEqual(["anthropic", "openai"]);
+    expect(payload.rules[0].max_upstream_latency_ms).toBe(8000);
+  });
+
+  it("rejects a negative upstream latency ceiling", async () => {
+    getErrorHandlingRuleSettings.mockResolvedValue({
+      enabled: true,
+      default_retry_count: 1,
+      rules: [{ ...RULE_A, platforms: ["anthropic"] }],
+    });
+
+    const wrapper = mountView();
+    await flushPromises();
+    await openEditDialog(wrapper, 0);
+
+    await dialog(wrapper)
+      .get('[data-testid="error-handling-rule-max-upstream-latency"]')
+      .setValue("-1");
+    await submitDialog(wrapper);
+
+    expect(wrapper.find('[data-testid="rule-dialog"]').exists()).toBe(true);
+    expect(
+      wrapper.get('[data-testid="error-handling-rule-dialog-error"]').text(),
+    ).toContain("invalidMaxUpstreamLatency");
   });
 });

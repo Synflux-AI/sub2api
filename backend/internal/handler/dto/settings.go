@@ -502,6 +502,11 @@ type ErrorHandlingRule struct {
 	Action          string   `json:"action"`
 	RetryCount      *int     `json:"retry_count"`
 	ExhaustedAction string   `json:"exhausted_action"`
+	// Platforms 是规则适用的平台。裸切片不是笔误：「全平台」由前端把所有平台勾上
+	// 表达，空数组等同于「没传」，服务层 normalize 会补成 ["anthropic"]（存量语义）。
+	Platforms []string `json:"platforms"`
+	// MaxUpstreamLatencyMs 为 0 表示不限制；>0 时仅当本次上游耗时低于该值才命中。
+	MaxUpstreamLatencyMs int `json:"max_upstream_latency_ms"`
 }
 
 type ErrorHandlingRuleSettings struct {

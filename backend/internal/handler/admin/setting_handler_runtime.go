@@ -372,6 +372,7 @@ func toDTOErrorHandlingRules(rules []service.ErrorHandlingRule) []dto.ErrorHandl
 			ID: rule.ID, Name: rule.Name, Enabled: rule.Enabled, Priority: rule.Priority,
 			StatusCodes: rule.StatusCodes, Keywords: rule.Keywords,
 			Action: rule.Action, RetryCount: rule.RetryCount, ExhaustedAction: rule.ExhaustedAction,
+			Platforms: rule.Platforms, MaxUpstreamLatencyMs: rule.MaxUpstreamLatencyMs,
 		}
 	}
 	return out
@@ -420,6 +421,7 @@ func (h *SettingHandler) UpdateErrorHandlingRuleSettings(c *gin.Context) {
 			ID: id, Name: strings.TrimSpace(rule.Name), Enabled: rule.Enabled, Priority: rule.Priority,
 			StatusCodes: rule.StatusCodes, Keywords: keywords,
 			Action: rule.Action, RetryCount: rule.RetryCount, ExhaustedAction: rule.ExhaustedAction,
+			Platforms: rule.Platforms, MaxUpstreamLatencyMs: rule.MaxUpstreamLatencyMs,
 		}
 	}
 

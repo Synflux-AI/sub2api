@@ -643,18 +643,13 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 	resp, err := s.doOpenAIUpstream(upstreamReq, proxyURL, account)
 	SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 	if err != nil {
-		safeErr := sanitizeUpstreamErrorMessage(err.Error())
-		setOpsUpstreamError(c, 0, safeErr, "")
-		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
-			Platform:           account.Platform,
-			AccountID:          account.ID,
-			AccountName:        account.Name,
-			UpstreamStatusCode: 0,
-			UpstreamURL:        safeUpstreamURL(upstreamReq.URL.String()),
-			Kind:               "request_error",
-			Message:            safeErr,
-		})
-		return nil, fmt.Errorf("upstream request failed: %s", safeErr)
+		// 传输层失败（没有 HTTP 状态码）必须返回 *UpstreamFailoverError，否则
+		// handler/openai_images.go 的 errors.As 不成立，整个 failover 块被跳过，
+		// 直落 502 —— 2026-08-26 的 128 条 `http2: client connection lost` 就是这么
+		// 一次重试一次换号都没有地吐给客户端的。ops 记录由 helper 统一负责，这里
+		// 不再本地记一遍（会在 upstream_errors 里对同一次失败记两条）。
+		return nil, s.handleOpenAIUpstreamTransportErrorWithURL(
+			upstreamCtx, c, account, err, false, safeUpstreamURL(upstreamReq.URL.String()))
 	}
 	if resp.StatusCode >= 400 {
 		respBody := s.readUpstreamErrorBody(resp)
@@ -663,7 +658,14 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 		resp.Body = io.NopCloser(bytes.NewReader(respBody))
 		upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(respBody))
 		upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
-		if s.shouldFailoverOpenAIUpstreamResponse(resp.StatusCode, upstreamMsg, respBody) {
+		// 错误处理规则先算好，但不改「副作用照原顺序跑」这件事：规则只决定动作，
+		// 不决定是否记账。未命中时 ruleHandled=false，下面一行行为不变。
+		builtinWillFailover := s.shouldFailoverOpenAIUpstreamResponse(resp.StatusCode, upstreamMsg, respBody)
+		ruleErr, ruleHandled := s.openAIErrorHandlingRuleOverride(upstreamCtx, c, openAIErrorHandlingRuleInput{
+			Account: account, StatusCode: resp.StatusCode, Header: resp.Header, Body: respBody,
+			ReqModel: upstreamModel, BuiltinWillFailover: builtinWillFailover,
+		})
+		if builtinWillFailover {
 			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 				Platform:           account.Platform,
 				AccountID:          account.ID,
@@ -675,6 +677,9 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 				Message:            upstreamMsg,
 			})
 			shouldDisable := s.handleFailoverSideEffects(upstreamCtx, resp, account, respBody, upstreamModel)
+			if ruleHandled {
+				return nil, ruleErr
+			}
 			retryableOnSameAccount := !shouldDisable && account.IsPoolMode() && account.IsPoolModeRetryableStatus(resp.StatusCode)
 			if account.IsOpenAIOAuthLike() && resp.StatusCode == http.StatusTooManyRequests {
 				return nil, s.newOpenAIAccountFailoverError(account, resp.StatusCode, resp.Header, respBody, upstreamMsg, shouldDisable, retryableOnSameAccount)
@@ -683,6 +688,9 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 				return nil, newOpenAIUpstreamFailoverError(resp.StatusCode, resp.Header, respBody, upstreamMsg, retryableOnSameAccount)
 			}
 			return nil, &UpstreamFailoverError{StatusCode: resp.StatusCode, ResponseBody: respBody, RetryableOnSameAccount: retryableOnSameAccount}
+		}
+		if ruleHandled {
+			return nil, ruleErr
 		}
 		return s.handleOpenAIImagesErrorResponse(upstreamCtx, resp, c, account, upstreamModel)
 	}

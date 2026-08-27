@@ -106,6 +106,22 @@ func classifyOpenAITransportError(err error) openAITransportErrorClass {
 //
 // passthrough tags the Ops error event for the OpenAI passthrough forward path.
 func (s *OpenAIGatewayService) handleOpenAIUpstreamTransportError(ctx context.Context, c *gin.Context, account *Account, err error, passthrough bool) error {
+	return s.handleOpenAIUpstreamTransportErrorWithURL(ctx, c, account, err, passthrough, "")
+}
+
+// handleOpenAIUpstreamTransportErrorWithURL is handleOpenAIUpstreamTransportError
+// plus the upstream URL on the Ops error event.
+//
+// 两个入口而不是给既有函数加参数：handleOpenAIUpstreamTransportError 有 21 个调用点，
+// 它们本来就不记 UpstreamURL，为了两个 images 站点去改 21 处签名不划算。
+func (s *OpenAIGatewayService) handleOpenAIUpstreamTransportErrorWithURL(
+	ctx context.Context,
+	c *gin.Context,
+	account *Account,
+	err error,
+	passthrough bool,
+	upstreamURL string,
+) error {
 	safeErr := sanitizeUpstreamErrorMessage(err.Error())
 	setOpsUpstreamError(c, 0, safeErr, "")
 	appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
@@ -113,6 +129,7 @@ func (s *OpenAIGatewayService) handleOpenAIUpstreamTransportError(ctx context.Co
 		AccountID:          account.ID,
 		AccountName:        account.Name,
 		UpstreamStatusCode: 0,
+		UpstreamURL:        upstreamURL,
 		Passthrough:        passthrough,
 		Kind:               "request_error",
 		Message:            safeErr,
@@ -137,6 +154,13 @@ func (s *OpenAIGatewayService) handleOpenAIUpstreamTransportError(ctx context.Co
 
 	if classifyOpenAITransportError(err).Persistent {
 		s.tempUnscheduleOpenAITransportError(ctx, account, safeErr)
+	}
+
+	// 错误处理规则最后问一次：合成 502 + OpenAI 形状错误体后交给引擎。命中就用规则版
+	// 错误（可能是同号重试 / 换号 / 直接返回客户端），否则保持内置的「一律 failover」。
+	// 放在副作用（停号）之后：规则只决定动作，不决定是否记账，与 Anthropic 侧同序。
+	if ruleErr := s.openAITransportErrorRuleOverride(ctx, c, account, safeErr); ruleErr != nil {
+		return ruleErr
 	}
 
 	return &UpstreamFailoverError{

@@ -464,6 +464,58 @@
           </p>
         </div>
 
+        <div>
+          <label class="input-label">
+            {{ t("admin.settings.errorHandlingRule.platforms") }}
+          </label>
+          <div class="flex flex-wrap gap-3">
+            <label
+              v-for="platform in ERROR_HANDLING_RULE_PLATFORM_OPTIONS"
+              :key="platform.value"
+              class="inline-flex items-center gap-1.5"
+            >
+              <input
+                type="checkbox"
+                :value="platform.value"
+                v-model="ruleDialogForm.platforms"
+                class="h-3.5 w-3.5 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                :data-testid="`error-handling-rule-platform-${platform.value}`"
+              />
+              <span class="text-xs text-gray-700 dark:text-gray-300">
+                {{ platform.label }}
+              </span>
+            </label>
+          </div>
+          <p class="input-hint text-xs mt-1">
+            {{ t("admin.settings.errorHandlingRule.platformsHint") }}
+          </p>
+        </div>
+
+        <div>
+          <label class="input-label">
+            {{ t("admin.settings.errorHandlingRule.maxUpstreamLatency") }}
+          </label>
+          <!-- 刻意不用 v-model：type="number" 上 Vue 会把值自动转成 number，
+               而这里要保留「空串 = 不限制」和用户原样输入的文本，确定时才解析。 -->
+          <input
+            :value="ruleDialogForm.max_upstream_latency_text"
+            type="number"
+            min="0"
+            :max="ERROR_HANDLING_RULE_MAX_UPSTREAM_LATENCY_MS"
+            class="input w-40"
+            placeholder="0"
+            data-testid="error-handling-rule-max-upstream-latency"
+            @input="
+              ruleDialogForm.max_upstream_latency_text = (
+                $event.target as HTMLInputElement
+              ).value
+            "
+          />
+          <p class="input-hint text-xs mt-1">
+            {{ t("admin.settings.errorHandlingRule.maxUpstreamLatencyHint") }}
+          </p>
+        </div>
+
         <p
           v-if="ruleDialogError"
           class="text-sm text-red-600 dark:text-red-400"
@@ -552,6 +604,10 @@ type ErrorHandlingRuleFormItem = {
   action: ErrorHandlingRuleAction;
   retry_count: number | null;
   exhausted_action: ErrorHandlingRuleExhaustedAction;
+  /** 适用平台。「全平台」= 全部勾上；空数组不是合法提交值 */
+  platforms: string[];
+  /** 上游耗时上限（毫秒），0 = 不限制 */
+  max_upstream_latency_ms: number;
 };
 
 /** 弹窗里编辑的是原始文本，确定时才解析，避免输入过程中被重排 */
@@ -563,7 +619,20 @@ type ErrorHandlingRuleDialogForm = {
   action: ErrorHandlingRuleAction;
   retry_count: number | null;
   exhausted_action: ErrorHandlingRuleExhaustedAction;
+  platforms: string[];
+  max_upstream_latency_text: string;
 };
+
+/**
+ * 只列出规则引擎真正接线了的平台。后端 validate 也只放行这两个：勾一个引擎没接线的
+ * 平台，管理员会以为规则在跑，实际什么都不会发生。
+ */
+const ERROR_HANDLING_RULE_PLATFORM_OPTIONS = [
+  { value: "anthropic", label: "Anthropic" },
+  { value: "openai", label: "OpenAI" },
+] as const;
+
+const ERROR_HANDLING_RULE_MAX_UPSTREAM_LATENCY_MS = 3_600_000;
 
 let errorHandlingRuleIDSequence = 0;
 
@@ -759,6 +828,14 @@ function toErrorHandlingRuleFormItems(
       action: rule.action || "retry",
       retry_count: rule.retry_count ?? null,
       exhausted_action: rule.exhausted_action || "default",
+      // 后端对存量规则会 normalize 成 ["anthropic"]；这里对齐，避免旧响应显示成「全不选」
+      platforms:
+        rule.platforms && rule.platforms.length > 0
+          ? [...rule.platforms]
+          : ["anthropic"],
+      max_upstream_latency_ms: normalizeMaxUpstreamLatency(
+        rule.max_upstream_latency_ms,
+      ),
     };
   });
 }
@@ -776,7 +853,20 @@ const ruleDialogForm = reactive<ErrorHandlingRuleDialogForm>({
   action: "retry",
   retry_count: null,
   exhausted_action: "default",
+  platforms: ["anthropic"],
+  max_upstream_latency_text: "",
 });
+
+/** 存量/异常值统一收敛成 0（= 不限制） */
+function normalizeMaxUpstreamLatency(value: number | null | undefined): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    return 0;
+  }
+  return Math.min(
+    Math.floor(value),
+    ERROR_HANDLING_RULE_MAX_UPSTREAM_LATENCY_MS,
+  );
+}
 
 function setDialogRetryCount(raw: string) {
   const trimmed = raw.trim();
@@ -809,6 +899,9 @@ function openCreateRuleDialog() {
     action: "retry" as ErrorHandlingRuleAction,
     retry_count: null,
     exhausted_action: "default" as ErrorHandlingRuleExhaustedAction,
+    // 新规则默认只对 Anthropic 生效：与存量语义一致，要扩到 OpenAI 得管理员显式勾
+    platforms: ["anthropic"],
+    max_upstream_latency_text: "",
   });
   ruleDialogVisible.value = true;
 }
@@ -824,6 +917,11 @@ function openEditRuleDialog(rule: ErrorHandlingRuleFormItem) {
     action: rule.action,
     retry_count: rule.retry_count,
     exhausted_action: rule.exhausted_action,
+    platforms: [...rule.platforms],
+    max_upstream_latency_text:
+      rule.max_upstream_latency_ms > 0
+        ? String(rule.max_upstream_latency_ms)
+        : "",
   });
   ruleDialogVisible.value = true;
 }
@@ -870,6 +968,33 @@ function confirmRuleDialog() {
   }
 
   const isRetry = ruleDialogForm.action === "retry";
+  // 「全平台」= 全部勾上，所以一个都不勾是非法的：空数组到了后端会被 normalize
+  // 当成存量配置、静默收窄成 anthropic，与管理员的意图相反。
+  const platforms = ERROR_HANDLING_RULE_PLATFORM_OPTIONS.filter((option) =>
+    ruleDialogForm.platforms.includes(option.value),
+  ).map((option) => option.value as string);
+  if (platforms.length === 0) {
+    ruleDialogError.value = t(
+      "admin.settings.errorHandlingRule.platformsRequired",
+    );
+    return;
+  }
+  const latencyText = ruleDialogForm.max_upstream_latency_text.trim();
+  const maxUpstreamLatencyMs =
+    latencyText === "" ? 0 : Number.parseInt(latencyText, 10);
+  if (
+    !/^\d*$/.test(latencyText) ||
+    !Number.isFinite(maxUpstreamLatencyMs) ||
+    maxUpstreamLatencyMs < 0 ||
+    maxUpstreamLatencyMs > ERROR_HANDLING_RULE_MAX_UPSTREAM_LATENCY_MS
+  ) {
+    ruleDialogError.value = t(
+      "admin.settings.errorHandlingRule.invalidMaxUpstreamLatency",
+      { max: ERROR_HANDLING_RULE_MAX_UPSTREAM_LATENCY_MS },
+    );
+    return;
+  }
+
   const changes = {
     name: ruleDialogForm.name.trim(),
     priority: clampErrorHandlingPriority(priority),
@@ -885,6 +1010,8 @@ function confirmRuleDialog() {
       ruleDialogForm.action === "passthrough"
         ? ("default" as ErrorHandlingRuleExhaustedAction)
         : ruleDialogForm.exhausted_action,
+    platforms,
+    max_upstream_latency_ms: maxUpstreamLatencyMs,
   };
 
   if (ruleDialogEditingId.value) {
@@ -953,6 +1080,13 @@ function buildErrorHandlingRulePayload(): ErrorHandlingRuleSettings {
         : clampErrorHandlingRetryCount(rule.retry_count),
     exhausted_action:
       rule.action === "passthrough" ? "default" : rule.exhausted_action,
+    // platforms 必须显式发出去，且必须非空：省略这个 key 会被后端当成存量规则。
+    // 表格里的规则都经过 toErrorHandlingRuleFormItems，那里已经兜过空值。
+    platforms:
+      rule.platforms.length > 0 ? [...rule.platforms] : ["anthropic"],
+    max_upstream_latency_ms: normalizeMaxUpstreamLatency(
+      rule.max_upstream_latency_ms,
+    ),
   }));
 
   // 输入框可能被清空（v-model.number 会给出空字符串），统一收敛成合法整数
