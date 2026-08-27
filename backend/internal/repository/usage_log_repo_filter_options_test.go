@@ -22,7 +22,7 @@ func TestGetUsageFilterOptionsReadsAllFacets(t *testing.T) {
 
 	mock.ExpectQuery(`SELECT DISTINCT ul.user_id`).WithArgs(start, end).
 		WillReturnRows(sqlmock.NewRows([]string{"user_id", "email", "notes"}).AddRow(int64(7), "user@example.com", "VIP"))
-	mock.ExpectQuery(`SELECT DISTINCT COALESCE`).WithArgs(start, end).
+	mock.ExpectQuery(`(?s)SELECT DISTINCT COALESCE.*FROM usage_logs ul.*UNION SELECT DISTINCT COALESCE.*FROM ops_error_logs e.*COALESCE\(e.status_code, 0\) >= 400`).WithArgs(start, end).
 		WillReturnRows(sqlmock.NewRows([]string{"model"}).AddRow("public-model"))
 	mock.ExpectQuery(`SELECT DISTINCT ul.group_id`).WithArgs(start, end).
 		WillReturnRows(sqlmock.NewRows([]string{"group_id", "name", "platform"}).AddRow(int64(3), "Primary", "anthropic"))
@@ -85,6 +85,24 @@ func TestUsageFilterOptionsWhereExcludesOnlyCurrentDimension(t *testing.T) {
 			require.Len(t, args, 6)
 		})
 	}
+}
+
+func TestUsageFilterOptionsErrorModelWhereUsesEntityFilters(t *testing.T) {
+	start := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	end := start.Add(24 * time.Hour)
+	where, args := usageFilterOptionsWhereWithAlias(start, end, UsageLogFilters{
+		UserID: 7, APIKeyID: 8, AccountID: 9, GroupID: 10,
+	}, "model", "e", true)
+
+	require.Contains(t, where, "e.created_at >= $1")
+	require.Contains(t, where, "e.created_at < $2")
+	require.Contains(t, where, "(COALESCE(e.status_code, 0) >= 400 OR e.error_type = 'cyber_policy')")
+	require.Contains(t, where, "e.user_id = $3")
+	require.Contains(t, where, "e.api_key_id = $4")
+	require.Contains(t, where, "e.account_id = $5")
+	require.Contains(t, where, "e.group_id = $6")
+	require.NotContains(t, where, "requested_model")
+	require.Equal(t, []any{start, end, int64(7), int64(8), int64(9), int64(10)}, args)
 }
 
 func TestUserTrendAndModelTrendUseSharedRequestedModelFilters(t *testing.T) {

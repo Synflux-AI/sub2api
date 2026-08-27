@@ -213,6 +213,7 @@ type ModelDistributionSource = 'requested' | 'upstream' | 'mapping'
 const route = useRoute()
 const usageStats = ref<AdminUsageStatsResponse | null>(null); const usageLogs = ref<AdminUsageLog[]>([]); const loading = ref(false); const exporting = ref(false)
 const trendData = ref<TrendDataPoint[]>([]); const requestedModelStats = ref<ModelStat[]>([]); const upstreamModelStats = ref<ModelStat[]>([]); const mappingModelStats = ref<ModelStat[]>([]); const groupStats = ref<GroupStat[]>([]); const chartsLoading = ref(false); const modelStatsLoading = ref(false); const granularity = ref<'day' | 'hour'>('hour')
+const filterModelOptions = ref<string[]>([])
 const modelDistributionMetric = ref<DistributionMetric>('tokens')
 const modelDistributionSource = ref<ModelDistributionSource>('requested')
 const loadedModelSources = reactive<Record<ModelDistributionSource, boolean>>({
@@ -249,7 +250,10 @@ const breakdownFilters = computed(() => {
 })
 
 const modelNameOptions = computed(() =>
-  Array.from(new Set(requestedModelStats.value.map((m) => m.model).filter(Boolean))).sort()
+  Array.from(new Set([
+    ...requestedModelStats.value.map((m) => m.model),
+    ...filterModelOptions.value,
+  ].filter(Boolean))).sort()
 )
 
 const handleUserClick = async (userId: number) => {
@@ -365,6 +369,22 @@ const onDateRangeChange = (range: { startDate: string; endDate: string; preset: 
   }
   granularity.value = getGranularityForRange(range.startDate, range.endDate)
   applyFilters()
+}
+
+const loadFilterOptions = async () => {
+  try {
+    const result = await adminAPI.usage.getFilterOptions({
+      start_date: filters.value.start_date || startDate.value,
+      end_date: filters.value.end_date || endDate.value,
+      user_id: filters.value.user_id,
+      api_key_id: filters.value.api_key_id,
+      account_id: filters.value.account_id,
+      group_id: filters.value.group_id,
+    })
+    filterModelOptions.value = result.models || []
+  } catch {
+    filterModelOptions.value = []
+  }
 }
 
 const buildUsageListParams = (
@@ -518,6 +538,7 @@ const applyFilters = () => {
   loadLogs()
   loadStats()
   loadModelStats(modelDistributionSource.value, true)
+  loadFilterOptions()
   loadChartData()
   errPage.value = 1
   if (activeTab.value === 'errors') {
@@ -531,6 +552,7 @@ const refreshData = () => {
   loadLogs()
   loadStats(true)
   loadModelStats(modelDistributionSource.value, true)
+  loadFilterOptions()
   loadChartData()
   if (activeTab.value === 'errors') loadAdminErrors()
   if (rankingMounted.value) rankingRef.value?.reload()
@@ -863,6 +885,7 @@ onMounted(() => {
   loadLogs()
   loadStats()
   loadModelStats(modelDistributionSource.value, true)
+  loadFilterOptions()
   window.setTimeout(() => {
     void loadChartData()
   }, 120)

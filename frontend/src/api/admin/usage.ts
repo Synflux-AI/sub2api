@@ -26,6 +26,10 @@ export interface AdminUsageStatsResponse {
   endpoint_paths?: EndpointStat[]
 }
 
+export interface AdminUsageFilterOptions {
+  models: string[]
+}
+
 export interface SimpleUser {
   id: number
   email: string
@@ -137,6 +141,18 @@ export async function getStats(params: {
   return data
 }
 
+export async function getFilterOptions(params: {
+  start_date?: string
+  end_date?: string
+  user_id?: number
+  api_key_id?: number
+  account_id?: number
+  group_id?: number
+} = {}): Promise<AdminUsageFilterOptions> {
+  const { data } = await apiClient.get<AdminUsageFilterOptions>('/admin/usage/filter-options', { params })
+  return data
+}
+
 /**
  * Search users by email keyword (admin only)
  * @param keyword - Email keyword to search
@@ -209,6 +225,7 @@ export async function cancelCleanupTask(taskId: number): Promise<{ id: number; s
 export const adminUsageAPI = {
   list,
   getStats,
+  getFilterOptions,
   searchUsers,
   searchApiKeys,
   listCleanupTasks,

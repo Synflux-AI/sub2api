@@ -4,7 +4,7 @@ import { defineComponent, ref } from 'vue'
 
 import UsageView from '../UsageView.vue'
 
-const { list, exportList, getStats, getSnapshotV2, getById, getModelStats, listErrorLogs, routeQuery, aoaToSheet, sheetAddAoa, saveAs, xlsxWrite } = vi.hoisted(() => {
+const { list, exportList, getStats, getSnapshotV2, getById, getModelStats, getFilterOptions, listErrorLogs, routeQuery, aoaToSheet, sheetAddAoa, saveAs, xlsxWrite } = vi.hoisted(() => {
   vi.stubGlobal('localStorage', {
     getItem: vi.fn(() => null),
     setItem: vi.fn(),
@@ -18,6 +18,7 @@ const { list, exportList, getStats, getSnapshotV2, getById, getModelStats, listE
     getSnapshotV2: vi.fn(),
     getById: vi.fn(),
     getModelStats: vi.fn(),
+    getFilterOptions: vi.fn(),
     listErrorLogs: vi.fn(),
     routeQuery: {} as Record<string, string>,
 		aoaToSheet: vi.fn(() => ({})),
@@ -53,6 +54,7 @@ vi.mock('@/api/admin', () => ({
     usage: {
       list,
       getStats,
+      getFilterOptions,
     },
     dashboard: {
       getSnapshotV2,
@@ -117,6 +119,7 @@ vi.mock('vue-router', () => ({
 
 const AppLayoutStub = { template: '<div><slot /></div>' }
 const UsageFiltersStub = defineComponent({
+  props: { modelOptions: { type: Array, default: () => [] } },
   setup(_, { expose }) {
     const userKeyword = ref('')
     let userSearchRevision = 0
@@ -131,7 +134,7 @@ const UsageFiltersStub = defineComponent({
     })
     return { userKeyword }
   },
-  template: '<div><span data-test="user-filter-label">{{ userKeyword }}</span><slot name="after-reset" /></div>',
+  template: '<div><span data-test="user-filter-label">{{ userKeyword }}</span><span data-test="model-options">{{ modelOptions.join(",") }}</span><slot name="after-reset" /></div>',
 })
 const UsageTableStub = {
   props: ['columns'],
@@ -191,6 +194,7 @@ describe('admin UsageView route filters', () => {
     })
     getSnapshotV2.mockReset().mockResolvedValue({ trend: [], models: [], groups: [] })
     getModelStats.mockReset().mockResolvedValue({ models: [] })
+    getFilterOptions.mockReset().mockResolvedValue({ models: [] })
     getById.mockReset()
   })
 
@@ -556,6 +560,7 @@ describe('admin UsageView errors tab filter forwarding', () => {
     getStats.mockReset()
     getSnapshotV2.mockReset()
     getModelStats.mockReset()
+    getFilterOptions.mockReset()
     listErrorLogs.mockReset()
 
     list.mockResolvedValue({ items: [], total: 0, pages: 0 })
@@ -565,11 +570,34 @@ describe('admin UsageView errors tab filter forwarding', () => {
     })
     getSnapshotV2.mockResolvedValue({ trend: [], models: [], groups: [] })
     getModelStats.mockResolvedValue({ models: [] })
+    getFilterOptions.mockResolvedValue({ models: [] })
     listErrorLogs.mockResolvedValue({ items: [], total: 0, pages: 0 })
   })
 
   afterEach(() => {
     vi.useRealTimers()
+  })
+
+  it('shows error-only models from usage filter options in the shared selector', async () => {
+    getFilterOptions.mockResolvedValue({ models: ['claude-fable-5'] })
+    const wrapper = mount(UsageView, {
+      global: { stubs: {
+        AppLayout: AppLayoutStub, UsageStatsCards: true, UsageFilters: UsageFiltersStub,
+        UsageTable: true, UsageExportProgress: true, UsageCleanupDialog: true,
+        UserBalanceHistoryModal: true, Pagination: true, Select: true,
+        DateRangePicker: true, Icon: true, TokenUsageTrend: true,
+        ModelDistributionChart: true, GroupDistributionChart: true, EndpointDistributionChart: true,
+        UserTokenRanking: true, OpsErrorLogTable: true, OpsErrorDetailModal: true,
+      } },
+    })
+    vi.advanceTimersByTime(120)
+    await flushPromises()
+
+    const tabs = wrapper.findAll('[data-testid="usage-detail-tab"]')
+    await tabs[1].trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[data-test="model-options"]').text()).toContain('claude-fable-5')
   })
 
   it('forwards model/account_id/group_id to listErrorLogs on the errors tab', async () => {
