@@ -105,6 +105,8 @@ func (r *usageLogRepository) GetUserUsageTrendWithUsageFilters(ctx context.Conte
 	conditions, args = appendUsageLogIDWhereCondition(conditions, args, "account_id", filters.AccountID, filters.AccountIDs)
 	conditions, args = appendUsageLogIDWhereCondition(conditions, args, "group_id", filters.GroupID, filters.GroupIDs)
 	conditions, args = appendUsageLogModelWhereConditions(conditions, args, filters.Model, filters.Models, filters.ModelFilterSource)
+	conditions, args = appendOutputTokensWhereCondition(conditions, args, filters.OutputTokens)
+	conditions, args = appendRequestTypeOrStreamWhereCondition(conditions, args, filters.RequestType, filters.Stream)
 	limitArg := len(args) + 1
 	args = append(args, limit)
 
@@ -313,7 +315,7 @@ func (r *usageLogRepository) GetUsageTrendWithUsageFilters(ctx context.Context, 
 }
 
 func (r *usageLogRepository) getUsageTrendWithUsageFilters(ctx context.Context, startTime, endTime time.Time, granularity string, filters UsageLogFilters) (results []TrendDataPoint, err error) {
-	if !filters.IncludeLatency && shouldUsePreaggregatedTrend(granularity, filters.UserID, filters.APIKeyID, filters.AccountID, filters.GroupID, filters.Model, filters.RequestType, filters.Stream, filters.BillingType, filters.BillingMode, filters.UpstreamModelMismatch) && len(filters.UserIDs) == 0 && len(filters.APIKeyIDs) == 0 && len(filters.AccountIDs) == 0 && len(filters.GroupIDs) == 0 && len(filters.Models) == 0 {
+	if filters.OutputTokens == nil && !filters.IncludeLatency && shouldUsePreaggregatedTrend(granularity, filters.UserID, filters.APIKeyID, filters.AccountID, filters.GroupID, filters.Model, filters.RequestType, filters.Stream, filters.BillingType, filters.BillingMode, filters.UpstreamModelMismatch) && len(filters.UserIDs) == 0 && len(filters.APIKeyIDs) == 0 && len(filters.AccountIDs) == 0 && len(filters.GroupIDs) == 0 && len(filters.Models) == 0 {
 		aggregated, aggregatedErr := r.getUsageTrendFromAggregates(ctx, startTime, endTime, granularity)
 		if aggregatedErr == nil && len(aggregated) > 0 {
 			return aggregated, nil
@@ -369,6 +371,7 @@ func (r *usageLogRepository) getUsageTrendWithFiltersAndLists(ctx context.Contex
 	conditions, args = appendUsageLogIDWhereCondition(conditions, args, "account_id", filters.AccountID, filters.AccountIDs)
 	conditions, args = appendUsageLogIDWhereCondition(conditions, args, "group_id", filters.GroupID, filters.GroupIDs)
 	conditions, args = appendUsageLogModelWhereConditions(conditions, args, filters.Model, filters.Models, filters.ModelFilterSource)
+	conditions, args = appendOutputTokensWhereCondition(conditions, args, filters.OutputTokens)
 	conditions, args = appendRequestTypeOrStreamWhereCondition(conditions, args, filters.RequestType, filters.Stream)
 	if filters.BillingType != nil {
 		conditions = append(conditions, fmt.Sprintf("billing_type = $%d", len(args)+1))
@@ -446,6 +449,7 @@ func (r *usageLogRepository) getUsageTrendByModelWithUsageFilters(ctx context.Co
 	conditions, args = appendUsageLogIDWhereCondition(conditions, args, "account_id", filters.AccountID, filters.AccountIDs)
 	conditions, args = appendUsageLogIDWhereCondition(conditions, args, "group_id", filters.GroupID, filters.GroupIDs)
 	conditions, args = appendUsageLogModelWhereConditions(conditions, args, filters.Model, filters.Models, usagestats.ModelSourceRequested)
+	conditions, args = appendOutputTokensWhereCondition(conditions, args, filters.OutputTokens)
 	conditions, args = appendRequestTypeOrStreamWhereCondition(conditions, args, filters.RequestType, filters.Stream)
 	if filters.BillingType != nil {
 		conditions = append(conditions, fmt.Sprintf("billing_type = $%d", len(args)+1))
@@ -626,6 +630,7 @@ func (r *usageLogRepository) getModelStatsWithUsageFiltersBySource(ctx context.C
 	conditions, args = appendUsageLogIDWhereCondition(conditions, args, "account_id", filters.AccountID, filters.AccountIDs)
 	conditions, args = appendUsageLogIDWhereCondition(conditions, args, "group_id", filters.GroupID, filters.GroupIDs)
 	conditions, args = appendUsageLogModelWhereConditions(conditions, args, filters.Model, filters.Models, source)
+	conditions, args = appendOutputTokensWhereCondition(conditions, args, filters.OutputTokens)
 	conditions, args = appendRequestTypeOrStreamWhereCondition(conditions, args, filters.RequestType, filters.Stream)
 	if filters.BillingType != nil {
 		conditions = append(conditions, fmt.Sprintf("billing_type = $%d", len(args)+1))

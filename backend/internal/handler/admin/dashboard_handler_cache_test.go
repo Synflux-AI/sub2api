@@ -18,9 +18,35 @@ type dashboardUsageRepoCacheProbe struct {
 	service.UsageLogRepository
 	trendCalls        atomic.Int32
 	trendFilters      []usagestats.UsageLogFilters
+	modelTrendFilters []usagestats.UsageLogFilters
 	usersTrendCalls   atomic.Int32
 	usersTrendSorts   []string
 	usersTrendFilters []usagestats.UsageLogFilters
+}
+
+func (r *dashboardUsageRepoCacheProbe) GetUsageTrendByModelWithUsageFilters(
+	ctx context.Context,
+	startTime, endTime time.Time,
+	granularity string,
+	filters usagestats.UsageLogFilters,
+) ([]usagestats.TrendModelDataPoint, error) {
+	r.modelTrendFilters = append(r.modelTrendFilters, filters)
+	return []usagestats.TrendModelDataPoint{}, nil
+}
+
+func (r *dashboardUsageRepoCacheProbe) GetUsageTrendByModelWithFilters(
+	ctx context.Context,
+	startTime, endTime time.Time,
+	granularity string,
+	userID, apiKeyID, accountID, groupID int64,
+	model string,
+	requestType *int16,
+	stream *bool,
+	billingType *int8,
+	upstreamModelMismatch *bool,
+) ([]usagestats.TrendModelDataPoint, error) {
+	r.modelTrendFilters = append(r.modelTrendFilters, usagestats.UsageLogFilters{Stream: stream})
+	return []usagestats.TrendModelDataPoint{}, nil
 }
 
 func (r *dashboardUsageRepoCacheProbe) GetUsageTrendWithUsageFilters(
@@ -117,6 +143,27 @@ func TestDashboardHandler_GetUsageTrend_UsesCache(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec2.Code)
 	require.Equal(t, "hit", rec2.Header().Get("X-Snapshot-Cache"))
 	require.Equal(t, int32(1), repo.trendCalls.Load())
+
+	req3 := httptest.NewRequest(http.MethodGet, "/admin/dashboard/trend?start_date=2026-03-01&end_date=2026-03-07&granularity=day&output_tokens=0&stream=false", nil)
+	rec3 := httptest.NewRecorder()
+	router.ServeHTTP(rec3, req3)
+	require.Equal(t, http.StatusOK, rec3.Code)
+	require.Equal(t, "miss", rec3.Header().Get("X-Snapshot-Cache"))
+	require.Equal(t, int32(2), repo.trendCalls.Load())
+	require.NotNil(t, repo.trendFilters[1].OutputTokens)
+	require.Zero(t, *repo.trendFilters[1].OutputTokens)
+	require.NotNil(t, repo.trendFilters[1].Stream)
+	require.False(t, *repo.trendFilters[1].Stream)
+
+	req4 := httptest.NewRequest(http.MethodGet, "/admin/dashboard/trend?start_date=2026-03-01&end_date=2026-03-07&granularity=day&group_by=model&output_tokens=0&stream=false", nil)
+	rec4 := httptest.NewRecorder()
+	router.ServeHTTP(rec4, req4)
+	require.Equal(t, http.StatusOK, rec4.Code)
+	require.Len(t, repo.modelTrendFilters, 1)
+	require.NotNil(t, repo.modelTrendFilters[0].OutputTokens)
+	require.Zero(t, *repo.modelTrendFilters[0].OutputTokens)
+	require.NotNil(t, repo.modelTrendFilters[0].Stream)
+	require.False(t, *repo.modelTrendFilters[0].Stream)
 }
 
 func TestDashboardHandler_GetUsageTrend_CachesLatencySeparately(t *testing.T) {
@@ -186,6 +233,17 @@ func TestDashboardHandler_GetUserUsageTrend_UsesCache(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec2.Code)
 	require.Equal(t, "hit", rec2.Header().Get("X-Snapshot-Cache"))
 	require.Equal(t, int32(1), repo.usersTrendCalls.Load())
+
+	req3 := httptest.NewRequest(http.MethodGet, "/admin/dashboard/users-trend?start_date=2026-03-01&end_date=2026-03-07&granularity=day&limit=8&output_tokens=0&stream=false", nil)
+	rec3 := httptest.NewRecorder()
+	router.ServeHTTP(rec3, req3)
+	require.Equal(t, http.StatusOK, rec3.Code)
+	require.Equal(t, "miss", rec3.Header().Get("X-Snapshot-Cache"))
+	require.Equal(t, int32(2), repo.usersTrendCalls.Load())
+	require.NotNil(t, repo.usersTrendFilters[1].OutputTokens)
+	require.Zero(t, *repo.usersTrendFilters[1].OutputTokens)
+	require.NotNil(t, repo.usersTrendFilters[1].Stream)
+	require.False(t, *repo.usersTrendFilters[1].Stream)
 }
 
 func TestDashboardHandler_GetUserUsageTrend_CachesSortSeparately(t *testing.T) {

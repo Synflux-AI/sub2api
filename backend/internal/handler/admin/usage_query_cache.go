@@ -24,6 +24,7 @@ type usageStatsCacheKeyData struct {
 	GroupIDs              []int64  `json:"group_ids,omitempty"`
 	Model                 string   `json:"model"`
 	Models                []string `json:"models,omitempty"`
+	OutputTokens          *int     `json:"output_tokens"`
 	BillingMode           string   `json:"billing_mode"`
 	RequestType           *int16   `json:"request_type"`
 	Stream                *bool    `json:"stream"`
@@ -53,6 +54,7 @@ func usageStatsCacheKey(filters usagestats.UsageLogFilters) string {
 		GroupIDs:              normalizeInt64IDList(filters.GroupIDs),
 		Model:                 filters.Model,
 		Models:                normalizeStringList(filters.Models),
+		OutputTokens:          filters.OutputTokens,
 		BillingMode:           filters.BillingMode,
 		RequestType:           filters.RequestType,
 		Stream:                filters.Stream,
