@@ -1072,9 +1072,10 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 				continue
 			}
 			// 规则先算好，副作用仍照原顺序跑；未命中时下面一行行为不变。
+			builtinWillFailover := s.shouldFailoverOpenAIUpstreamResponse(resp.StatusCode, upstreamMsg, respBody)
 			ruleErr, ruleHandled := s.openAIErrorHandlingRuleOverride(
-				ctx, c, account, resp.StatusCode, resp.Header, respBody, upstreamModel)
-			if s.shouldFailoverOpenAIUpstreamResponse(resp.StatusCode, upstreamMsg, respBody) {
+				ctx, c, account, resp.StatusCode, resp.Header, respBody, upstreamModel, builtinWillFailover)
+			if builtinWillFailover {
 				upstreamDetail := ""
 				if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
 					maxBytes := s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes

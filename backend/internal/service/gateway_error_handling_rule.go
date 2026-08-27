@@ -101,13 +101,12 @@ func (s *GatewayService) decideErrorHandlingRule(
 		return errorHandlingRuleDecision{}
 	}
 	return decideErrorHandlingRuleFrom(errorHandlingRuleDeciderInput{
-		Settings:          s.settingService.GetErrorHandlingRuleSettingsCached(ctx),
-		Tracker:           tracker,
-		StatusCode:        statusCode,
-		Body:              respBody,
-		Opts:              opts,
-		Platform:          account.Platform,
-		UpstreamLatencyMs: opts.UpstreamLatencyMs,
+		Settings:   s.settingService.GetErrorHandlingRuleSettingsCached(ctx),
+		Tracker:    tracker,
+		StatusCode: statusCode,
+		Body:       respBody,
+		Opts:       opts,
+		Platform:   account.Platform,
 	})
 }
 

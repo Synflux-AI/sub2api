@@ -380,7 +380,7 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 			}
 		}
 		account.ApplyCustomHeaders(upstreamReq)
-		resp, err = s.doOpenAIUpstream(upstreamReq, proxyURL, account)
+		resp, err = s.timedDoOpenAIUpstream(c, upstreamReq, proxyURL, account)
 		if err != nil {
 			return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)
 		}

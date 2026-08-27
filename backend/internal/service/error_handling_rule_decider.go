@@ -118,8 +118,6 @@ type errorHandlingRuleDeciderInput struct {
 
 	// Platform 是本次请求所用账号的平台。为空表示调用方没有平台上下文，不做平台过滤。
 	Platform string
-	// UpstreamLatencyMs 是本次上游耗时；<=0 表示未知，届时任何已配置的耗时门限都不满足。
-	UpstreamLatencyMs int
 
 	// BuiltinOwns 表示这条错误归内置逻辑独占，规则不得抢走。由调用方按平台算好。
 	BuiltinOwns bool
@@ -134,7 +132,7 @@ func decideErrorHandlingRuleFrom(in errorHandlingRuleDeciderInput) errorHandling
 	}
 	rule := matchErrorHandlingRuleFiltered(in.Settings.Rules, errorHandlingRuleMatchFilter{
 		Platform:          in.Platform,
-		UpstreamLatencyMs: in.UpstreamLatencyMs,
+		UpstreamLatencyMs: in.Opts.UpstreamLatencyMs,
 	}, in.StatusCode, in.Body)
 	if rule == nil {
 		return errorHandlingRuleDecision{}

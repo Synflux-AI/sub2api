@@ -49,6 +49,25 @@ func TestErrorHandlingRuleSettingsBackfillsMissingPlatformsAsAnthropic(t *testin
 	require.Zero(t, got.Rules[0].MaxUpstreamLatencyMs)
 }
 
+// 显式传空数组与「不传」等价：normalize 在 validate 之前跑，空数组会被补成
+// ["anthropic"]，validate 因此永远看不到空值、也就不会报错。这是刻意的向后兼容
+// （老客户端 PUT 上来的规则不会在升级瞬间对 OpenAI 生效），代价是「一个平台都不勾」
+// 只能由前端拦下。契约写在这里，别再按「validate 会拒绝空数组」去理解。
+func TestErrorHandlingRuleSettingsTreatsExplicitEmptyPlatformsAsLegacy(t *testing.T) {
+	h := newErrorHandlingRuleTestHandler(t)
+	rec := doErrorHandlingRulePut(t, h, UpdateErrorHandlingRuleSettingsRequest{
+		Enabled: true, DefaultRetryCount: 1,
+		Rules: []dto.ErrorHandlingRule{
+			{ID: "explicit-empty", StatusCodes: []int{429}, Action: service.ErrorHandlingActionRetry, Platforms: []string{}},
+		},
+	})
+	require.Equal(t, http.StatusOK, rec.Code, "空数组不报错，按存量语义收窄")
+
+	got := getErrorHandlingRuleSettings(t, h)
+	require.Len(t, got.Rules, 1)
+	require.Equal(t, []string{service.PlatformAnthropic}, got.Rules[0].Platforms)
+}
+
 func TestErrorHandlingRuleSettingsRoundTripsPlatformsAndLatency(t *testing.T) {
 	h := newErrorHandlingRuleTestHandler(t)
 	rec := doErrorHandlingRulePut(t, h, UpdateErrorHandlingRuleSettingsRequest{

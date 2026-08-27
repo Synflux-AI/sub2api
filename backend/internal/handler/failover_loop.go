@@ -121,14 +121,18 @@ func sameAccountRetryDeadlineAllows(failoverErr *service.UpstreamFailoverError) 
 	return failoverErr == nil || failoverErr.SameAccountRetryDeadline.IsZero() || time.Now().Before(failoverErr.SameAccountRetryDeadline)
 }
 
-// effectiveSameAccountRetryLimit applies an error-specific cap without
-// overriding an explicit account setting of zero (which disables retries).
+// effectiveSameAccountRetryLimit resolves the same-account retry budget.
+//
+// 两条来源，优先级不同：
+//   - failoverErr.RuleRetryLimit（错误处理规则显式配的）—— **覆盖**账号设置，包括
+//     账号的 pool-mode 基数为 0（非 pool-mode，或管理员显式关掉原地重试）的情况。
+//     必须能覆盖：不然界面上给了「原地重试 N 次」的选项，行为却是换号。
+//   - failoverErr.SameAccountRetryMax（错误特有的上限，如 Grok 容量/流空闲）——
+//     只能往下夹，且不覆盖账号显式设成 0（那表示禁用原地重试）。
 func effectiveSameAccountRetryLimit(failoverErr *service.UpstreamFailoverError, account *service.Account) int {
 	if account == nil {
 		return 0
 	}
-	// 错误处理规则给的预算是管理员显式配的，优先于账号的 pool-mode 默认值 ——
-	// 包括账号根本不是 pool-mode（基数为 0）的情况。
 	if failoverErr != nil && failoverErr.RuleRetryLimit != nil {
 		return *failoverErr.RuleRetryLimit
 	}

@@ -97,7 +97,7 @@ func (s *OpenAIGatewayService) ForwardEmbeddings(
 	if account.Proxy != nil {
 		proxyURL = account.Proxy.URL()
 	}
-	resp, err := s.doOpenAIUpstream(upstreamReq, proxyURL, account)
+	resp, err := s.timedDoOpenAIUpstream(c, upstreamReq, proxyURL, account)
 	if err != nil {
 		safeErr := sanitizeUpstreamErrorMessage(err.Error())
 		setOpsUpstreamError(c, 0, safeErr, "")
@@ -122,9 +122,10 @@ func (s *OpenAIGatewayService) ForwardEmbeddings(
 		upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(respBody))
 		upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
 		// 规则先算好，副作用仍照原顺序跑；未命中时下面一行行为不变。
+		builtinWillFailover := s.shouldFailoverOpenAIUpstreamResponse(resp.StatusCode, upstreamMsg, respBody)
 		ruleErr, ruleHandled := s.openAIErrorHandlingRuleOverride(
-			ctx, c, account, resp.StatusCode, resp.Header, respBody, upstreamModel)
-		if s.shouldFailoverOpenAIUpstreamResponse(resp.StatusCode, upstreamMsg, respBody) {
+			ctx, c, account, resp.StatusCode, resp.Header, respBody, upstreamModel, builtinWillFailover)
+		if builtinWillFailover {
 			upstreamDetail := ""
 			if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
 				maxBytes := s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes

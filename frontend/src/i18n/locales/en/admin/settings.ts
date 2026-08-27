@@ -1063,7 +1063,7 @@ export default {
         platformsRequired: 'Select at least one platform',
         maxUpstreamLatency: 'Upstream Latency Ceiling (ms)',
         maxUpstreamLatencyHint:
-          'Only match when this attempt\'s upstream latency is below this value; 0 disables the condition. An unknown latency never satisfies a configured ceiling. Use it to avoid retrying slow failures the upstream has already billed.',
+          'Only match when this attempt\'s upstream latency is below this value; 0 disables the condition. An unknown latency never satisfies a configured ceiling. It measures a single upstream attempt, and on streaming requests it stops at the response headers (TTFB), not the whole stream. Use it to avoid retrying slow failures the upstream has already billed.',
         invalidMaxUpstreamLatency:
           'Upstream latency ceiling must be an integer between 0 and {max}',
         enabled: 'Enable Error Handling Rules',

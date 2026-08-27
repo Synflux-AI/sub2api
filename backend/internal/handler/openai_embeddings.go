@@ -111,6 +111,9 @@ func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
 	failedAccountIDs := make(map[int64]struct{})
 	var lastFailoverErr *service.UpstreamFailoverError
 	switchCount := 0
+	// sameAccountRetryCount 只服务于错误处理规则配的「原地重试」：内置的 pool-mode
+	// 重试在本入口上历来不生效，这里不顺手打开它（未命中规则的请求行为必须零变化）。
+	sameAccountRetryCount := make(map[int64]int)
 	maxAccountSwitches := h.maxAccountSwitches
 	if maxAccountSwitches <= 0 {
 		maxAccountSwitches = 3
@@ -217,6 +220,41 @@ func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
 						zap.Int("upstream_status", failoverErr.StatusCode),
 					)
 					return
+				}
+				// 错误处理规则配 passthrough 时会置 NextAccountStop：立刻把上游错误交给
+				// 客户端，不再换号。本循环原先不看这个字段，规则动作会被静默降级成
+				// 「继续扫完整个账号池」—— 比改动前（service 本地写一次上游体就返回）更差。
+				if !failoverErr.ShouldRetryNextAccount() {
+					reqLog.Warn("openai_embeddings.upstream_failover_stopped",
+						zap.Int64("account_id", account.ID),
+						zap.Int("upstream_status", failoverErr.StatusCode),
+						zap.String("error_rule_id", failoverErr.ErrorRuleID),
+					)
+					h.handleFailoverExhausted(c, failoverErr, false)
+					return
+				}
+				// 规则配的「原地重试」。只认规则给的预算（RuleRetryLimit 非 nil），
+				// 不顺带把内置 pool-mode 重试引进这条历来没有它的路径。
+				if failoverErr.RetryableOnSameAccount && failoverErr.RuleRetryLimit != nil {
+					retryLimit := effectiveSameAccountRetryLimit(failoverErr, account)
+					if sameAccountRetryAllowed(failoverErr, sameAccountRetryCount[account.ID], retryLimit) {
+						sameAccountRetryCount[account.ID]++
+						retryDelay := sameAccountRetryDelayFor(failoverErr, sameAccountRetryCount[account.ID])
+						reqLog.Warn("openai_embeddings.error_rule_same_account_retry",
+							zap.Int64("account_id", account.ID),
+							zap.Int("upstream_status", failoverErr.StatusCode),
+							zap.Int("retry_limit", retryLimit),
+							zap.Int("retry_count", sameAccountRetryCount[account.ID]),
+							zap.Duration("retry_delay", retryDelay),
+							zap.String("error_rule_id", failoverErr.ErrorRuleID),
+						)
+						select {
+						case <-c.Request.Context().Done():
+							return
+						case <-time.After(retryDelay):
+						}
+						continue
+					}
 				}
 				h.gatewayService.RecordOpenAIAccountSwitch()
 				failedAccountIDs[account.ID] = struct{}{}

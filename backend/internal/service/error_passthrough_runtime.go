@@ -27,6 +27,17 @@ func getBoundErrorPassthroughService(c *gin.Context) *ErrorPassthroughService {
 	return svc
 }
 
+// openAIErrorPassthroughRuleMatches 是纯查询：本次响应是否会命中一条「错误透传规则」。
+// 不改写、不写响应。错误处理规则在内置判定「不换号」的分支上用它让路 —— 那条分支上
+// 原本就是由 applyErrorPassthroughRule 独占的（见 openAIErrorHandlingRuleOverride）。
+func openAIErrorPassthroughRuleMatches(c *gin.Context, platform string, upstreamStatus int, responseBody []byte) bool {
+	svc := getBoundErrorPassthroughService(c)
+	if svc == nil {
+		return false
+	}
+	return svc.MatchRule(platform, upstreamStatus, responseBody) != nil
+}
+
 // applyErrorPassthroughRule 按规则改写错误响应；未命中时返回默认响应参数。
 func applyErrorPassthroughRule(
 	c *gin.Context,

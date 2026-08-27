@@ -89,11 +89,6 @@ func (s *OpenAIGatewayService) failoverOpenAIUpstreamHTTPError(
 	upstreamModel string,
 ) *UpstreamFailoverError {
 	shouldFailover := s.shouldFailoverOpenAIUpstreamResponse(resp.StatusCode, upstreamMsg, respBody)
-	// 错误处理规则：这个 helper 是 8 条 OpenAI 转发路径（chat_completions / raw /
-	// messages / responses 及各 anthropic_native、chat_fallback 变体）的共同汇聚点，
-	// 接一次就够。未命中时 ruleHandled=false，下面一行行为不变。
-	ruleErr, ruleHandled := s.openAIErrorHandlingRuleOverride(
-		ctx, c, account, resp.StatusCode, resp.Header, respBody, upstreamModel)
 	tempUnscheduled := false
 	if c != nil && account != nil && account.Platform != PlatformGrok && !shouldFailover && !IsResponseCommitted(c) && s.rateLimitService != nil {
 		tempUnscheduled = s.rateLimitService.CheckErrorPolicy(ctx, account, resp.StatusCode, respBody, upstreamModel) == ErrorPolicyTempUnscheduled
@@ -105,9 +100,17 @@ func (s *OpenAIGatewayService) failoverOpenAIUpstreamHTTPError(
 	if account != nil && account.Platform == PlatformGrok {
 		s.handleGrokAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody)
 	}
+	// 错误处理规则：这个 helper 是 8 条 OpenAI 转发路径（chat_completions / raw /
+	// messages / responses 及各 anthropic_native、chat_fallback 变体）的共同汇聚点，
+	// 接一次就够。未命中时 ruleHandled=false，下面一行行为不变。
+	//
+	// 位置在 shouldFailover 定稿之后：规则要知道内置的最终结论，才能在「内置不换号」
+	// 的分支上替内置补跑账号记账、并给「错误透传规则」让路。
+	ruleErr, ruleHandled := s.openAIErrorHandlingRuleOverride(
+		ctx, c, account, resp.StatusCode, resp.Header, respBody, upstreamModel, shouldFailover)
 	if !shouldFailover {
 		// 内置分类认为不必换号，但规则可以覆盖（例如把某类确定性 4xx 配成透传）。
-		// 副作用不跑：内置在这条分支上本来也不跑，规则只决定动作、不决定是否记账。
+		// 账号记账已由 override 内部补跑，这里只落动作。
 		if ruleHandled {
 			return ruleErr
 		}
@@ -244,7 +247,7 @@ func (s *OpenAIGatewayService) sendCCUpstreamRequest(
 	if account.Proxy != nil {
 		proxyURL = account.Proxy.URL()
 	}
-	resp, err := s.doOpenAIUpstream(upstreamReq, proxyURL, account)
+	resp, err := s.timedDoOpenAIUpstream(c, upstreamReq, proxyURL, account)
 	if err != nil {
 		return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)
 	}

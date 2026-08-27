@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/model"
 	"github.com/stretchr/testify/require"
 )
 
@@ -220,12 +221,34 @@ func TestOpenAIBuiltinOwnsError(t *testing.T) {
 			msg: "bad gateway", body: []byte(`{"error":{"message":"bad gateway"}}`),
 			account: openAIRuleAccount(), want: false,
 		},
+		// 以下三类归内置：newOpenAIUpstreamFailoverError 会给它们算出
+		// Reason / Scope / Stage / ClientStatusCode / ClientMessage /
+		// RequestScopedTransient，而规则版错误是另起一个 UpstreamFailoverError，
+		// 带不出这些字段 —— 一条宽泛规则会把 413 的专用文案、凭据失败的归因、
+		// 容量削峰的「不扣账号健康分」一起清零。
+		{
+			name: "body too large 归内置", statusCode: http.StatusRequestEntityTooLarge,
+			msg:     "request body too large",
+			body:    []byte(`{"error":{"message":"request body too large"}}`),
+			account: openAIRuleAccount(), want: true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			require.Equal(t, tt.want, openAIBuiltinOwnsError(tt.statusCode, tt.msg, tt.body, tt.account))
 		})
 	}
+}
+
+// access-state 与 request-scoped 容量削峰同样归内置。用各自的判定函数取真实样本，
+// 避免把 marker 表硬编码进测试。
+func TestOpenAIBuiltinOwnsError_TypedClassificationsReserved(t *testing.T) {
+	accessStateBody := []byte(`{"error":{"message":"Your account is not active","code":"account_deactivated"}}`)
+	if !isOpenAIHTTPUpstreamAccessStateError(http.StatusForbidden, "", accessStateBody) {
+		t.Skip("access-state marker 表已变，样本失效")
+	}
+	require.True(t, openAIBuiltinOwnsError(
+		http.StatusForbidden, "Your account is not active", accessStateBody, openAIRuleAccount()))
 }
 
 // 规则未命中时，转发路径必须一行行为不变：override 报告 handled=false。
@@ -238,7 +261,7 @@ func TestOpenAIErrorHandlingRuleOverride_NoMatchLeavesBuiltinPath(t *testing.T) 
 
 	ruleErr, handled := svc.openAIErrorHandlingRuleOverride(
 		context.Background(), c, openAIRuleAccount(),
-		http.StatusBadGateway, http.Header{}, []byte(`{"error":{"message":"bad gateway"}}`), "gpt-image-1")
+		http.StatusBadGateway, http.Header{}, []byte(`{"error":{"message":"bad gateway"}}`), "gpt-image-1", true)
 
 	require.False(t, handled)
 	require.Nil(t, ruleErr)
@@ -254,10 +277,123 @@ func TestOpenAIErrorHandlingRuleOverride_HTTPErrorResponseMatches(t *testing.T) 
 
 	ruleErr, handled := svc.openAIErrorHandlingRuleOverride(
 		context.Background(), c, openAIRuleAccount(),
-		http.StatusTooManyRequests, http.Header{}, []byte(`{"error":{"message":"rate limited"}}`), "gpt-image-1")
+		http.StatusTooManyRequests, http.Header{}, []byte(`{"error":{"message":"rate limited"}}`), "gpt-image-1", true)
 
 	require.True(t, handled)
 	require.NotNil(t, ruleErr)
 	require.Equal(t, "http-429", ruleErr.ErrorRuleID)
 	require.Equal(t, http.StatusTooManyRequests, ruleErr.StatusCode)
+}
+
+// ==================== 以下为 PR #194 评审后的补丁覆盖 ====================
+
+// newMatchAllErrorPassthroughService 造一条命中 400 的「错误透传规则」。
+func newMatchAllErrorPassthroughService(t *testing.T) *ErrorPassthroughService {
+	t.Helper()
+	respCode := http.StatusTeapot
+	customMessage := "上游请求失败"
+	svc := &ErrorPassthroughService{}
+	svc.setLocalCache([]*model.ErrorPassthroughRule{{
+		ID: 1, Name: "openai-400", Enabled: true, Priority: 1,
+		ErrorCodes:   []int{http.StatusBadRequest},
+		MatchMode:    model.MatchModeAll,
+		Platforms:    []string{PlatformOpenAI},
+		ResponseCode: &respCode, CustomMessage: &customMessage,
+	}})
+	return svc
+}
+
+// exhausted_action=passthrough 的消费点要求 SafeErrorType/Message 都非空。只在
+// passthrough **动作**上填的话，「换号 + 耗尽后原样返回上游错误」这条配置会静默
+// 退化成通用 502 —— 而它接近本 Issue 推荐的 images 配置。
+func TestOpenAIErrorHandlingRule_SafeErrorFilledForEveryAction(t *testing.T) {
+	body := []byte(`{"error":{"type":"server_error","message":"upstream exploded"}}`)
+	for _, action := range []string{
+		ErrorHandlingActionFailover, ErrorHandlingActionRetry, ErrorHandlingActionPassthrough,
+	} {
+		t.Run(action, func(t *testing.T) {
+			svc := newOpenAIRuleService(t, nil, ErrorHandlingRule{
+				ID: "rule-" + action, StatusCodes: []int{500}, Action: action,
+				ExhaustedAction: ErrorHandlingExhaustedActionPassthrough,
+				Platforms:       []string{PlatformOpenAI},
+			})
+			c, _ := newOpenAITransportErrTestContext()
+
+			ruleErr, handled := svc.openAIErrorHandlingRuleOverride(
+				context.Background(), c, openAIRuleAccount(),
+				http.StatusInternalServerError, http.Header{}, body, "gpt-4o", true)
+
+			require.True(t, handled)
+			require.Equal(t, "server_error", ruleErr.SafeErrorType)
+			require.Equal(t, "upstream exploded", ruleErr.SafeErrorMessage)
+			require.Equal(t, ErrorHandlingExhaustedActionPassthrough, ruleErr.ExhaustedAction)
+		})
+	}
+}
+
+// Kind / outcome 必须是**生效**动作。OpenAI 侧传 Tracker=nil，决策层会把 retry 恒
+// 降级成 failover 并打 retry_tracker_missing —— 那个降级在这里是假的，直接拿来当
+// outcome 会让 OpenObserve 里查不到任何 OpenAI 的规则重试。
+func TestOpenAIErrorHandlingRule_KindUsesEffectiveAction(t *testing.T) {
+	retry := 2
+	svc := newOpenAIRuleService(t, nil, ErrorHandlingRule{
+		ID: "retry-rule", StatusCodes: []int{500}, Action: ErrorHandlingActionRetry,
+		RetryCount: &retry, Platforms: []string{PlatformOpenAI},
+	})
+	c, _ := newOpenAITransportErrTestContext()
+
+	_, handled := svc.openAIErrorHandlingRuleOverride(
+		context.Background(), c, openAIRuleAccount(),
+		http.StatusInternalServerError, http.Header{}, []byte(`{"error":{"message":"boom"}}`), "gpt-4o", true)
+
+	require.True(t, handled)
+	events := opsUpstreamErrorEvents(t, c)
+	require.NotEmpty(t, events)
+	require.Equal(t, "error_handling_rule_retry", events[len(events)-1].Kind)
+}
+
+// 规则接管会让调用方跳过 handleErrorResponse 那条链，而 setOpsUpstreamError 原先
+// 只在那条链里调。不补的话，被规则接管的请求在 ops_error_logs 里 upstream_status_code
+// 是 NULL —— 正是 #189 用来定案「128 条」的那几列。
+func TestOpenAIErrorHandlingRule_RecordsTopLevelOpsUpstreamError(t *testing.T) {
+	svc := newOpenAIRuleService(t, nil, ErrorHandlingRule{
+		ID: "ops-rule", StatusCodes: []int{500}, Action: ErrorHandlingActionFailover,
+		Platforms: []string{PlatformOpenAI},
+	})
+	c, _ := newOpenAITransportErrTestContext()
+
+	_, handled := svc.openAIErrorHandlingRuleOverride(
+		context.Background(), c, openAIRuleAccount(),
+		http.StatusInternalServerError, http.Header{}, []byte(`{"error":{"message":"boom"}}`), "gpt-4o", true)
+
+	require.True(t, handled)
+	status, ok := c.Get(OpsUpstreamStatusCodeKey)
+	require.True(t, ok, "顶层 upstream_status_code 必须落下")
+	require.Equal(t, http.StatusInternalServerError, status)
+}
+
+// 「错误透传规则」优先。内置判定不换号时，原本是由 handleErrorResponse 一类的链去问
+// applyErrorPassthroughRule 并直接写响应；错误处理规则一旦接管就再也走不到那里，
+// 等于把另一个管理台功能无声关掉。
+func TestOpenAIErrorHandlingRule_YieldsToErrorPassthroughRule(t *testing.T) {
+	svc := newOpenAIRuleService(t, nil, ErrorHandlingRule{
+		ID: "broad-400", StatusCodes: []int{400}, Action: ErrorHandlingActionPassthrough,
+		Platforms: []string{PlatformOpenAI},
+	})
+	body := []byte(`{"error":{"message":"invalid request"}}`)
+
+	c, _ := newOpenAITransportErrTestContext()
+	BindErrorPassthroughService(c, newMatchAllErrorPassthroughService(t))
+	_, handled := svc.openAIErrorHandlingRuleOverride(
+		context.Background(), c, openAIRuleAccount(),
+		http.StatusBadRequest, http.Header{}, body, "gpt-4o", false)
+	require.False(t, handled, "内置不换号 + 透传规则命中 ⇒ 错误处理规则让路")
+
+	// 内置要换号的分支不受影响：那条分支上本来就问不到透传规则。
+	c2, _ := newOpenAITransportErrTestContext()
+	BindErrorPassthroughService(c2, newMatchAllErrorPassthroughService(t))
+	_, handled2 := svc.openAIErrorHandlingRuleOverride(
+		context.Background(), c2, openAIRuleAccount(),
+		http.StatusBadRequest, http.Header{}, body, "gpt-4o", true)
+	require.True(t, handled2)
 }
