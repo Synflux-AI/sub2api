@@ -102,6 +102,9 @@ type errorHandlingRuleDecisionOptions struct {
 	IgnoreRetryElapsed     bool
 	SemanticEventForwarded bool
 	IndependentRetryBudget bool
+	// UpstreamLatencyMs 是本次上游耗时；<=0 表示未知。未知时任何已配置的耗时门限
+	// 都不满足（fail-closed，见 ErrorHandlingRule.MatchesUpstreamLatency）。
+	UpstreamLatencyMs int
 }
 
 // errorHandlingRuleDeciderInput 是决策层的全部输入。没有 gin.Context、没有
@@ -112,6 +115,11 @@ type errorHandlingRuleDeciderInput struct {
 	StatusCode int
 	Body       []byte
 	Opts       errorHandlingRuleDecisionOptions
+
+	// Platform 是本次请求所用账号的平台。为空表示调用方没有平台上下文，不做平台过滤。
+	Platform string
+	// UpstreamLatencyMs 是本次上游耗时；<=0 表示未知，届时任何已配置的耗时门限都不满足。
+	UpstreamLatencyMs int
 
 	// BuiltinOwns 表示这条错误归内置逻辑独占，规则不得抢走。由调用方按平台算好。
 	BuiltinOwns bool
@@ -124,7 +132,10 @@ func decideErrorHandlingRuleFrom(in errorHandlingRuleDeciderInput) errorHandling
 	if in.BuiltinOwns || !in.Settings.Enabled {
 		return errorHandlingRuleDecision{}
 	}
-	rule := matchErrorHandlingRule(in.Settings.Rules, in.StatusCode, in.Body)
+	rule := matchErrorHandlingRuleFiltered(in.Settings.Rules, errorHandlingRuleMatchFilter{
+		Platform:          in.Platform,
+		UpstreamLatencyMs: in.UpstreamLatencyMs,
+	}, in.StatusCode, in.Body)
 	if rule == nil {
 		return errorHandlingRuleDecision{}
 	}

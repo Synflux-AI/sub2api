@@ -81,6 +81,24 @@ func SetOpsLatencyMs(c *gin.Context, key string, value int64) {
 	c.Set(key, value)
 }
 
+// opsUpstreamLatencyMs 读回本次上游调用的耗时（毫秒）。读不到返回 0，调用方按
+// 「未知」处理（错误处理规则的耗时门限对未知一律不满足，见
+// ErrorHandlingRule.MatchesUpstreamLatency）。
+func opsUpstreamLatencyMs(c *gin.Context) int {
+	if c == nil {
+		return 0
+	}
+	value, ok := c.Get(OpsUpstreamLatencyMsKey)
+	if !ok {
+		return 0
+	}
+	ms, ok := value.(int64)
+	if !ok || ms < 0 {
+		return 0
+	}
+	return int(ms)
+}
+
 // SetOpsUpstreamModel stores only the effective model slug for final Ops
 // attribution. Call it immediately before an upstream attempt is dispatched.
 func SetOpsUpstreamModel(c *gin.Context, model string) {

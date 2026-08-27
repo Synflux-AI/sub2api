@@ -1050,7 +1050,15 @@ export default {
       errorHandlingRule: {
         title: '错误处理规则',
         description:
-          '按状态码和/或关键字匹配上游错误响应，命中后按配置的动作处理。仅对 Anthropic 平台的 Claude Console API Key 账号生效。换任何账号都会复现的确定性错误（如 prompt is too long、max_tokens 超限），建议配成「直接返回客户端」，避免空耗重试预算直至账号池耗尽。',
+          '按状态码和/或关键字匹配上游错误响应，命中后按配置的动作处理。每条规则按「适用平台」生效，目前支持 Anthropic 与 OpenAI。换任何账号都会复现的确定性错误（如 prompt is too long、max_tokens 超限），建议配成「直接返回客户端」，避免空耗重试预算直至账号池耗尽。',
+        platforms: '适用平台',
+        platformsHint:
+          '至少勾选一个；「全平台」请把所有平台都勾上。存量规则未配置此项时按仅 Anthropic 处理。',
+        platformsRequired: '请至少勾选一个适用平台',
+        maxUpstreamLatency: '上游耗时上限（毫秒）',
+        maxUpstreamLatencyHint:
+          '仅当本次上游耗时低于该值才命中此规则；0 = 不限制。耗时未知时视为不满足，规则不命中。用于避免对已计费的慢失败做重复扣费的重试。',
+        invalidMaxUpstreamLatency: '上游耗时上限必须是 0 到 {max} 之间的整数',
         enabled: '启用错误处理规则',
         enabledHint: '独立开关，不受「启用请求整流器」总开关影响',
         defaultRetryCount: '默认原地重试次数',

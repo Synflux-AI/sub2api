@@ -47,7 +47,7 @@ func (s *GatewayService) errorHandlingRulesActive(ctx context.Context, account *
 		return false
 	}
 	settings := s.settingService.GetErrorHandlingRuleSettingsCached(ctx)
-	return settings.Enabled && HasEnabledErrorHandlingRule(settings.Rules)
+	return settings.Enabled && HasEnabledErrorHandlingRuleForPlatform(settings.Rules, account.Platform)
 }
 
 func (s *GatewayService) matchErrorHandlingRuleForAccount(ctx context.Context, account *Account, statusCode int, respBody []byte) (*ErrorHandlingRule, int) {
@@ -58,7 +58,7 @@ func (s *GatewayService) matchErrorHandlingRuleForAccount(ctx context.Context, a
 	if !settings.Enabled {
 		return nil, 0
 	}
-	rule := matchErrorHandlingRule(settings.Rules, statusCode, respBody)
+	rule := matchErrorHandlingRuleFiltered(settings.Rules, errorHandlingRuleMatchFilter{Platform: account.Platform}, statusCode, respBody)
 	if rule == nil {
 		return nil, 0
 	}
@@ -101,11 +101,13 @@ func (s *GatewayService) decideErrorHandlingRule(
 		return errorHandlingRuleDecision{}
 	}
 	return decideErrorHandlingRuleFrom(errorHandlingRuleDeciderInput{
-		Settings:   s.settingService.GetErrorHandlingRuleSettingsCached(ctx),
-		Tracker:    tracker,
-		StatusCode: statusCode,
-		Body:       respBody,
-		Opts:       opts,
+		Settings:          s.settingService.GetErrorHandlingRuleSettingsCached(ctx),
+		Tracker:           tracker,
+		StatusCode:        statusCode,
+		Body:              respBody,
+		Opts:              opts,
+		Platform:          account.Platform,
+		UpstreamLatencyMs: opts.UpstreamLatencyMs,
 	})
 }
 
@@ -124,6 +126,10 @@ func (s *GatewayService) applyErrorHandlingRule(
 	tracker.markEvaluated(resp)
 	decision := s.decideErrorHandlingRule(ctx, tracker, account, resp.StatusCode, respBody, reqModel, errorHandlingRuleDecisionOptions{
 		Attempt: attempt, RetryStart: retryStart,
+		// 「上游耗时」在这条 HTTP 错误响应路径上就是本次上游调用的耗时（由各转发
+		// 路径的 SetOpsLatencyMs(OpsUpstreamLatencyMsKey) 落下）。取不到就是未知，
+		// 已配置耗时门限的规则届时不命中。
+		UpstreamLatencyMs: opsUpstreamLatencyMs(c),
 	})
 	if !decision.Matched {
 		return errorHandlingRuleOutcomeNone, nil, nil

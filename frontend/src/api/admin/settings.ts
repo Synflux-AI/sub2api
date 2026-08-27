@@ -1492,6 +1492,19 @@ export interface ErrorHandlingRule {
   retry_count: number | null;
   /** Missing on legacy settings and treated as default by the backend. */
   exhausted_action?: ErrorHandlingRuleExhaustedAction;
+  /**
+   * Platforms this rule applies to. "All platforms" is expressed by ticking every
+   * platform, NOT by sending an empty array: the backend treats an empty/absent
+   * list as a legacy rule and narrows it to ["anthropic"].
+   * Missing on legacy settings.
+   */
+  platforms?: string[];
+  /**
+   * Only match when this attempt's upstream latency is BELOW this many ms.
+   * 0 (or missing) disables the condition. An unknown latency never satisfies a
+   * configured ceiling.
+   */
+  max_upstream_latency_ms?: number;
 }
 
 /**
