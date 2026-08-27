@@ -24,8 +24,11 @@ type OpsDashboardFilter struct {
 	Model       string
 	Models      []string
 	ErrorOwner  string // 比对 LOWER(COALESCE(error_owner,''))，库内小写
+	ErrorOwners []string
 	ErrorType   string
+	ErrorTypes  []string
 	ErrorPhase  string
+	ErrorPhases []string
 	ErrorSource string // 比对 LOWER(COALESCE(error_source,''))
 	StatusCodes []int  // 比对 COALESCE(upstream_status_code, status_code, 0) IN (...)
 	Severity    string

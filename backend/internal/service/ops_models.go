@@ -149,12 +149,13 @@ type OpsErrorLogFilter struct {
 	// not set this flag and retain client-error semantics.
 	IncludeRecoveredUpstream bool
 
-	// ErrorPhasesAny / ErrorTypesAny add plain ANY() filters WITHOUT touching the
+	// ErrorOwnersAny / ErrorPhasesAny / ErrorTypesAny add plain ANY() filters WITHOUT touching the
 	// special-cased single `Phase` field. With IncludeRecoveredUpstream, an ANY
 	// list containing only upstream/account_auth also bypasses status>=400.
 	// NOTE: these ANY filters do NOT bypass status>=400; records with error_phase='upstream'
 	// but status_code<400 (recovered upstream errors) remain excluded.
 	// Used to map user-facing coarse categories to backend conditions.
+	ErrorOwnersAny []string
 	ErrorPhasesAny []string
 	ErrorTypesAny  []string
 

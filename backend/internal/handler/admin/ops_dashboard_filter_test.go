@@ -70,6 +70,27 @@ func TestParseOpsDashboardErrorFilter_ParsesEntityLists(t *testing.T) {
 	}
 }
 
+func TestParseOpsDashboardErrorFilter_ParsesErrorDimensionLists(t *testing.T) {
+	c := newTestCtx("error_owner=provider,client&error_type=api_error,rate_limit_error&phase=upstream,request")
+	f, err := parseOpsDashboardErrorFilter(c, time.Unix(0, 0), time.Unix(1, 0))
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if f.ErrorOwner != "" || f.ErrorType != "" || f.ErrorPhase != "" {
+		t.Fatalf("list filters must not populate scalar fields: %#v", f)
+	}
+	if len(f.ErrorOwners) != 2 || f.ErrorOwners[0] != "provider" || f.ErrorOwners[1] != "client" {
+		t.Fatalf("error owners not parsed: %#v", f.ErrorOwners)
+	}
+	if len(f.ErrorTypes) != 2 || f.ErrorTypes[0] != "api_error" || f.ErrorTypes[1] != "rate_limit_error" {
+		t.Fatalf("error types not parsed: %#v", f.ErrorTypes)
+	}
+	if len(f.ErrorPhases) != 2 || f.ErrorPhases[0] != "upstream" || f.ErrorPhases[1] != "request" {
+		t.Fatalf("error phases not parsed: %#v", f.ErrorPhases)
+	}
+}
+
 func TestParseOpsBreakdownLimit(t *testing.T) {
 	cases := []struct {
 		raw     string

@@ -461,10 +461,10 @@ func parseOpsDashboardErrorFilter(c *gin.Context, start, end time.Time) (*servic
 		return nil, err
 	}
 	filter.Model, filter.Models = parseUsageModelFilter(c)
-	filter.ErrorOwner = strings.TrimSpace(c.Query("error_owner"))
+	filter.ErrorOwner, filter.ErrorOwners = parseOpsStringFilter(c, "error_owner")
 	filter.ErrorSource = strings.TrimSpace(c.Query("error_source"))
-	filter.ErrorType = strings.TrimSpace(c.Query("error_type"))
-	filter.ErrorPhase = strings.TrimSpace(c.Query("phase"))
+	filter.ErrorType, filter.ErrorTypes = parseOpsStringFilter(c, "error_type")
+	filter.ErrorPhase, filter.ErrorPhases = parseOpsStringFilter(c, "phase")
 	filter.Severity = strings.TrimSpace(c.Query("severity"))
 	if s := strings.TrimSpace(c.Query("status_codes")); s != "" {
 		parts := strings.Split(s, ",")

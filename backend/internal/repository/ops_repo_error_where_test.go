@@ -99,6 +99,28 @@ func TestBuildErrorWhere_AppliesEntityListsWithRequestedModels(t *testing.T) {
 	}
 }
 
+func TestBuildErrorWhere_AppliesMultiErrorDimensions(t *testing.T) {
+	filter := &service.OpsDashboardFilter{
+		ErrorOwners: []string{"Provider", "Client"},
+		ErrorTypes:  []string{"api_error", "rate_limit_error"},
+		ErrorPhases: []string{"Upstream", "Request"},
+	}
+	where, args, _ := buildErrorWhere(filter, time.Unix(0, 0).UTC(), time.Unix(3600, 0).UTC(), 1)
+
+	for _, want := range []string{
+		"LOWER(COALESCE(error_owner,'')) = ANY($",
+		"error_type = ANY($",
+		"error_phase = ANY($",
+	} {
+		if !strings.Contains(where, want) {
+			t.Fatalf("where missing %q\nfull: %s", want, where)
+		}
+	}
+	if len(args) != 5 {
+		t.Fatalf("args len = %d, want 5: %#v", len(args), args)
+	}
+}
+
 func TestBuildOpsErrorLogsWhere_QueryUsesQualifiedColumns(t *testing.T) {
 	filter := &service.OpsErrorLogFilter{
 		Query: "ACCESS_DENIED",
