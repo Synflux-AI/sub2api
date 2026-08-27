@@ -38,92 +38,6 @@ func safeAnthropicError(body []byte) (string, string) {
 	return "upstream_error", message
 }
 
-type errorHandlingRuleTracker struct {
-	ruleID  string
-	retries int
-
-	retriesByRule map[string]int
-
-	// evaluated 记录最近一次被规则引擎评估过的响应对象。转发主循环里有若干条
-	// 从 400 分支内部 break 出去的路径，它们带出的响应从没经过任何接入点，
-	// 循环后的兜底靠这个指针区分「已评估过」和「漏网的」，避免重复评估。
-	evaluated *http.Response
-}
-
-func (t *errorHandlingRuleTracker) consume(ruleID string, retryLimit int) bool {
-	if t.ruleID != ruleID {
-		t.ruleID = ruleID
-		t.retries = 0
-	}
-	if t.retries >= retryLimit {
-		return false
-	}
-	t.retries++
-	return true
-}
-
-func (t *errorHandlingRuleTracker) consumeForRule(ruleID string, retryLimit int) bool {
-	if t.retriesByRule == nil {
-		t.retriesByRule = make(map[string]int)
-	}
-	if t.retriesByRule[ruleID] >= retryLimit {
-		return false
-	}
-	t.retriesByRule[ruleID]++
-	return true
-}
-
-func (t *errorHandlingRuleTracker) retryCount(ruleID string, independent bool) int {
-	if t == nil {
-		return 0
-	}
-	if !independent {
-		return t.retries
-	}
-	if t.retriesByRule == nil {
-		return 0
-	}
-	return t.retriesByRule[ruleID]
-}
-
-func (t *errorHandlingRuleTracker) markEvaluated(resp *http.Response) {
-	t.evaluated = resp
-}
-
-func (t *errorHandlingRuleTracker) alreadyEvaluated(resp *http.Response) bool {
-	return t.evaluated != nil && t.evaluated == resp
-}
-
-type errorHandlingRuleOutcome int
-
-const (
-	errorHandlingRuleOutcomeNone errorHandlingRuleOutcome = iota
-	errorHandlingRuleOutcomeRetry
-	errorHandlingRuleOutcomeDone
-)
-
-type errorHandlingRuleDecision struct {
-	Matched          bool
-	RuleID           string
-	RuleName         string
-	ConfiguredAction string
-	EffectiveAction  string
-	RetryDelay       time.Duration
-	ExhaustedAction  string
-	DowngradeReason  string
-	RetryUsed        int
-	RetryLimit       int
-	RetryElapsed     time.Duration
-}
-
-type errorHandlingRuleDecisionOptions struct {
-	Attempt                int
-	RetryStart             time.Time
-	IgnoreRetryElapsed     bool
-	SemanticEventForwarded bool
-	IndependentRetryBudget bool
-}
-
 func isErrorHandlingRuleAccount(account *Account) bool {
 	return account != nil && account.Platform == PlatformAnthropic && account.Type == AccountTypeAPIKey
 }
@@ -165,9 +79,12 @@ func restoreErrorHandlingRuleBody(resp *http.Response, respBody []byte) {
 	resp.Body = io.NopCloser(bytes.NewReader(respBody))
 }
 
-// decideErrorHandlingRule only matches rules, consumes the selected rule's retry
-// budget, and computes the effective action. Response writes, sleeps, and account
-// side effects are deliberately left to the caller.
+// decideErrorHandlingRule 是 Anthropic 侧对平台中立决策层的薄包装：只负责
+// 「这条错误归不归内置签名逻辑管」「这个账号适不适用规则」两个平台特有判断，
+// 其余全部交给 decideErrorHandlingRuleFrom（见 error_handling_rule_decider.go）。
+//
+// 两个前置判断的先后顺序不能调换：builtinSignatureHandlingOwns 先于账号 gate，
+// 与拆分前逐条一致。
 func (s *GatewayService) decideErrorHandlingRule(
 	ctx context.Context,
 	tracker *errorHandlingRuleTracker,
@@ -180,66 +97,16 @@ func (s *GatewayService) decideErrorHandlingRule(
 	if s.builtinSignatureHandlingOwns(ctx, account, statusCode, respBody, reqModel) {
 		return errorHandlingRuleDecision{}
 	}
-	rule, retryLimit := s.matchErrorHandlingRuleForAccount(ctx, account, statusCode, respBody)
-	if rule == nil {
+	if !isErrorHandlingRuleAccount(account) || s == nil || s.settingService == nil {
 		return errorHandlingRuleDecision{}
 	}
-
-	decision := errorHandlingRuleDecision{
-		Matched:          true,
-		RuleID:           rule.ID,
-		RuleName:         rule.Name,
-		ConfiguredAction: rule.Action,
-		EffectiveAction:  rule.Action,
-		ExhaustedAction:  rule.ExhaustedAction,
-		RetryLimit:       retryLimit,
-	}
-	if !opts.RetryStart.IsZero() {
-		decision.RetryElapsed = time.Since(opts.RetryStart)
-	}
-
-	if opts.SemanticEventForwarded &&
-		(rule.Action == ErrorHandlingActionRetry || rule.Action == ErrorHandlingActionFailover) {
-		decision.EffectiveAction = ErrorHandlingActionPassthrough
-		decision.DowngradeReason = "semantic_output_started"
-		return decision
-	}
-	if rule.Action != ErrorHandlingActionRetry {
-		return decision
-	}
-	if tracker == nil {
-		decision.EffectiveAction = ErrorHandlingActionFailover
-		decision.DowngradeReason = "retry_tracker_missing"
-		return decision
-	}
-
-	consumeRetry := tracker.consume
-	if opts.IndependentRetryBudget {
-		consumeRetry = tracker.consumeForRule
-	}
-	switch {
-	case !consumeRetry(rule.ID, retryLimit):
-		decision.EffectiveAction = ErrorHandlingActionFailover
-		decision.DowngradeReason = "retry_budget_exhausted"
-		decision.RetryUsed = retryLimit
-	case !opts.IgnoreRetryElapsed && decision.RetryElapsed >= maxRetryElapsed:
-		decision.EffectiveAction = ErrorHandlingActionFailover
-		decision.DowngradeReason = "retry_window_elapsed"
-		decision.RetryUsed = tracker.retryCount(rule.ID, opts.IndependentRetryBudget)
-	case opts.Attempt >= maxRetryAttempts:
-		decision.EffectiveAction = ErrorHandlingActionFailover
-		decision.DowngradeReason = "max_attempts_reached"
-		decision.RetryUsed = tracker.retryCount(rule.ID, opts.IndependentRetryBudget)
-	default:
-		decision.RetryUsed = tracker.retryCount(rule.ID, opts.IndependentRetryBudget)
-		decision.RetryDelay = retryBackoffDelay(opts.Attempt)
-		if !opts.IgnoreRetryElapsed {
-			if remaining := maxRetryElapsed - decision.RetryElapsed; decision.RetryDelay > remaining {
-				decision.RetryDelay = remaining
-			}
-		}
-	}
-	return decision
+	return decideErrorHandlingRuleFrom(errorHandlingRuleDeciderInput{
+		Settings:   s.settingService.GetErrorHandlingRuleSettingsCached(ctx),
+		Tracker:    tracker,
+		StatusCode: statusCode,
+		Body:       respBody,
+		Opts:       opts,
+	})
 }
 
 func (s *GatewayService) applyErrorHandlingRule(
