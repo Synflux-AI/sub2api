@@ -131,6 +131,34 @@ func TestUserUsageListInvalidStream(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
+func TestUserUsageListOutputTokensZero(t *testing.T) {
+	repo := &userUsageRepoCapture{}
+	router := newUserUsageRequestTypeTestRouter(repo)
+
+	req := httptest.NewRequest(http.MethodGet, "/usage?output_tokens=0", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.NotNil(t, repo.listFilters.OutputTokens)
+	require.Zero(t, *repo.listFilters.OutputTokens)
+}
+
+func TestUserUsageListInvalidOutputTokens(t *testing.T) {
+	for _, value := range []string{"-1", "invalid"} {
+		t.Run(value, func(t *testing.T) {
+			repo := &userUsageRepoCapture{}
+			router := newUserUsageRequestTypeTestRouter(repo)
+
+			req := httptest.NewRequest(http.MethodGet, "/usage?output_tokens="+value, nil)
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, req)
+
+			require.Equal(t, http.StatusBadRequest, rec.Code)
+		})
+	}
+}
+
 func TestUserUsageListAdvancedFilters(t *testing.T) {
 	repo := &userUsageRepoCapture{}
 	router := newUserUsageRequestTypeTestRouter(repo)
