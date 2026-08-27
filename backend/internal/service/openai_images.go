@@ -643,18 +643,13 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 	resp, err := s.doOpenAIUpstream(upstreamReq, proxyURL, account)
 	SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 	if err != nil {
-		safeErr := sanitizeUpstreamErrorMessage(err.Error())
-		setOpsUpstreamError(c, 0, safeErr, "")
-		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
-			Platform:           account.Platform,
-			AccountID:          account.ID,
-			AccountName:        account.Name,
-			UpstreamStatusCode: 0,
-			UpstreamURL:        safeUpstreamURL(upstreamReq.URL.String()),
-			Kind:               "request_error",
-			Message:            safeErr,
-		})
-		return nil, fmt.Errorf("upstream request failed: %s", safeErr)
+		// 传输层失败（没有 HTTP 状态码）必须返回 *UpstreamFailoverError，否则
+		// handler/openai_images.go 的 errors.As 不成立，整个 failover 块被跳过，
+		// 直落 502 —— 2026-08-26 的 128 条 `http2: client connection lost` 就是这么
+		// 一次重试一次换号都没有地吐给客户端的。ops 记录由 helper 统一负责，这里
+		// 不再本地记一遍（会在 upstream_errors 里对同一次失败记两条）。
+		return nil, s.handleOpenAIUpstreamTransportErrorWithURL(
+			upstreamCtx, c, account, err, false, safeUpstreamURL(upstreamReq.URL.String()))
 	}
 	if resp.StatusCode >= 400 {
 		respBody := s.readUpstreamErrorBody(resp)

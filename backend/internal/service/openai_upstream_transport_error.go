@@ -106,6 +106,22 @@ func classifyOpenAITransportError(err error) openAITransportErrorClass {
 //
 // passthrough tags the Ops error event for the OpenAI passthrough forward path.
 func (s *OpenAIGatewayService) handleOpenAIUpstreamTransportError(ctx context.Context, c *gin.Context, account *Account, err error, passthrough bool) error {
+	return s.handleOpenAIUpstreamTransportErrorWithURL(ctx, c, account, err, passthrough, "")
+}
+
+// handleOpenAIUpstreamTransportErrorWithURL is handleOpenAIUpstreamTransportError
+// plus the upstream URL on the Ops error event.
+//
+// 两个入口而不是给既有函数加参数：handleOpenAIUpstreamTransportError 有 21 个调用点，
+// 它们本来就不记 UpstreamURL，为了两个 images 站点去改 21 处签名不划算。
+func (s *OpenAIGatewayService) handleOpenAIUpstreamTransportErrorWithURL(
+	ctx context.Context,
+	c *gin.Context,
+	account *Account,
+	err error,
+	passthrough bool,
+	upstreamURL string,
+) error {
 	safeErr := sanitizeUpstreamErrorMessage(err.Error())
 	setOpsUpstreamError(c, 0, safeErr, "")
 	appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
@@ -113,6 +129,7 @@ func (s *OpenAIGatewayService) handleOpenAIUpstreamTransportError(ctx context.Co
 		AccountID:          account.ID,
 		AccountName:        account.Name,
 		UpstreamStatusCode: 0,
+		UpstreamURL:        upstreamURL,
 		Passthrough:        passthrough,
 		Kind:               "request_error",
 		Message:            safeErr,
