@@ -2789,6 +2789,23 @@ func (h *OpenAIGatewayHandler) handleFailoverExhausted(c *gin.Context, failoverE
 		h.handleFailoverExhaustedSimple(c, http.StatusBadGateway, streamStarted)
 		return
 	}
+	// 错误处理规则的终态策略优先于下面所有内置特判：管理员显式配了「耗尽后把上游
+	// 错误原样返回」，就不该被 body-too-large / 凭据失败 / 限流映射改写。
+	// 插入位置与 GatewayHandler.handleFailoverExhausted 对齐（那边也是第一个分支）。
+	// SafeErrorType/Message 缺一不可：那是脱敏过的安全文本，缺了就退回内置映射，
+	// 绝不把裸上游响应体吐给客户端。
+	if failoverErr.ExhaustedAction == service.ErrorHandlingExhaustedActionPassthrough &&
+		failoverErr.SafeErrorType != "" && failoverErr.SafeErrorMessage != "" {
+		service.SetOpsUpstreamError(c, failoverErr.StatusCode, failoverErr.SafeErrorMessage, "")
+		h.handleStreamingAwareError(
+			c,
+			failoverErr.StatusCode,
+			failoverErr.SafeErrorType,
+			failoverErr.SafeErrorMessage,
+			streamStarted || c.Writer.Written(),
+		)
+		return
+	}
 	if failoverErr.IsOpenAIRequestBodyTooLarge() {
 		service.SetOpsUpstreamError(c, http.StatusRequestEntityTooLarge, service.OpenAIRequestBodyTooLargeClientMessage, "")
 		h.handleStreamingAwareError(

@@ -89,6 +89,11 @@ func (s *OpenAIGatewayService) failoverOpenAIUpstreamHTTPError(
 	upstreamModel string,
 ) *UpstreamFailoverError {
 	shouldFailover := s.shouldFailoverOpenAIUpstreamResponse(resp.StatusCode, upstreamMsg, respBody)
+	// 错误处理规则：这个 helper 是 8 条 OpenAI 转发路径（chat_completions / raw /
+	// messages / responses 及各 anthropic_native、chat_fallback 变体）的共同汇聚点，
+	// 接一次就够。未命中时 ruleHandled=false，下面一行行为不变。
+	ruleErr, ruleHandled := s.openAIErrorHandlingRuleOverride(
+		ctx, c, account, resp.StatusCode, resp.Header, respBody, upstreamModel)
 	tempUnscheduled := false
 	if c != nil && account != nil && account.Platform != PlatformGrok && !shouldFailover && !IsResponseCommitted(c) && s.rateLimitService != nil {
 		tempUnscheduled = s.rateLimitService.CheckErrorPolicy(ctx, account, resp.StatusCode, respBody, upstreamModel) == ErrorPolicyTempUnscheduled
@@ -101,6 +106,11 @@ func (s *OpenAIGatewayService) failoverOpenAIUpstreamHTTPError(
 		s.handleGrokAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody)
 	}
 	if !shouldFailover {
+		// 内置分类认为不必换号，但规则可以覆盖（例如把某类确定性 4xx 配成透传）。
+		// 副作用不跑：内置在这条分支上本来也不跑，规则只决定动作、不决定是否记账。
+		if ruleHandled {
+			return ruleErr
+		}
 		return nil
 	}
 	upstreamDetail := ""
@@ -124,6 +134,10 @@ func (s *OpenAIGatewayService) failoverOpenAIUpstreamHTTPError(
 	shouldDisable := tempUnscheduled
 	if account.Platform != PlatformGrok && !tempUnscheduled {
 		shouldDisable = s.handleOpenAIAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody, upstreamModel)
+	}
+	// 副作用（停号等）已按原顺序跑完，规则只接管「动作」。
+	if ruleHandled {
+		return ruleErr
 	}
 	return s.newOpenAIAccountFailoverError(
 		account,

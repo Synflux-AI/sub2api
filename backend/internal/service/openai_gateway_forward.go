@@ -1071,6 +1071,9 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 				)
 				continue
 			}
+			// 规则先算好，副作用仍照原顺序跑；未命中时下面一行行为不变。
+			ruleErr, ruleHandled := s.openAIErrorHandlingRuleOverride(
+				ctx, c, account, resp.StatusCode, resp.Header, respBody, upstreamModel)
 			if s.shouldFailoverOpenAIUpstreamResponse(resp.StatusCode, upstreamMsg, respBody) {
 				upstreamDetail := ""
 				if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
@@ -1092,6 +1095,9 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 				})
 
 				shouldDisable := s.handleFailoverSideEffects(ctx, resp, account, respBody, upstreamModel)
+				if ruleHandled {
+					return nil, ruleErr
+				}
 				return nil, s.newOpenAIAccountFailoverError(
 					account,
 					resp.StatusCode,
@@ -1101,6 +1107,9 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 					shouldDisable,
 					!shouldDisable && account.IsPoolMode() && (account.IsPoolModeRetryableStatus(resp.StatusCode) || isOpenAITransientProcessingError(resp.StatusCode, upstreamMsg, respBody)),
 				)
+			}
+			if ruleHandled {
+				return nil, ruleErr
 			}
 			return s.handleErrorResponse(ctx, resp, c, account, body, resolveOpenAIErrorSchedulingModel(billingModel, upstreamModel))
 		}

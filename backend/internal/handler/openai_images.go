@@ -302,6 +302,18 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 						)
 						return
 					}
+					// 错误处理规则配 passthrough 时会置 NextAccountStop：立刻把上游错误
+					// 交给客户端，不再换号。images 循环原先不看这个字段，规则动作会被
+					// 静默降级成「继续换号」。
+					if !failoverErr.ShouldRetryNextAccount() {
+						reqLog.Warn("openai.images.upstream_failover_stopped",
+							zap.Int64("account_id", account.ID),
+							zap.Int("upstream_status", failoverErr.StatusCode),
+							zap.String("error_rule_id", failoverErr.ErrorRuleID),
+						)
+						h.handleFailoverExhausted(c, failoverErr, streamStarted)
+						return
+					}
 					if failoverErr.RetryableOnSameAccount {
 						retryLimit := effectiveSameAccountRetryLimit(failoverErr, account)
 						if sameAccountRetryAllowed(failoverErr, sameAccountRetryCount[account.ID], retryLimit) {

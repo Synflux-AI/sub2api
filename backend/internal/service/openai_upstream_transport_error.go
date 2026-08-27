@@ -156,6 +156,13 @@ func (s *OpenAIGatewayService) handleOpenAIUpstreamTransportErrorWithURL(
 		s.tempUnscheduleOpenAITransportError(ctx, account, safeErr)
 	}
 
+	// 错误处理规则最后问一次：合成 502 + OpenAI 形状错误体后交给引擎。命中就用规则版
+	// 错误（可能是同号重试 / 换号 / 直接返回客户端），否则保持内置的「一律 failover」。
+	// 放在副作用（停号）之后：规则只决定动作，不决定是否记账，与 Anthropic 侧同序。
+	if ruleErr := s.openAITransportErrorRuleOverride(ctx, c, account, safeErr); ruleErr != nil {
+		return ruleErr
+	}
+
 	return &UpstreamFailoverError{
 		StatusCode:   http.StatusBadGateway,
 		ResponseBody: openAITransportFailoverBody,

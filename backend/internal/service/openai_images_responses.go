@@ -1813,6 +1813,9 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 		resp.Body = io.NopCloser(bytes.NewReader(respBody))
 		upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(respBody))
 		upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
+		// 规则先算好，副作用仍照原顺序跑；未命中时下面一行行为不变。
+		ruleErr, ruleHandled := s.openAIErrorHandlingRuleOverride(
+			upstreamCtx, c, account, resp.StatusCode, resp.Header, respBody, requestModel)
 		if s.shouldFailoverOpenAIUpstreamResponse(resp.StatusCode, upstreamMsg, respBody) {
 			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 				Platform:           account.Platform,
@@ -1825,6 +1828,9 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 				Message:            upstreamMsg,
 			})
 			shouldDisable := s.handleFailoverSideEffects(upstreamCtx, resp, account, respBody, requestModel)
+			if ruleHandled {
+				return nil, ruleErr
+			}
 			return nil, s.newOpenAIAccountFailoverError(
 				account,
 				resp.StatusCode,
@@ -1834,6 +1840,9 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 				shouldDisable,
 				!shouldDisable && account.IsPoolMode() && account.IsPoolModeRetryableStatus(resp.StatusCode),
 			)
+		}
+		if ruleHandled {
+			return nil, ruleErr
 		}
 		return s.handleOpenAIImagesErrorResponse(upstreamCtx, resp, c, account, requestModel)
 	}

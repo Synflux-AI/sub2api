@@ -127,6 +127,11 @@ func effectiveSameAccountRetryLimit(failoverErr *service.UpstreamFailoverError, 
 	if account == nil {
 		return 0
 	}
+	// 错误处理规则给的预算是管理员显式配的，优先于账号的 pool-mode 默认值 ——
+	// 包括账号根本不是 pool-mode（基数为 0）的情况。
+	if failoverErr != nil && failoverErr.RuleRetryLimit != nil {
+		return *failoverErr.RuleRetryLimit
+	}
 	limit := account.GetPoolModeRetryCount()
 	if limit > 0 && failoverErr != nil && failoverErr.SameAccountRetryMax > 0 && failoverErr.SameAccountRetryMax < limit {
 		return failoverErr.SameAccountRetryMax
