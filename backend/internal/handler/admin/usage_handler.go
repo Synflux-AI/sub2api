@@ -281,6 +281,11 @@ func (h *UsageHandler) Stats(c *gin.Context) {
 
 	model, models := parseUsageModelFilter(c)
 	billingMode := strings.TrimSpace(c.Query("billing_mode"))
+	outputTokens, err := parseUsageOutputTokens(c)
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
 
 	var requestType *int16
 	var stream *bool
@@ -372,6 +377,7 @@ func (h *UsageHandler) Stats(c *gin.Context) {
 		Model:                 model,
 		Models:                models,
 		ModelFilterSource:     usagestats.ModelSourceRequested,
+		OutputTokens:          outputTokens,
 		RequestType:           requestType,
 		Stream:                stream,
 		BillingType:           billingType,

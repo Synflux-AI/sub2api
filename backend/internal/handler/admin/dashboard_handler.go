@@ -26,7 +26,7 @@ func hasUsageFilterLists(filters usagestats.UsageLogFilters) bool {
 	return len(filters.UserIDs) > 0 || len(filters.APIKeyIDs) > 0 || len(filters.AccountIDs) > 0 || len(filters.GroupIDs) > 0 || len(filters.Models) > 0
 }
 
-func parseDashboardOutputTokens(c *gin.Context) (*int, error) {
+func parseUsageOutputTokens(c *gin.Context) (*int, error) {
 	raw := strings.TrimSpace(c.Query("output_tokens"))
 	if raw == "" {
 		return nil, nil
@@ -245,7 +245,7 @@ func (h *DashboardHandler) GetUsageTrend(c *gin.Context) {
 		return
 	}
 	model, models := parseUsageModelFilter(c)
-	outputTokens, err := parseDashboardOutputTokens(c)
+	outputTokens, err := parseUsageOutputTokens(c)
 	if err != nil {
 		response.BadRequest(c, err.Error())
 		return
@@ -367,6 +367,11 @@ func (h *DashboardHandler) GetModelStats(c *gin.Context) {
 		return
 	}
 	model, models := parseUsageModelFilter(c)
+	outputTokens, err := parseUsageOutputTokens(c)
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
 	modelSource := usagestats.ModelSourceRequested
 	var requestType *int16
 	var stream *bool
@@ -411,13 +416,13 @@ func (h *DashboardHandler) GetModelStats(c *gin.Context) {
 		return
 	}
 
-	filters := usagestats.UsageLogFilters{UserID: userID, UserIDs: userIDs, APIKeyID: apiKeyID, APIKeyIDs: apiKeyIDs, AccountID: accountID, AccountIDs: accountIDs, GroupID: groupID, GroupIDs: groupIDs, Model: model, Models: models, ModelFilterSource: modelSource, RequestType: requestType, Stream: stream, BillingType: billingType, UpstreamModelMismatch: upstreamModelMismatch}
+	filters := usagestats.UsageLogFilters{UserID: userID, UserIDs: userIDs, APIKeyID: apiKeyID, APIKeyIDs: apiKeyIDs, AccountID: accountID, AccountIDs: accountIDs, GroupID: groupID, GroupIDs: groupIDs, Model: model, Models: models, ModelFilterSource: modelSource, OutputTokens: outputTokens, RequestType: requestType, Stream: stream, BillingType: billingType, UpstreamModelMismatch: upstreamModelMismatch}
 	var stats []usagestats.ModelStat
 	var hit bool
 	if hasUsageFilterLists(filters) || model != "" {
 		stats, err = h.dashboardService.GetModelStatsWithUsageFiltersBySource(c.Request.Context(), startTime, endTime, filters, modelSource)
 	} else {
-		stats, hit, err = h.getModelStatsCached(c.Request.Context(), startTime, endTime, userID, apiKeyID, accountID, groupID, modelSource, requestType, stream, billingType, upstreamModelMismatch)
+		stats, hit, err = h.getModelStatsCached(c.Request.Context(), startTime, endTime, userID, apiKeyID, accountID, groupID, modelSource, outputTokens, requestType, stream, billingType, upstreamModelMismatch)
 	}
 	if err != nil {
 		response.Error(c, 500, "Failed to get model statistics")
@@ -579,7 +584,7 @@ func (h *DashboardHandler) GetUserUsageTrend(c *gin.Context) {
 		return
 	}
 	model, models := parseUsageModelFilter(c)
-	outputTokens, err := parseDashboardOutputTokens(c)
+	outputTokens, err := parseUsageOutputTokens(c)
 	if err != nil {
 		response.BadRequest(c, err.Error())
 		return

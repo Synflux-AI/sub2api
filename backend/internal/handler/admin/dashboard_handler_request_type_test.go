@@ -15,16 +15,17 @@ import (
 
 type dashboardUsageRepoCapture struct {
 	service.UsageLogRepository
-	trendRequestType *int16
-	trendStream      *bool
-	modelRequestType *int16
-	modelStream      *bool
-	trendMismatch    *bool
-	modelMismatch    *bool
-	groupMismatch    *bool
-	rankingLimit     int
-	ranking          []usagestats.UserSpendingRankingItem
-	rankingTotal     float64
+	trendRequestType  *int16
+	trendStream       *bool
+	modelRequestType  *int16
+	modelStream       *bool
+	modelOutputTokens *int
+	trendMismatch     *bool
+	modelMismatch     *bool
+	groupMismatch     *bool
+	rankingLimit      int
+	ranking           []usagestats.UserSpendingRankingItem
+	rankingTotal      float64
 }
 
 func (s *dashboardUsageRepoCapture) GetUsageTrendWithUsageFilters(
@@ -62,6 +63,7 @@ func (s *dashboardUsageRepoCapture) GetModelStatsWithUsageFiltersBySource(
 ) ([]usagestats.ModelStat, error) {
 	s.modelRequestType = filters.RequestType
 	s.modelStream = filters.Stream
+	s.modelOutputTokens = filters.OutputTokens
 	s.modelMismatch = filters.UpstreamModelMismatch
 	return []usagestats.ModelStat{}, nil
 }
@@ -184,6 +186,22 @@ func TestDashboardModelStatsInvalidStream(t *testing.T) {
 	router.ServeHTTP(rec, req)
 
 	require.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestDashboardModelStatsOutputTokensZero(t *testing.T) {
+	resetDashboardReadCachesForTest()
+	repo := &dashboardUsageRepoCapture{}
+	router := newDashboardRequestTypeTestRouter(repo)
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/dashboard/models?output_tokens=0&stream=false", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.NotNil(t, repo.modelOutputTokens)
+	require.Zero(t, *repo.modelOutputTokens)
+	require.NotNil(t, repo.modelStream)
+	require.False(t, *repo.modelStream)
 }
 
 func TestDashboardModelStatsInvalidModelSource(t *testing.T) {

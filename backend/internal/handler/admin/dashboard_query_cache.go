@@ -42,6 +42,7 @@ type dashboardModelGroupCacheKey struct {
 	AccountID             int64  `json:"account_id"`
 	GroupID               int64  `json:"group_id"`
 	ModelSource           string `json:"model_source,omitempty"`
+	OutputTokens          *int   `json:"output_tokens"`
 	RequestType           *int16 `json:"request_type"`
 	Stream                *bool  `json:"stream"`
 	BillingType           *int8  `json:"billing_type"`
@@ -144,6 +145,7 @@ func (h *DashboardHandler) getModelStatsCached(
 	startTime, endTime time.Time,
 	userID, apiKeyID, accountID, groupID int64,
 	modelSource string,
+	outputTokens *int,
 	requestType *int16,
 	stream *bool,
 	billingType *int8,
@@ -157,6 +159,7 @@ func (h *DashboardHandler) getModelStatsCached(
 		AccountID:             accountID,
 		GroupID:               groupID,
 		ModelSource:           usagestats.NormalizeModelSource(modelSource),
+		OutputTokens:          outputTokens,
 		RequestType:           requestType,
 		Stream:                stream,
 		BillingType:           billingType,
@@ -165,7 +168,8 @@ func (h *DashboardHandler) getModelStatsCached(
 	entry, hit, err := dashboardModelStatsCache.GetOrLoad(key, func() (any, error) {
 		return h.dashboardService.GetModelStatsWithUsageFiltersBySource(ctx, startTime, endTime, usagestats.UsageLogFilters{
 			UserID: userID, APIKeyID: apiKeyID, AccountID: accountID, GroupID: groupID,
-			RequestType: requestType, Stream: stream, BillingType: billingType,
+			OutputTokens: outputTokens,
+			RequestType:  requestType, Stream: stream, BillingType: billingType,
 			UpstreamModelMismatch: upstreamModelMismatch,
 		}, modelSource)
 	})

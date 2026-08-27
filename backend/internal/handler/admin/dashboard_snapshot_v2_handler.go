@@ -207,6 +207,7 @@ func (h *DashboardHandler) buildSnapshotV2Response(
 			filters.AccountID,
 			filters.GroupID,
 			usagestats.ModelSourceRequested,
+			nil,
 			filters.RequestType,
 			filters.Stream,
 			filters.BillingType,

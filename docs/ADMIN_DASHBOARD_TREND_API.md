@@ -1,11 +1,13 @@
-# Admin Dashboard Trend API
+# Admin Usage Aggregate Filter API
 
 管理员趋势接口：
 
 - `GET /api/v1/admin/dashboard/trend`
 - `GET /api/v1/admin/dashboard/users-trend`
+- `GET /api/v1/admin/dashboard/models`
+- `GET /api/v1/admin/usage/stats`
 
-两个接口都支持以下可选精确筛选参数；`/trend?group_by=model` 使用相同语义。
+这些接口都支持以下可选精确筛选参数；`/trend?group_by=model` 使用相同语义。
 
 | 参数 | 类型 | 说明 |
 | --- | --- | --- |

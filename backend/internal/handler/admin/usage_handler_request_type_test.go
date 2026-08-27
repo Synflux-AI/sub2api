@@ -173,6 +173,21 @@ func TestAdminUsageStatsRequestTypePriority(t *testing.T) {
 	require.Nil(t, repo.statsFilters.Stream)
 }
 
+func TestAdminUsageStatsOutputTokensZero(t *testing.T) {
+	repo := &adminUsageRepoCapture{}
+	router := newAdminUsageRequestTypeTestRouter(repo)
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/usage/stats?output_tokens=0&stream=false", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.NotNil(t, repo.statsFilters.OutputTokens)
+	require.Zero(t, *repo.statsFilters.OutputTokens)
+	require.NotNil(t, repo.statsFilters.Stream)
+	require.False(t, *repo.statsFilters.Stream)
+}
+
 func TestAdminUsageStatsUsesRequestedModelForDisplayModelFilter(t *testing.T) {
 	repo := &adminUsageRepoCapture{}
 	router := newAdminUsageRequestTypeTestRouter(repo)

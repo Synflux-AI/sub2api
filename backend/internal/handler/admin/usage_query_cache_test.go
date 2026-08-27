@@ -25,6 +25,11 @@ func TestUsageStatsCacheKey_StableAndDistinct(t *testing.T) {
 	withUser := base
 	withUser.UserID = 7
 	require.NotEqual(t, k1, usageStatsCacheKey(withUser), "different user must change key")
+
+	outputTokens := 0
+	withOutputTokens := base
+	withOutputTokens.OutputTokens = &outputTokens
+	require.NotEqual(t, k1, usageStatsCacheKey(withOutputTokens), "output token filter must change key")
 }
 
 func TestUsageStatsCacheKey_NormalizesListsWithoutMutation(t *testing.T) {
