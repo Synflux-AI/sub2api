@@ -226,7 +226,10 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 					virtualResp := &http.Response{StatusCode: ruleMatch.statusCode, Header: resp.Header.Clone(), Body: http.NoBody}
 					err := s.errorHandlingRuleFailover(ctx, virtualResp, ruleMatch.body, account, input.RequestModel, ruleMatch.decision, true)
 					if failoverErr, ok := err.(*UpstreamFailoverError); ok {
-						failoverErr.SafeToFailoverAfterWrite = !ruleMatch.semanticEventForwarded
+						// 已交付的 error 帧也是终止性输出，不能和下一账号的流拼接。
+						// semanticEventForwarded 刻意不包含 error 事件，因此还要检查
+						// writeEvent 设置的 ResponseCommitted 标记。
+						failoverErr.SafeToFailoverAfterWrite = !ruleMatch.semanticEventForwarded && !IsResponseCommitted(c)
 					}
 					return nil, err
 				case ErrorHandlingActionPassthrough:

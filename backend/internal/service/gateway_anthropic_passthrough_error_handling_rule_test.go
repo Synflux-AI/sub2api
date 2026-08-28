@@ -241,6 +241,28 @@ func TestPassthroughStreamUnmatchedErrorCommitsForwardedFrame(t *testing.T) {
 	require.Equal(t, rawEvent, recorder.Body.String())
 }
 
+// 已转发的未命中 error 帧属于终止性输出；即使后续同一流又命中 failover 规则，
+// 也不能把下一账号的响应拼接到这条已交付的错误后面。
+func TestPassthroughStreamFailoverAfterForwardedErrorIsNotSafe(t *testing.T) {
+	firstRawEvent := "event: error\ndata: " + `{"type":"error","error":{"type":"api_error","message":"first upstream failure"}}` + "\n\n"
+	body := firstRawEvent + "event: error\ndata: " + streamRuleConcurrencyError + "\n\n"
+	upstream := &sequencedHTTPUpstream{responses: []sequencedUpstreamResponse{{status: 200, body: body}}}
+	svc := newErrorHandlingRulePassthroughService(t, upstream, &ErrorHandlingRuleSettings{
+		Enabled: true,
+		Rules:   []ErrorHandlingRule{streamErrorRule(ErrorHandlingActionFailover, 0, ErrorHandlingExhaustedActionDefault)},
+	})
+	c, recorder := newErrorHandlingRuleTestContextWithRecorder()
+
+	_, err := svc.Forward(context.Background(), c, newErrorHandlingRulePassthroughAccount(), newErrorHandlingRuleStreamParsed(t))
+
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.False(t, failoverErr.SafeToFailoverAfterWrite)
+	require.True(t, IsResponseCommitted(c))
+	require.Equal(t, 1, upstream.calls)
+	require.Equal(t, firstRawEvent, recorder.Body.String(), "已交付的 error 后不得拼接命中 failover 的错误或下一账号流")
+}
+
 func TestPassthroughStreamErrorRetryDoesNotSuppressNextAttemptEOFRule(t *testing.T) {
 	upstream := &sequencedHTTPUpstream{responses: []sequencedUpstreamResponse{
 		{status: 200, body: "event: error\ndata: " + streamRuleConcurrencyError + "\n\n"},
