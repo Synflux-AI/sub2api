@@ -226,7 +226,10 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 					virtualResp := &http.Response{StatusCode: ruleMatch.statusCode, Header: resp.Header.Clone(), Body: http.NoBody}
 					err := s.errorHandlingRuleFailover(ctx, virtualResp, ruleMatch.body, account, input.RequestModel, ruleMatch.decision, true)
 					if failoverErr, ok := err.(*UpstreamFailoverError); ok {
-						failoverErr.SafeToFailoverAfterWrite = !ruleMatch.semanticEventForwarded
+						// 已交付的 error 帧也是终止性输出，不能和下一账号的流拼接。
+						// semanticEventForwarded 刻意不包含 error 事件，因此还要检查
+						// writeEvent 设置的 ResponseCommitted 标记。
+						failoverErr.SafeToFailoverAfterWrite = !ruleMatch.semanticEventForwarded && !IsResponseCommitted(c)
 					}
 					return nil, err
 				case ErrorHandlingActionPassthrough:
@@ -788,7 +791,7 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthroughWithRu
 	resultWithUsage := func() *streamingResult {
 		return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected}
 	}
-	writeEvent := func(event anthropicPassthroughSSEEvent, semantic bool) {
+	writeEvent := func(event anthropicPassthroughSSEEvent, semantic bool, isErrorEvent bool) {
 		if clientDisconnected {
 			return
 		}
@@ -806,6 +809,15 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthroughWithRu
 			logger.CtxPrintf(ctx, "service.gateway", "[Anthropic passthrough] Client disconnected during streaming, continue draining upstream for usage: account=%d", account.ID)
 			return
 		}
+		// #201：整帧写成功即视为「已向客户端交付终止错误」，与命中规则的 passthrough
+		// 分支（writeAnthropicPassthroughStreamRuleError）对齐，让 handler 的
+		// ensureForwardErrorResponse 短路，不再追加第二条一模一样的 error 帧。
+		// 标记点放在这里而不是各个 return 分支，missing_terminal_event、read_error、
+		// interval_timeout、ErrTooLong 以及日后新增的错误 return 都自动覆盖。
+		// 部分写（err != nil）在上面已经 return，不会走到这里。
+		if isErrorEvent && n > 0 {
+			MarkResponseCommitted(c)
+		}
 		flusher.Flush()
 		lastDataAt = time.Now()
 		resetKeepaliveTimer()
@@ -814,8 +826,10 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthroughWithRu
 		statusCode, errType, errMessage, isError := anthropicPassthroughSSEError(event)
 		if isError {
 			// Do not synthesize a second EOF error after any upstream error event.
-			// Unmatched events intentionally retain the legacy fallback contract;
-			// matched events end this attempt immediately with one rule decision.
+			// Unmatched events are still forwarded verbatim to the client; the
+			// commit marker in writeEvent is what keeps the handler-level fallback
+			// from appending a duplicate terminal error frame (#201). Matched
+			// events end this attempt immediately with one rule decision.
 			sawAnyErrorEvent = true
 			// Once the downstream is gone, keep draining only to collect usage. A rule
 			// retry/failover would discard that partial result and can create extra
@@ -857,13 +871,13 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthroughWithRu
 		} else if anthropicStreamEventIsTerminal(event.eventName, "") {
 			sawTerminalEvent = true
 		}
-		writeEvent(event, semantic)
+		writeEvent(event, semantic, isError)
 		return nil, nil
 	}
 	processPendingEvent := func(terminated bool) (*anthropicPassthroughStreamRuleMatch, error) {
 		if len(pendingEventLines) == 0 {
 			if terminated {
-				writeEvent(anthropicPassthroughSSEEvent{raw: []byte("\n")}, false)
+				writeEvent(anthropicPassthroughSSEEvent{raw: []byte("\n")}, false, false)
 			}
 			return nil, nil
 		}

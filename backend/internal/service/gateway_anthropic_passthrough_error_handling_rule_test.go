@@ -223,7 +223,10 @@ func TestAnthropicPassthroughSSECommentIsNotSemantic(t *testing.T) {
 	require.False(t, anthropicPassthroughSSEEventIsSemantic(event))
 }
 
-func TestPassthroughStreamUnmatchedErrorPreservesLegacyFallbackContract(t *testing.T) {
+// #201：未命中规则的 error 帧同样是「已交付给客户端的终止错误」，与命中规则的
+// passthrough 分支一样要置 ResponseCommitted，否则 handler 的
+// ensureForwardErrorResponse 会在其后追加第二条一模一样的 error 帧。
+func TestPassthroughStreamUnmatchedErrorCommitsForwardedFrame(t *testing.T) {
 	rawEvent := "event: error\ndata: " + streamRuleConcurrencyError + "\n\n"
 	upstream := &sequencedHTTPUpstream{responses: []sequencedUpstreamResponse{{status: 200, body: rawEvent}}}
 	svc := newErrorHandlingRulePassthroughService(t, upstream, &ErrorHandlingRuleSettings{
@@ -234,8 +237,30 @@ func TestPassthroughStreamUnmatchedErrorPreservesLegacyFallbackContract(t *testi
 	_, err := svc.Forward(context.Background(), c, newErrorHandlingRulePassthroughAccount(), newErrorHandlingRuleStreamParsed(t))
 
 	require.ErrorContains(t, err, "missing terminal event")
-	require.False(t, IsResponseCommitted(c))
+	require.True(t, IsResponseCommitted(c))
 	require.Equal(t, rawEvent, recorder.Body.String())
+}
+
+// 已转发的未命中 error 帧属于终止性输出；即使后续同一流又命中 failover 规则，
+// 也不能把下一账号的响应拼接到这条已交付的错误后面。
+func TestPassthroughStreamFailoverAfterForwardedErrorIsNotSafe(t *testing.T) {
+	firstRawEvent := "event: error\ndata: " + `{"type":"error","error":{"type":"api_error","message":"first upstream failure"}}` + "\n\n"
+	body := firstRawEvent + "event: error\ndata: " + streamRuleConcurrencyError + "\n\n"
+	upstream := &sequencedHTTPUpstream{responses: []sequencedUpstreamResponse{{status: 200, body: body}}}
+	svc := newErrorHandlingRulePassthroughService(t, upstream, &ErrorHandlingRuleSettings{
+		Enabled: true,
+		Rules:   []ErrorHandlingRule{streamErrorRule(ErrorHandlingActionFailover, 0, ErrorHandlingExhaustedActionDefault)},
+	})
+	c, recorder := newErrorHandlingRuleTestContextWithRecorder()
+
+	_, err := svc.Forward(context.Background(), c, newErrorHandlingRulePassthroughAccount(), newErrorHandlingRuleStreamParsed(t))
+
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.False(t, failoverErr.SafeToFailoverAfterWrite)
+	require.True(t, IsResponseCommitted(c))
+	require.Equal(t, 1, upstream.calls)
+	require.Equal(t, firstRawEvent, recorder.Body.String(), "已交付的 error 后不得拼接命中 failover 的错误或下一账号流")
 }
 
 func TestPassthroughStreamErrorRetryDoesNotSuppressNextAttemptEOFRule(t *testing.T) {
