@@ -53,6 +53,29 @@ func TestBuildOpsErrorLogsWhere_UserScopedFilters(t *testing.T) {
 	}
 }
 
+func TestBuildOpsErrorLogsWhere_AppliesMultiErrorDimensions(t *testing.T) {
+	filter := &service.OpsErrorLogFilter{
+		ErrorOwnersAny: []string{"provider", "client"},
+		ErrorPhasesAny: []string{"upstream", "request"},
+		ErrorTypesAny:  []string{"api_error", "rate_limit_error"},
+		View:           "all",
+	}
+	where, args := buildOpsErrorLogsWhere(filter)
+
+	for _, want := range []string{
+		"LOWER(COALESCE(e.error_owner,'')) = ANY($",
+		"e.error_phase = ANY($",
+		"e.error_type = ANY($",
+	} {
+		if !strings.Contains(where, want) {
+			t.Fatalf("where missing %q\nfull: %s", want, where)
+		}
+	}
+	if len(args) != 3 {
+		t.Fatalf("expected 3 args, got %d: %#v", len(args), args)
+	}
+}
+
 func TestBuildOpsErrorLogsWhere_AppliesEntityLists(t *testing.T) {
 	filter := &service.OpsErrorLogFilter{
 		UserIDs:    []int64{7, 8},

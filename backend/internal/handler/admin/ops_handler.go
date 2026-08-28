@@ -86,6 +86,34 @@ func applyOpsErrorCorrelationParams(c *gin.Context, filter *service.OpsErrorLogF
 	filter.ClientRequestID = strings.TrimSpace(c.Query("client_request_id"))
 }
 
+func parseOpsStringFilter(c *gin.Context, name string) (string, []string) {
+	raw := strings.TrimSpace(c.Query(name))
+	if raw == "" {
+		return "", nil
+	}
+	values := make([]string, 0, strings.Count(raw, ",")+1)
+	for _, part := range strings.Split(raw, ",") {
+		if value := strings.TrimSpace(part); value != "" {
+			values = append(values, value)
+		}
+	}
+	if len(values) == 1 {
+		return values[0], nil
+	}
+	return "", values
+}
+
+func applyOpsErrorDimensionFilters(c *gin.Context, filter *service.OpsErrorLogFilter) {
+	filter.Phase, filter.ErrorPhasesAny = parseOpsStringFilter(c, "phase")
+	filter.Owner, filter.ErrorOwnersAny = parseOpsStringFilter(c, "error_owner")
+	errorType, errorTypes := parseOpsStringFilter(c, "error_type")
+	if errorType != "" {
+		filter.ErrorTypesAny = []string{errorType}
+	} else {
+		filter.ErrorTypesAny = errorTypes
+	}
+}
+
 // GET /api/v1/admin/ops/errors
 func (h *OpsHandler) GetErrorLogs(c *gin.Context) {
 	if h.opsService == nil {
@@ -118,16 +146,11 @@ func (h *OpsHandler) GetErrorLogs(c *gin.Context) {
 		filter.EndTime = &endTime
 	}
 	filter.View = parseOpsViewParam(c)
-	filter.Phase = strings.TrimSpace(c.Query("phase"))
-	filter.Owner = strings.TrimSpace(c.Query("error_owner"))
+	applyOpsErrorDimensionFilters(c, filter)
 	filter.Source = strings.TrimSpace(c.Query("error_source"))
 	filter.Query = strings.TrimSpace(c.Query("q"))
 	filter.UserQuery = strings.TrimSpace(c.Query("user_query"))
 	applyOpsErrorCorrelationParams(c, filter)
-	// error_type 单值过滤（错误维度排行下钻「错误类型」用）：复用 ErrorTypesAny 的 ANY() 子句。
-	if et := strings.TrimSpace(c.Query("error_type")); et != "" {
-		filter.ErrorTypesAny = []string{et}
-	}
 	// Model 过滤：admin 走 requested-model 精确匹配（ModelFuzzy 默认 false）。
 	filter.Model, filter.Models = parseUsageModelFilter(c)
 
@@ -235,16 +258,11 @@ func (h *OpsHandler) ListRequestErrors(c *gin.Context) {
 		filter.EndTime = &endTime
 	}
 	filter.View = parseOpsViewParam(c)
-	filter.Phase = strings.TrimSpace(c.Query("phase"))
-	filter.Owner = strings.TrimSpace(c.Query("error_owner"))
+	applyOpsErrorDimensionFilters(c, filter)
 	filter.Source = strings.TrimSpace(c.Query("error_source"))
 	filter.Query = strings.TrimSpace(c.Query("q"))
 	filter.UserQuery = strings.TrimSpace(c.Query("user_query"))
 	applyOpsErrorCorrelationParams(c, filter)
-	// error_type 单值过滤（错误维度排行下钻「错误类型」用）：复用 ErrorTypesAny 的 ANY() 子句。
-	if et := strings.TrimSpace(c.Query("error_type")); et != "" {
-		filter.ErrorTypesAny = []string{et}
-	}
 	// Model 过滤：admin 走精确匹配（ModelFuzzy 默认 false，保持管理端语义）。
 	// buildOpsErrorLogsWhere 以 COALESCE(requested_model, model) 比对。
 	filter.Model = strings.TrimSpace(c.Query("model"))

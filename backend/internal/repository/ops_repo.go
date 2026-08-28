@@ -1016,7 +1016,16 @@ func buildOpsErrorLogsWhere(filter *service.OpsErrorLogFilter) (string, []any) {
 		args = append(args, phase)
 		clauses = append(clauses, "e.error_phase = $"+itoa(len(args)))
 	}
-	if owner := strings.TrimSpace(strings.ToLower(filter.Owner)); owner != "" {
+	if len(filter.ErrorOwnersAny) > 0 {
+		owners := make([]string, 0, len(filter.ErrorOwnersAny))
+		for _, owner := range filter.ErrorOwnersAny {
+			if owner = strings.TrimSpace(strings.ToLower(owner)); owner != "" {
+				owners = append(owners, owner)
+			}
+		}
+		args = append(args, pq.Array(owners))
+		clauses = append(clauses, "LOWER(COALESCE(e.error_owner,'')) = ANY($"+itoa(len(args))+")")
+	} else if owner := strings.TrimSpace(strings.ToLower(filter.Owner)); owner != "" {
 		args = append(args, owner)
 		clauses = append(clauses, "LOWER(COALESCE(e.error_owner,'')) = $"+itoa(len(args)))
 	}

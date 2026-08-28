@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/lib/pq"
 )
 
 const (
@@ -1042,7 +1043,17 @@ func buildErrorWhere(filter *service.OpsDashboardFilter, start, end time.Time, s
 		clauses, args, idx = appendOpsIDWhereCondition(clauses, args, "account_id", filter.AccountID, filter.AccountIDs, idx)
 		clauses, args, idx = appendOpsIDWhereCondition(clauses, args, "api_key_id", filter.APIKeyID, filter.APIKeyIDs, idx)
 		clauses, args, idx = appendOpsRequestedModelWhereConditions(clauses, args, filter.Model, filter.Models, "", idx)
-		if o := strings.TrimSpace(filter.ErrorOwner); o != "" {
+		if len(filter.ErrorOwners) > 0 {
+			owners := make([]string, 0, len(filter.ErrorOwners))
+			for _, owner := range filter.ErrorOwners {
+				if owner = strings.TrimSpace(strings.ToLower(owner)); owner != "" {
+					owners = append(owners, owner)
+				}
+			}
+			args = append(args, pq.Array(owners))
+			clauses = append(clauses, fmt.Sprintf("LOWER(COALESCE(error_owner,'')) = ANY($%d)", idx))
+			idx++
+		} else if o := strings.TrimSpace(filter.ErrorOwner); o != "" {
 			args = append(args, strings.ToLower(o))
 			clauses = append(clauses, fmt.Sprintf("LOWER(COALESCE(error_owner,'')) = $%d", idx))
 			idx++
@@ -1052,12 +1063,26 @@ func buildErrorWhere(filter *service.OpsDashboardFilter, start, end time.Time, s
 			clauses = append(clauses, fmt.Sprintf("LOWER(COALESCE(error_source,'')) = $%d", idx))
 			idx++
 		}
-		if et := strings.TrimSpace(filter.ErrorType); et != "" {
+		if len(filter.ErrorTypes) > 0 {
+			args = append(args, pq.Array(filter.ErrorTypes))
+			clauses = append(clauses, fmt.Sprintf("error_type = ANY($%d)", idx))
+			idx++
+		} else if et := strings.TrimSpace(filter.ErrorType); et != "" {
 			args = append(args, et)
 			clauses = append(clauses, fmt.Sprintf("error_type = $%d", idx))
 			idx++
 		}
-		if ep := strings.TrimSpace(filter.ErrorPhase); ep != "" {
+		if len(filter.ErrorPhases) > 0 {
+			phases := make([]string, 0, len(filter.ErrorPhases))
+			for _, phase := range filter.ErrorPhases {
+				if phase = strings.TrimSpace(strings.ToLower(phase)); phase != "" {
+					phases = append(phases, phase)
+				}
+			}
+			args = append(args, pq.Array(phases))
+			clauses = append(clauses, fmt.Sprintf("error_phase = ANY($%d)", idx))
+			idx++
+		} else if ep := strings.TrimSpace(filter.ErrorPhase); ep != "" {
 			// error_phase 库内存小写；与明细列表一致地对入参小写归一。
 			args = append(args, strings.ToLower(ep))
 			clauses = append(clauses, fmt.Sprintf("error_phase = $%d", idx))
