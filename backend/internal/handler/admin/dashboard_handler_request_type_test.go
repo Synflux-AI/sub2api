@@ -15,17 +15,20 @@ import (
 
 type dashboardUsageRepoCapture struct {
 	service.UsageLogRepository
-	trendRequestType  *int16
-	trendStream       *bool
-	modelRequestType  *int16
-	modelStream       *bool
-	modelOutputTokens *int
-	trendMismatch     *bool
-	modelMismatch     *bool
-	groupMismatch     *bool
-	rankingLimit      int
-	ranking           []usagestats.UserSpendingRankingItem
-	rankingTotal      float64
+	trendRequestType      *int16
+	trendStream           *bool
+	modelRequestType      *int16
+	modelStream           *bool
+	modelOutputTokens     *int
+	trendNativeCompaction *bool
+	modelNativeCompaction *bool
+	groupNativeCompaction *bool
+	trendMismatch         *bool
+	modelMismatch         *bool
+	groupMismatch         *bool
+	rankingLimit          int
+	ranking               []usagestats.UserSpendingRankingItem
+	rankingTotal          float64
 }
 
 func (s *dashboardUsageRepoCapture) GetUsageTrendWithUsageFilters(
@@ -36,6 +39,7 @@ func (s *dashboardUsageRepoCapture) GetUsageTrendWithUsageFilters(
 ) ([]usagestats.TrendDataPoint, error) {
 	s.trendRequestType = filters.RequestType
 	s.trendStream = filters.Stream
+	s.trendNativeCompaction = filters.NativeCompactionV2
 	s.trendMismatch = filters.UpstreamModelMismatch
 	return []usagestats.TrendDataPoint{}, nil
 }
@@ -64,6 +68,7 @@ func (s *dashboardUsageRepoCapture) GetModelStatsWithUsageFiltersBySource(
 	s.modelRequestType = filters.RequestType
 	s.modelStream = filters.Stream
 	s.modelOutputTokens = filters.OutputTokens
+	s.modelNativeCompaction = filters.NativeCompactionV2
 	s.modelMismatch = filters.UpstreamModelMismatch
 	return []usagestats.ModelStat{}, nil
 }
@@ -73,6 +78,7 @@ func (s *dashboardUsageRepoCapture) GetGroupStatsWithUsageFilters(
 	startTime, endTime time.Time,
 	filters usagestats.UsageLogFilters,
 ) ([]usagestats.GroupStat, error) {
+	s.groupNativeCompaction = filters.NativeCompactionV2
 	s.groupMismatch = filters.UpstreamModelMismatch
 	return []usagestats.GroupStat{}, nil
 }
@@ -293,4 +299,46 @@ func TestDashboardUsersRankingLimitAndCache(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, rec2.Code)
 	require.Equal(t, "hit", rec2.Header().Get("X-Snapshot-Cache"))
+}
+
+func TestDashboardNativeCompactionFilterPropagatesAlongsideTransport(t *testing.T) {
+	resetDashboardReadCachesForTest()
+	repo := &dashboardUsageRepoCapture{}
+	router := newDashboardRequestTypeTestRouter(repo)
+
+	for _, path := range []string{
+		"/admin/dashboard/trend?request_type=stream&native_compaction_v2=true",
+		"/admin/dashboard/models?request_type=stream&native_compaction_v2=true",
+		"/admin/dashboard/groups?request_type=stream&native_compaction_v2=true",
+	} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		require.Equal(t, http.StatusOK, rec.Code, path)
+	}
+
+	require.NotNil(t, repo.trendNativeCompaction)
+	require.True(t, *repo.trendNativeCompaction)
+	require.NotNil(t, repo.modelNativeCompaction)
+	require.True(t, *repo.modelNativeCompaction)
+	require.NotNil(t, repo.groupNativeCompaction)
+	require.True(t, *repo.groupNativeCompaction)
+	require.NotNil(t, repo.trendRequestType)
+	require.Equal(t, int16(service.RequestTypeStream), *repo.trendRequestType)
+}
+
+func TestDashboardNativeCompactionFilterRejectsInvalidBoolean(t *testing.T) {
+	repo := &dashboardUsageRepoCapture{}
+	router := newDashboardRequestTypeTestRouter(repo)
+
+	for _, path := range []string{
+		"/admin/dashboard/trend?native_compaction_v2=invalid",
+		"/admin/dashboard/models?native_compaction_v2=invalid",
+		"/admin/dashboard/groups?native_compaction_v2=invalid",
+	} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		require.Equal(t, http.StatusBadRequest, rec.Code, path)
+	}
 }

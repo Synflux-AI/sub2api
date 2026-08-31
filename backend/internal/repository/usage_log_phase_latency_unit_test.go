@@ -54,7 +54,7 @@ func phaseLatencyArgs(t *testing.T, prepared usageLogInsertPrepared) []sql.NullI
 // TestPrepareUsageLogInsert_PhaseLatencyArgWiring 把四个阶段耗时钉在参数表的固定槽位上。
 // 顺序错位是这类改动最危险的失败模式：SQL 仍然执行成功，只是把「路由」的毫秒数写进了「上游」列。
 func TestPrepareUsageLogInsert_PhaseLatencyArgWiring(t *testing.T) {
-	require.Len(t, usageLogInsertArgTypes, 65)
+	require.Len(t, usageLogInsertArgTypes, 67)
 	for i := range phaseLatencyColumns {
 		require.Equal(t, "integer", usageLogInsertArgTypes[phaseLatencyArgIdx+i],
 			"%s arg type must be integer", phaseLatencyColumns[i])
