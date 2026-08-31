@@ -281,6 +281,11 @@ func (h *DashboardHandler) GetUsageTrend(c *gin.Context) {
 			return
 		}
 	}
+	nativeCompactionV2, err := parseOptionalBoolDashboardFilter(c, "native_compaction_v2")
+	if err != nil {
+		response.BadRequest(c, "Invalid native_compaction_v2 value, use true or false")
+		return
+	}
 	upstreamModelMismatch, err = parseOptionalBoolDashboardFilter(c, "upstream_model_mismatch")
 	if err != nil {
 		response.BadRequest(c, "Invalid upstream_model_mismatch value, use true or false")
@@ -297,7 +302,7 @@ func (h *DashboardHandler) GetUsageTrend(c *gin.Context) {
 
 	// group_by=model 返回按天×模型的明细行(每行带 model),默认行为不变;该路径不走快照缓存。
 	if c.Query("group_by") == "model" {
-		filters := usagestats.UsageLogFilters{UserID: userID, UserIDs: userIDs, APIKeyID: apiKeyID, APIKeyIDs: apiKeyIDs, AccountID: accountID, AccountIDs: accountIDs, GroupID: groupID, GroupIDs: groupIDs, Model: model, Models: models, ModelFilterSource: usagestats.ModelSourceRequested, OutputTokens: outputTokens, RequestType: requestType, Stream: stream, BillingType: billingType, UpstreamModelMismatch: upstreamModelMismatch}
+		filters := usagestats.UsageLogFilters{UserID: userID, UserIDs: userIDs, APIKeyID: apiKeyID, APIKeyIDs: apiKeyIDs, AccountID: accountID, AccountIDs: accountIDs, GroupID: groupID, GroupIDs: groupIDs, Model: model, Models: models, ModelFilterSource: usagestats.ModelSourceRequested, OutputTokens: outputTokens, RequestType: requestType, Stream: stream, NativeCompactionV2: nativeCompactionV2, BillingType: billingType, UpstreamModelMismatch: upstreamModelMismatch}
 		var trend []usagestats.TrendModelDataPoint
 		if hasUsageFilterLists(filters) || filters.OutputTokens != nil {
 			trend, err = h.dashboardService.GetUsageTrendByModelWithUsageFilters(c.Request.Context(), startTime, endTime, granularity, filters)
@@ -317,13 +322,13 @@ func (h *DashboardHandler) GetUsageTrend(c *gin.Context) {
 		return
 	}
 
-	filters := usagestats.UsageLogFilters{UserID: userID, UserIDs: userIDs, APIKeyID: apiKeyID, APIKeyIDs: apiKeyIDs, AccountID: accountID, AccountIDs: accountIDs, GroupID: groupID, GroupIDs: groupIDs, Model: model, Models: models, ModelFilterSource: usagestats.ModelSourceRequested, OutputTokens: outputTokens, RequestType: requestType, Stream: stream, BillingType: billingType, UpstreamModelMismatch: upstreamModelMismatch, IncludeLatency: includeLatency}
+	filters := usagestats.UsageLogFilters{UserID: userID, UserIDs: userIDs, APIKeyID: apiKeyID, APIKeyIDs: apiKeyIDs, AccountID: accountID, AccountIDs: accountIDs, GroupID: groupID, GroupIDs: groupIDs, Model: model, Models: models, ModelFilterSource: usagestats.ModelSourceRequested, OutputTokens: outputTokens, RequestType: requestType, Stream: stream, NativeCompactionV2: nativeCompactionV2, BillingType: billingType, UpstreamModelMismatch: upstreamModelMismatch, IncludeLatency: includeLatency}
 	var trend []usagestats.TrendDataPoint
 	var hit bool
 	if hasUsageFilterLists(filters) {
 		trend, err = h.dashboardService.GetUsageTrendWithUsageFilters(c.Request.Context(), startTime, endTime, granularity, filters)
 	} else {
-		trend, hit, err = h.getUsageTrendCached(c.Request.Context(), startTime, endTime, granularity, userID, apiKeyID, accountID, groupID, model, outputTokens, requestType, stream, billingType, upstreamModelMismatch, includeLatency)
+		trend, hit, err = h.getUsageTrendCached(c.Request.Context(), startTime, endTime, granularity, userID, apiKeyID, accountID, groupID, model, outputTokens, requestType, stream, nativeCompactionV2, billingType, upstreamModelMismatch, includeLatency)
 	}
 	if err != nil {
 		response.Error(c, 500, "Failed to get usage trend")
@@ -410,19 +415,24 @@ func (h *DashboardHandler) GetModelStats(c *gin.Context) {
 			return
 		}
 	}
+	nativeCompactionV2, err := parseOptionalBoolDashboardFilter(c, "native_compaction_v2")
+	if err != nil {
+		response.BadRequest(c, "Invalid native_compaction_v2 value, use true or false")
+		return
+	}
 	upstreamModelMismatch, err = parseOptionalBoolDashboardFilter(c, "upstream_model_mismatch")
 	if err != nil {
 		response.BadRequest(c, "Invalid upstream_model_mismatch value, use true or false")
 		return
 	}
 
-	filters := usagestats.UsageLogFilters{UserID: userID, UserIDs: userIDs, APIKeyID: apiKeyID, APIKeyIDs: apiKeyIDs, AccountID: accountID, AccountIDs: accountIDs, GroupID: groupID, GroupIDs: groupIDs, Model: model, Models: models, ModelFilterSource: modelSource, OutputTokens: outputTokens, RequestType: requestType, Stream: stream, BillingType: billingType, UpstreamModelMismatch: upstreamModelMismatch}
+	filters := usagestats.UsageLogFilters{UserID: userID, UserIDs: userIDs, APIKeyID: apiKeyID, APIKeyIDs: apiKeyIDs, AccountID: accountID, AccountIDs: accountIDs, GroupID: groupID, GroupIDs: groupIDs, Model: model, Models: models, ModelFilterSource: modelSource, OutputTokens: outputTokens, RequestType: requestType, Stream: stream, NativeCompactionV2: nativeCompactionV2, BillingType: billingType, UpstreamModelMismatch: upstreamModelMismatch}
 	var stats []usagestats.ModelStat
 	var hit bool
 	if hasUsageFilterLists(filters) || model != "" {
 		stats, err = h.dashboardService.GetModelStatsWithUsageFiltersBySource(c.Request.Context(), startTime, endTime, filters, modelSource)
 	} else {
-		stats, hit, err = h.getModelStatsCached(c.Request.Context(), startTime, endTime, userID, apiKeyID, accountID, groupID, modelSource, outputTokens, requestType, stream, billingType, upstreamModelMismatch)
+		stats, hit, err = h.getModelStatsCached(c.Request.Context(), startTime, endTime, userID, apiKeyID, accountID, groupID, modelSource, outputTokens, requestType, stream, nativeCompactionV2, billingType, upstreamModelMismatch)
 	}
 	if err != nil {
 		response.Error(c, 500, "Failed to get model statistics")
@@ -494,19 +504,24 @@ func (h *DashboardHandler) GetGroupStats(c *gin.Context) {
 			return
 		}
 	}
+	nativeCompactionV2, err := parseOptionalBoolDashboardFilter(c, "native_compaction_v2")
+	if err != nil {
+		response.BadRequest(c, "Invalid native_compaction_v2 value, use true or false")
+		return
+	}
 	upstreamModelMismatch, err = parseOptionalBoolDashboardFilter(c, "upstream_model_mismatch")
 	if err != nil {
 		response.BadRequest(c, "Invalid upstream_model_mismatch value, use true or false")
 		return
 	}
 
-	filters := usagestats.UsageLogFilters{UserID: userID, UserIDs: userIDs, APIKeyID: apiKeyID, APIKeyIDs: apiKeyIDs, AccountID: accountID, AccountIDs: accountIDs, GroupID: groupID, GroupIDs: groupIDs, Model: model, Models: models, ModelFilterSource: usagestats.ModelSourceRequested, RequestType: requestType, Stream: stream, BillingType: billingType, UpstreamModelMismatch: upstreamModelMismatch}
+	filters := usagestats.UsageLogFilters{UserID: userID, UserIDs: userIDs, APIKeyID: apiKeyID, APIKeyIDs: apiKeyIDs, AccountID: accountID, AccountIDs: accountIDs, GroupID: groupID, GroupIDs: groupIDs, Model: model, Models: models, ModelFilterSource: usagestats.ModelSourceRequested, RequestType: requestType, Stream: stream, NativeCompactionV2: nativeCompactionV2, BillingType: billingType, UpstreamModelMismatch: upstreamModelMismatch}
 	var stats []usagestats.GroupStat
 	var hit bool
 	if hasUsageFilterLists(filters) || model != "" {
 		stats, err = h.dashboardService.GetGroupStatsWithUsageFilters(c.Request.Context(), startTime, endTime, filters)
 	} else {
-		stats, hit, err = h.getGroupStatsCached(c.Request.Context(), startTime, endTime, userID, apiKeyID, accountID, groupID, requestType, stream, billingType, upstreamModelMismatch)
+		stats, hit, err = h.getGroupStatsCached(c.Request.Context(), startTime, endTime, userID, apiKeyID, accountID, groupID, requestType, stream, nativeCompactionV2, billingType, upstreamModelMismatch)
 	}
 	if err != nil {
 		response.Error(c, 500, "Failed to get group statistics")
@@ -820,6 +835,14 @@ func (h *DashboardHandler) GetUserBreakdown(c *gin.Context) {
 		if s, err := strconv.ParseBool(v); err == nil {
 			dim.Stream = &s
 		}
+	}
+	if v := strings.TrimSpace(c.Query("native_compaction_v2")); v != "" {
+		value, err := strconv.ParseBool(v)
+		if err != nil {
+			response.BadRequest(c, "Invalid native_compaction_v2 value, use true or false")
+			return
+		}
+		dim.NativeCompactionV2 = &value
 	}
 	if v := c.Query("billing_type"); v != "" {
 		if bt, err := strconv.ParseInt(v, 10, 8); err == nil {

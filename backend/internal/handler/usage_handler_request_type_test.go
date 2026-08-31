@@ -366,3 +366,29 @@ func TestUserUsageSnapshotRejectsInvalidIncludeFlags(t *testing.T) {
 		require.Equal(t, http.StatusBadRequest, rec.Code, query)
 	}
 }
+
+func TestUserUsageListNativeCompactionFilter(t *testing.T) {
+	repo := &userUsageRepoCapture{}
+	router := newUserUsageRequestTypeTestRouter(repo)
+
+	req := httptest.NewRequest(http.MethodGet, "/usage?request_type=stream&native_compaction_v2=true", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.NotNil(t, repo.listFilters.RequestType)
+	require.Equal(t, int16(service.RequestTypeStream), *repo.listFilters.RequestType)
+	require.NotNil(t, repo.listFilters.NativeCompactionV2)
+	require.True(t, *repo.listFilters.NativeCompactionV2)
+}
+
+func TestUserUsageListInvalidNativeCompactionFilter(t *testing.T) {
+	repo := &userUsageRepoCapture{}
+	router := newUserUsageRequestTypeTestRouter(repo)
+
+	req := httptest.NewRequest(http.MethodGet, "/usage?native_compaction_v2=unknown", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+}
