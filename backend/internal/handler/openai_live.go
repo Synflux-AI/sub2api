@@ -44,6 +44,9 @@ func (h *OpenAIGatewayHandler) Live(c *gin.Context) {
 		return
 	}
 	model := strings.TrimSpace(gjson.GetBytes(request.Session, "model").String())
+	// 把客户端公开模型名写入 request context，供下面 CheckBillingEligibility 的模型维度限流使用。
+	// 必须在 composite 改写 session.model 之前取：限流认的是客户端请求的公开模型名。
+	setOpsRequestContext(c, model, false)
 	if !compositeTargetPlatformAllowed(c, apiKey, model, service.PlatformOpenAI) {
 		h.errorResponse(c, http.StatusNotFound, "not_found_error", "Live only supports OpenAI models for Composite groups")
 		return

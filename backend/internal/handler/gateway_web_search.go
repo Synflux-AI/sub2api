@@ -78,6 +78,9 @@ func (h *GatewayHandler) WebSearch(c *gin.Context) {
 	}
 
 	// Billing eligibility (same as other requests)
+	// 模型维度 RPM 限流不适用：搜索模型由服务端 resolveGrokStandaloneSearchModel() 决定，
+	// 不是客户端请求体里的公开模型名，因此这里不设置 ctxkey.Model。
+	// 该跳过会计入 service.ModelRPMSkippedNoModelCount()。
 	subscription, _ := middleware2.GetSubscriptionFromContext(c)
 	if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey)); err != nil {
 		status, code, message, retryAfter := billingErrorDetails(err)

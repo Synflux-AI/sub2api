@@ -173,6 +173,7 @@ export default {
     groups: '分组管理',
     routingStrategies: '路由策略',
     smartRouting: '智能调度',
+    modelRpmRules: '模型限流',
     errorHandlingRules: '错误处理规则',
     channels: '渠道管理',
     availableChannels: '可用渠道',

@@ -74,6 +74,11 @@ const (
 	// 在此模式下，Service 层的模型限流预检查将等待限流过期而非直接切换账号。
 	SingleAccountRetry Key = "ctx_single_account_retry"
 
+	// SkipModelRPMLimit 标识本次资格检查应跳过模型维度 RPM 限流。
+	// 仅用于同一客户端请求内的二次资格检查（如 prompt-too-long 兜底换分组重试），
+	// 避免一次请求把模型配额消耗两遍。
+	SkipModelRPMLimit Key = "ctx_skip_model_rpm_limit"
+
 	// PrefetchedStickyAccountID 标识上游（通常 handler）预取到的 sticky session 账号 ID。
 	// Service 层可复用该值，避免同请求链路重复读取 Redis。
 	PrefetchedStickyAccountID Key = "ctx_prefetched_sticky_account_id"

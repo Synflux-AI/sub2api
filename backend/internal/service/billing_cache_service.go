@@ -28,6 +28,8 @@ var (
 	// RPM 超限错误。gateway_handler 负责映射为 HTTP 429。
 	ErrGroupRPMExceeded = infraerrors.TooManyRequests("GROUP_RPM_EXCEEDED", "group requests-per-minute limit exceeded")
 	ErrUserRPMExceeded  = infraerrors.TooManyRequests("USER_RPM_EXCEEDED", "user requests-per-minute limit exceeded")
+	// ErrModelRPMExceeded 模型维度 RPM 超限（model_rpm_rules 表配置）。
+	ErrModelRPMExceeded = infraerrors.TooManyRequests("MODEL_RPM_EXCEEDED", "model requests-per-minute limit exceeded")
 
 	// user × platform quota（HTTP 429 Too Many Requests + Retry-After header）。
 	// 选用 429 而非 403：限额耗尽属于"暂时性资源用尽，重试可恢复"的场景（RFC 6585），
@@ -110,6 +112,10 @@ type BillingCacheService struct {
 	apiKeyRateLimitLoader apiKeyRateLimitLoader
 	userRPMCache          UserRPMCache
 	userGroupRateRepo     UserGroupRateRepository
+	// 模型维度 RPM 限流依赖，由 ProvideBillingCacheService 通过 SetModelRPMLimiter 注入。
+	// 用 setter 而非构造参数：避免为一个可选能力再加宽已有 8 个参数的构造函数。
+	modelRPMRules         ModelRPMRuleSnapshotProvider
+	modelRPMCache         ModelRPMCache
 	cfg                   *config.Config
 	circuitBreaker        *billingCircuitBreaker
 	userPlatformQuotaRepo UserPlatformQuotaRepository
@@ -152,6 +158,16 @@ func NewBillingCacheService(
 	svc.circuitBreaker = newBillingCircuitBreaker(cfg.Billing.CircuitBreaker)
 	svc.startCacheWriteWorkers()
 	return svc
+}
+
+// SetModelRPMLimiter 注入模型维度 RPM 限流依赖。
+// 两者任一为 nil 时模型限流整体关闭（checkRPM 退化为原有三层）。
+func (s *BillingCacheService) SetModelRPMLimiter(rules ModelRPMRuleSnapshotProvider, cache ModelRPMCache) {
+	if s == nil {
+		return
+	}
+	s.modelRPMRules = rules
+	s.modelRPMCache = cache
 }
 
 // Stop 关闭缓存写入工作池
@@ -768,7 +784,7 @@ func (s *BillingCacheService) CheckBillingEligibility(ctx context.Context, user 
 		}
 	}
 
-	// RPM 限流：级联回落（Override → Group → User），放在最后以避免为注定失败的请求增加计数。
+	// RPM 限流：模型规则 → Override → Group → User，放在最后以避免为注定失败的请求增加计数。
 	if err := s.checkRPM(ctx, user, group); err != nil {
 		return err
 	}
@@ -778,15 +794,28 @@ func (s *BillingCacheService) CheckBillingEligibility(ctx context.Context, user 
 
 // checkRPM 执行并行 RPM 限流，所有适用的限制同时生效，任一超限即拒绝：
 //
+//  0. model_rpm_rules                 — 模型维度：管理员按公开模型名配置的规则，
+//     scope 决定配额怎么分（每用户一份 / 命中范围共享一池）。排在最前，
+//     因为模型规则通常是更紧的那道闸：被它拒掉的请求不该再消耗 group/user 配额。
 //  1. (用户, 分组) rpm_override       — 最细粒度：管理员为特定用户在特定分组设定的专属限额。
 //     override=0 表示该用户在该分组免检（绿灯），但 user 级全局上限仍然生效。
+//     注意与 model_rpm_rules.rpm_limit 的 0 语义相反：后者禁止 0，不提供免检后门。
 //  2. group.rpm_limit                 — 分组级：该分组的统一 RPM 容量（仅当无 override 时生效）。
 //  3. user.rpm_limit                  — 用户级全局硬上限：无论 override/group 如何配置，始终生效。
 //
 // 与旧版"级联互斥"设计不同，新版确保 user.rpm_limit 作为全局天花板不会被 group 或 override 覆盖。
 // Redis 故障一律 fail-open（打 warning，不阻塞业务）。
 func (s *BillingCacheService) checkRPM(ctx context.Context, user *User, group *Group) error {
-	if s == nil || s.userRPMCache == nil || user == nil {
+	if s == nil || user == nil {
+		return nil
+	}
+
+	// ── 第零层：模型维度规则（独立于 userRPMCache，故在其 nil 检查之前） ──
+	if err := s.checkModelRPM(ctx, user, group); err != nil {
+		return err
+	}
+
+	if s.userRPMCache == nil {
 		return nil
 	}
 

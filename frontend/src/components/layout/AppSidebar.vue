@@ -784,6 +784,12 @@ const adminNavItems = computed((): NavItem[] => {
       hideInSimpleMode: true
     },
     {
+      path: '/admin/model-rpm-rules',
+      label: t('nav.modelRpmRules'),
+      icon: ChartIcon,
+      hideInSimpleMode: true
+    },
+    {
       path: '/admin/error-handling-rules',
       label: t('nav.errorHandlingRules'),
       icon: ShieldIcon,

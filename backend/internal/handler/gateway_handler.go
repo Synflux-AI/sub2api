@@ -993,7 +993,11 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 							return
 						}
 						fallbackAPIKey := cloneAPIKeyWithGroup(apiKey, fallbackGroup)
-						if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), fallbackAPIKey.User, fallbackAPIKey, fallbackGroup, nil, service.PlatformFromAPIKey(fallbackAPIKey)); err != nil {
+						// 同一客户端请求的第二次资格检查：跳过模型维度 RPM，避免一次请求把模型配额消耗两遍。
+						// user/group 层的重复计数是存量行为，这里不改；模型规则的 N 通常远小于分组限额，
+						// double count 更容易误伤，所以新层不继承这个行为。
+						fallbackBillingCtx := service.WithoutModelRPMLimit(c.Request.Context())
+						if err := h.billingCacheService.CheckBillingEligibility(fallbackBillingCtx, fallbackAPIKey.User, fallbackAPIKey, fallbackGroup, nil, service.PlatformFromAPIKey(fallbackAPIKey)); err != nil {
 							status, code, message, retryAfter := billingErrorDetails(err)
 							if retryAfter > 0 {
 								c.Header("Retry-After", strconv.Itoa(retryAfter))
@@ -2480,9 +2484,12 @@ func billingErrorDetails(err error) (status int, code, message string, retryAfte
 		msg := pkgerrors.Message(err)
 		return http.StatusTooManyRequests, "rate_limit_exceeded", msg, 0
 	}
-	// 用户/分组 RPM 超限统一映射为 HTTP 429；保留与其它 rate_limit 一致的错误码便于客户端分类。
+	// 用户/分组/模型 RPM 超限统一映射为 HTTP 429；保留与其它 rate_limit 一致的错误码便于客户端分类。
 	// 返回 Retry-After 秒数（当前分钟剩余秒数），让 SDK 自动退避。
-	if errors.Is(err, service.ErrGroupRPMExceeded) || errors.Is(err, service.ErrUserRPMExceeded) {
+	// 注意：这里用本机时间，而计数桶用的是 Redis 服务端时间，两者不同源，Retry-After 是近似值。
+	if errors.Is(err, service.ErrGroupRPMExceeded) ||
+		errors.Is(err, service.ErrUserRPMExceeded) ||
+		errors.Is(err, service.ErrModelRPMExceeded) {
 		msg := pkgerrors.Message(err)
 		retrySeconds := 60 - int(time.Now().Unix()%60)
 		return http.StatusTooManyRequests, "rate_limit_exceeded", msg, retrySeconds
