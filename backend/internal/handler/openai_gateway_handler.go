@@ -2218,6 +2218,9 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	)
 	setOpsRequestContext(c, reqModel, true)
 	setOpsEndpointContext(c, "", int16(service.RequestTypeWSV2))
+	// setOpsRequestContext 是替换 c.Request（而非 c.Set），此前 :2197 的快照拿不到它写入的
+	// ctxkey.Model。重新取一次快照，后续 CheckBillingEligibility 的模型维度限流才能生效。
+	ctx = c.Request.Context()
 
 	if decision := h.checkSecurityAuditStage(c, reqLog, apiKey, subject, service.ContentModerationProtocolOpenAIResponses, reqModel, firstMessage, "first_turn"); decision != nil && !decision.AllowNextStage {
 		writeSecurityAuditWSError(ctx, wsConn, decision)

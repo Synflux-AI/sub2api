@@ -173,6 +173,7 @@ export default {
     groups: 'Groups',
     routingStrategies: 'Routing Strategies',
     smartRouting: 'Smart Routing',
+    modelRpmRules: 'Model RPM Limits',
     errorHandlingRules: 'Error Handling Rules',
     channels: 'Channels',
     availableChannels: 'Available Channels',

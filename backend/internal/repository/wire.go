@@ -97,6 +97,7 @@ var ProviderSet = wire.NewSet(
 	NewUserAttributeDefinitionRepository,
 	NewUserAttributeValueRepository,
 	NewUserGroupRateRepository,
+	NewModelRPMRuleRepository, // 模型维度 RPM 规则仓储
 	NewErrorPassthroughRepository,
 	NewTLSFingerprintProfileRepository,
 	NewPluginRepository,
@@ -123,6 +124,7 @@ var ProviderSet = wire.NewSet(
 	ProvideSessionLimitCache,
 	NewRPMCache,
 	NewUserRPMCache,
+	NewModelRPMCache,
 	NewUserMsgQueueCache,
 	NewDashboardCache,
 	NewEmailCache,

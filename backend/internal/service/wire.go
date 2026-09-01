@@ -831,8 +831,12 @@ func ProvideBillingCacheService(
 	rateRepo UserGroupRateRepository,
 	cfg *config.Config,
 	userPlatformQuotaRepo UserPlatformQuotaRepository,
+	modelRPMRules *ModelRPMRuleResolver,
+	modelRPMCache ModelRPMCache,
 ) *BillingCacheService {
-	return NewBillingCacheService(cache, userRepo, subRepo, apiKeyRepo, rpmCache, rateRepo, cfg, userPlatformQuotaRepo)
+	svc := NewBillingCacheService(cache, userRepo, subRepo, apiKeyRepo, rpmCache, rateRepo, cfg, userPlatformQuotaRepo)
+	svc.SetModelRPMLimiter(modelRPMRules, modelRPMCache)
+	return svc
 }
 
 // ProvideAPIKeyService wires APIKeyService and connects rate-limit cache invalidation.
@@ -874,6 +878,8 @@ var ProviderSet = wire.NewSet(
 	ProvidePricingService,
 	NewBillingService,
 	ProvideBillingCacheService,
+	NewModelRPMRuleResolver,
+	NewModelRPMRuleService,
 	NewAnnouncementService,
 	NewRoutingStrategyService,
 	NewAdminService,

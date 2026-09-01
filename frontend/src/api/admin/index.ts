@@ -7,6 +7,7 @@ import dashboardAPI from './dashboard'
 import usersAPI from './users'
 import groupsAPI from './groups'
 import routingStrategiesAPI from './routingStrategies'
+import modelRpmRulesAPI from './modelRpmRules'
 import accountsAPI from './accounts'
 import proxiesAPI from './proxies'
 import redeemAPI from './redeem'
@@ -47,6 +48,7 @@ export const adminAPI = {
   users: usersAPI,
   groups: groupsAPI,
   routingStrategies: routingStrategiesAPI,
+  modelRpmRules: modelRpmRulesAPI,
   accounts: accountsAPI,
   proxies: proxiesAPI,
   redeem: redeemAPI,
@@ -85,6 +87,7 @@ export {
   usersAPI,
   groupsAPI,
   routingStrategiesAPI,
+  modelRpmRulesAPI,
   accountsAPI,
   proxiesAPI,
   redeemAPI,

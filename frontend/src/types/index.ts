@@ -2504,6 +2504,39 @@ export interface TestRoutingStrategyResult {
   account_ids: number[]
 }
 
+// Model RPM rule types (模型维度 RPM 限流规则)
+//
+// scope 与 target_type 正交：target_type 决定「这条规则管谁」，scope 决定「配额怎么分」。
+// 注意与分组 rpm_override 的 0 语义相反：这里的 rpm_limit 必须为正，没有「填 0 免检」的后门。
+export type ModelRPMScope = 'user' | 'global'
+export type ModelRPMTargetType = 'all' | 'group' | 'user'
+
+export interface ModelRPMRule {
+  id: number
+  name: string
+  // 客户端请求体里的公开模型名，支持尾部 `*` 前缀通配。
+  model_pattern: string
+  scope: ModelRPMScope
+  target_type: ModelRPMTargetType
+  target_id?: number | null
+  rpm_limit: number
+  enabled: boolean
+  created_at: string
+  updated_at: string
+  // 后端 JOIN 出的分组名 / 用户名，仅用于展示。
+  target_name?: string
+}
+
+export interface SaveModelRPMRuleRequest {
+  name: string
+  model_pattern: string
+  scope: ModelRPMScope
+  target_type: ModelRPMTargetType
+  target_id?: number | null
+  rpm_limit: number
+  enabled: boolean
+}
+
 // Payment types
 export type { SubscriptionPlan, PaymentOrder, CheckoutInfoResponse } from './payment'
 

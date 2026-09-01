@@ -474,6 +474,18 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/admin/model-rpm-rules',
+    name: 'AdminModelRpmRules',
+    component: () => import('@/views/admin/ModelRpmRulesView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Model RPM Limits',
+      titleKey: 'admin.modelRpmRules.title',
+      descriptionKey: 'admin.modelRpmRules.description'
+    }
+  },
+  {
     // 路由策略已并入智能调度页。保留旧路径重定向，旧书签与外部链接继续可用。
     path: '/admin/routing-strategies',
     name: 'AdminRoutingStrategies',
@@ -972,6 +984,8 @@ router.beforeEach(async (to, _from, next) => {
       // 旧的 /admin/routing-strategies 已重定向到智能调度页，路由匹配阶段就完成跳转，
       // 到达本守卫时 to.path 已是新路径，因此这里只需列新路径。
       '/admin/smart-routing',
+      // 简易模式跳过全部计费检查，checkRPM 根本不会执行，规则页在该模式下没有意义。
+      '/admin/model-rpm-rules',
       '/admin/error-handling-rules',
       '/admin/subscriptions',
       '/admin/redeem',

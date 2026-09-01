@@ -46,6 +46,9 @@ func RegisterAdminRoutes(
 		// 智能路由策略
 		registerRoutingStrategyRoutes(admin, h)
 
+		// 模型维度 RPM 限流规则
+		registerModelRPMRuleRoutes(admin, h)
+
 		// 账号管理
 		registerAccountRoutes(admin, h, stepUpAuth)
 
@@ -453,6 +456,17 @@ func registerRoutingStrategyRoutes(admin *gin.RouterGroup, h *handler.Handlers) 
 		strategies.GET("/:id", h.Admin.RoutingStrategy.GetByID)
 		strategies.PUT("/:id", h.Admin.RoutingStrategy.Update)
 		strategies.DELETE("/:id", h.Admin.RoutingStrategy.Delete)
+	}
+}
+
+// registerModelRPMRuleRoutes 注册模型维度 RPM 限流规则的管理端 CRUD。
+func registerModelRPMRuleRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	rules := admin.Group("/model-rpm-rules")
+	{
+		rules.GET("", h.Admin.ModelRPMRule.List)
+		rules.POST("", h.Admin.ModelRPMRule.Create)
+		rules.PUT("/:id", h.Admin.ModelRPMRule.Update)
+		rules.DELETE("/:id", h.Admin.ModelRPMRule.Delete)
 	}
 }
 
