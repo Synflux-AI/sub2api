@@ -481,6 +481,35 @@ func (s *RedeemCodeRepoSuite) TestListByUser_DefaultLimit() {
 	s.Require().Len(codes, 1)
 }
 
+func (s *RedeemCodeRepoSuite) TestListByUserPaginated_UsesIDAsStableTieBreaker() {
+	user := s.createUser(uniqueTestValue(s.T(), "paged") + "@example.com")
+	usedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	var ids []int64
+	for _, code := range []string{"PAGE-1", "PAGE-2", "PAGE-3"} {
+		created, err := s.client.RedeemCode.Create().
+			SetCode(code).
+			SetType(service.RedeemTypeBalance).
+			SetStatus(service.StatusUsed).
+			SetValue(0).
+			SetNotes("").
+			SetValidityDays(30).
+			SetUsedBy(user.ID).
+			SetUsedAt(usedAt).
+			Save(s.ctx)
+		s.Require().NoError(err)
+		ids = append(ids, created.ID)
+	}
+
+	first, result, err := s.repo.ListByUserPaginated(s.ctx, user.ID, pagination.PaginationParams{Page: 1, PageSize: 2}, "")
+	s.Require().NoError(err)
+	s.Require().Equal(int64(3), result.Total)
+	s.Require().Equal([]int64{ids[2], ids[1]}, []int64{first[0].ID, first[1].ID})
+
+	second, _, err := s.repo.ListByUserPaginated(s.ctx, user.ID, pagination.PaginationParams{Page: 2, PageSize: 2}, "")
+	s.Require().NoError(err)
+	s.Require().Equal([]int64{ids[0]}, []int64{second[0].ID})
+}
+
 // --- Combined original test ---
 
 func (s *RedeemCodeRepoSuite) TestCreateBatch_Filters_Use_Idempotency_ListByUser() {

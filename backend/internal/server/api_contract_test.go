@@ -459,6 +459,16 @@ func TestAPIContracts(t *testing.T) {
 				// 普通用户兑换历史不应包含 notes 等内部字段。
 				deps.redeemRepo.SetByUser(1, []service.RedeemCode{
 					{
+						ID:        901,
+						Code:      "CODE-NEW",
+						Type:      service.RedeemTypeBalance,
+						Value:     2.5,
+						Status:    service.StatusUsed,
+						UsedBy:    ptr(int64(1)),
+						UsedAt:    ptr(deps.now.Add(time.Minute)),
+						CreatedAt: deps.now.Add(time.Minute),
+					},
+					{
 						ID:        900,
 						Code:      "CODE-123",
 						Type:      service.RedeemTypeBalance,
@@ -472,25 +482,31 @@ func TestAPIContracts(t *testing.T) {
 				})
 			},
 			method:     http.MethodGet,
-			path:       "/api/v1/redeem/history",
+			path:       "/api/v1/redeem/history?page=2&page_size=1",
 			wantStatus: http.StatusOK,
 			wantJSON: `{
 				"code": 0,
 				"message": "success",
-				"data": [
-					{
-						"id": 900,
-						"code": "CODE-123",
-						"type": "balance",
-						"value": 1.25,
-						"status": "used",
-						"used_by": 1,
-						"used_at": "2025-01-02T03:04:05Z",
-						"created_at": "2025-01-02T03:04:05Z",
-						"group_id": null,
-						"validity_days": 0
-					}
-				]
+				"data": {
+					"items": [
+						{
+							"id": 900,
+							"code": "CODE-123",
+							"type": "balance",
+							"value": 1.25,
+							"status": "used",
+							"used_by": 1,
+							"used_at": "2025-01-02T03:04:05Z",
+							"created_at": "2025-01-02T03:04:05Z",
+							"group_id": null,
+							"validity_days": 0
+						}
+					],
+					"total": 2,
+					"page": 2,
+					"page_size": 1,
+					"pages": 2
+				}
 			}`,
 		},
 		{
@@ -2210,8 +2226,17 @@ func (r *stubRedeemCodeRepo) ListByUser(ctx context.Context, userID int64, limit
 	return append([]service.RedeemCode(nil), codes...), nil
 }
 
-func (stubRedeemCodeRepo) ListByUserPaginated(ctx context.Context, userID int64, params pagination.PaginationParams, codeType string) ([]service.RedeemCode, *pagination.PaginationResult, error) {
-	return nil, nil, errors.New("not implemented")
+func (r *stubRedeemCodeRepo) ListByUserPaginated(ctx context.Context, userID int64, params pagination.PaginationParams, codeType string) ([]service.RedeemCode, *pagination.PaginationResult, error) {
+	codes := r.byUser[userID]
+	start := min(params.Offset(), len(codes))
+	end := min(start+params.Limit(), len(codes))
+	pages := (len(codes) + params.Limit() - 1) / params.Limit()
+	return append([]service.RedeemCode(nil), codes[start:end]...), &pagination.PaginationResult{
+		Total:    int64(len(codes)),
+		Page:     params.Page,
+		PageSize: params.Limit(),
+		Pages:    pages,
+	}, nil
 }
 
 func (stubRedeemCodeRepo) SumPositiveBalanceByUser(ctx context.Context, userID int64) (float64, error) {

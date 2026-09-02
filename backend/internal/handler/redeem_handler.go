@@ -68,10 +68,9 @@ func (h *RedeemHandler) GetHistory(c *gin.Context) {
 		return
 	}
 
-	// Default limit is 25
-	limit := 25
+	page, pageSize := response.ParsePagination(c)
 
-	codes, err := h.redeemService.GetUserHistory(c.Request.Context(), subject.UserID, limit)
+	codes, total, err := h.redeemService.GetUserHistory(c.Request.Context(), subject.UserID, page, pageSize)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
@@ -81,5 +80,5 @@ func (h *RedeemHandler) GetHistory(c *gin.Context) {
 	for i := range codes {
 		out = append(out, *dto.RedeemCodeFromService(&codes[i]))
 	}
-	response.Success(c, out)
+	response.Paginated(c, out, total, page, pageSize)
 }
