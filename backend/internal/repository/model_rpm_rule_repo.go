@@ -10,7 +10,7 @@ import (
 
 // 模型维度 RPM 规则仓储。
 //
-// 与 user_group_rate_multipliers 一致走原生 SQL（表由 232_model_rpm_rules.sql 建立，不进 ent schema）。
+// 与 user_group_rate_multipliers 一致走原生 SQL（表由 234_model_rpm_rules.sql 建立，不进 ent schema）。
 // 列表查询顺带 LEFT JOIN 出分组名/用户名，供管理台直接展示 target，避免前端 N+1 查询。
 const modelRPMRuleSelectColumns = `
 	r.id, r.name, r.model_pattern, r.scope, r.target_type, r.target_id,
