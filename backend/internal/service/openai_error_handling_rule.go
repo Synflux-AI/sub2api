@@ -224,8 +224,8 @@ func (s *OpenAIGatewayService) openAIErrorHandlingRuleOverride(
 	return failoverErr, true
 }
 
-// openAITransportErrorRuleOverride 把传输层错误（无 HTTP 状态码）合成成 502 + OpenAI
-// 形状的错误体后问规则。命中返回规则版错误，未命中返回 nil。
+// openAITransportErrorRuleOverride 把没有完整可用 HTTP 响应的传输层错误合成成
+// 502 + OpenAI 形状的错误体后问规则。命中返回规则版错误，未命中返回 nil。
 func (s *OpenAIGatewayService) openAITransportErrorRuleOverride(
 	ctx context.Context,
 	c *gin.Context,

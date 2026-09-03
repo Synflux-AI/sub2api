@@ -79,6 +79,26 @@ func TestOpenAIErrorHandlingRule_TransportErrorMatchesSynthetic502(t *testing.T)
 	require.Equal(t, "error_handling_rule_failover", events[len(events)-1].Kind)
 }
 
+func TestOpenAIErrorHandlingRule_BodyReadErrorMatchesSynthetic502(t *testing.T) {
+	svc := newOpenAIRuleService(t, nil, ErrorHandlingRule{
+		ID: "body-read-lost-ping", Name: "body 读取中断换号",
+		StatusCodes: []int{502}, Keywords: []string{"connection lost"},
+		Action: ErrorHandlingActionFailover, Platforms: []string{PlatformOpenAI},
+	})
+	c, _ := newOpenAITransportErrTestContext()
+
+	err := svc.handleOpenAIUpstreamResponseBodyReadError(
+		context.Background(), c, openAIRuleAccount(), openAILostPingErr, true, "")
+
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.Equal(t, "body-read-lost-ping", failoverErr.ErrorRuleID)
+	events := opsUpstreamErrorEvents(t, c)
+	require.Len(t, events, 2)
+	require.Equal(t, "request_error", events[0].Kind)
+	require.Equal(t, "error_handling_rule_failover", events[1].Kind)
+}
+
 func TestOpenAIErrorHandlingRule_RetryActionSetsSameAccountBudget(t *testing.T) {
 	retry := 2
 	svc := newOpenAIRuleService(t, nil, ErrorHandlingRule{

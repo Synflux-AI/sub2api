@@ -1886,15 +1886,13 @@ func TestOpenAIGatewayService_OpenAIPassthrough_CompactNetworkErrorsTriggerFailo
 	gin.SetMode(gin.TestMode)
 
 	tests := []struct {
-		name           string
-		resp           *http.Response
-		err            error
-		expectFailover bool
+		name string
+		resp *http.Response
+		err  error
 	}{
 		{
-			name:           "request_error",
-			err:            errors.New("stream disconnected before completion"),
-			expectFailover: true,
+			name: "request_error",
+			err:  errors.New("stream disconnected before completion"),
 		},
 		{
 			name: "read_error",
@@ -1903,7 +1901,6 @@ func TestOpenAIGatewayService_OpenAIPassthrough_CompactNetworkErrorsTriggerFailo
 				Header:     http.Header{"Content-Type": []string{"application/json"}, "x-request-id": []string{"rid-compact"}},
 				Body:       passthroughErrReadCloser{err: io.ErrUnexpectedEOF},
 			},
-			expectFailover: false,
 		},
 	}
 
@@ -1936,15 +1933,9 @@ func TestOpenAIGatewayService_OpenAIPassthrough_CompactNetworkErrorsTriggerFailo
 			_, err := svc.Forward(context.Background(), c, account, body)
 			require.Error(t, err)
 			var failoverErr *UpstreamFailoverError
-			if tt.expectFailover {
-				require.ErrorAs(t, err, &failoverErr)
-				require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
-				require.False(t, c.Writer.Written(), "compact 网络错误应交给外层 failover，而不是直接写回客户端")
-			} else {
-				require.False(t, errors.As(err, &failoverErr))
-				require.ErrorIs(t, err, io.ErrUnexpectedEOF)
-				require.False(t, c.Writer.Written())
-			}
+			require.ErrorAs(t, err, &failoverErr)
+			require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
+			require.False(t, c.Writer.Written(), "compact 网络错误应交给外层 failover，而不是直接写回客户端")
 		})
 	}
 }
