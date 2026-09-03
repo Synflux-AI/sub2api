@@ -741,7 +741,8 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 			ImageResponseFormat: imageResponseFormat,
 		}, nil
 	} else {
-		nonStreamUsage, nonStreamCount, nonStreamSizes, imageResponseFormat, err := s.handleOpenAIImagesNonStreamingResponse(resp, c)
+		nonStreamUsage, nonStreamCount, nonStreamSizes, imageResponseFormat, err := s.handleOpenAIImagesNonStreamingResponse(
+			upstreamCtx, resp, c, account, safeUpstreamURL(upstreamReq.URL.String()))
 		if err != nil {
 			return nil, err
 		}
@@ -917,10 +918,17 @@ func cloneMultipartHeader(src textproto.MIMEHeader) textproto.MIMEHeader {
 	return dst
 }
 
-func (s *OpenAIGatewayService) handleOpenAIImagesNonStreamingResponse(resp *http.Response, c *gin.Context) (OpenAIUsage, int, []string, string, error) {
+func (s *OpenAIGatewayService) handleOpenAIImagesNonStreamingResponse(
+	ctx context.Context,
+	resp *http.Response,
+	c *gin.Context,
+	account *Account,
+	upstreamURL string,
+) (OpenAIUsage, int, []string, string, error) {
 	body, err := ReadUpstreamResponseBody(resp.Body, s.cfg, c, openAITooLargeError)
 	if err != nil {
-		return OpenAIUsage{}, 0, nil, "", err
+		return OpenAIUsage{}, 0, nil, "", s.handleOpenAIUpstreamResponseBodyReadError(
+			ctx, c, account, err, false, upstreamURL)
 	}
 	responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
 	contentType := "application/json"

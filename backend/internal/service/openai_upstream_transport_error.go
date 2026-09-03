@@ -25,8 +25,7 @@ const openAITransportErrorTempUnschedDuration = 10 * time.Minute
 var openAITransportFailoverBody = []byte(`{"error":{"type":"upstream_error","message":"Upstream request failed"}}`)
 
 // upstreamTransportErrorClass describes how to react to a transport-level upstream
-// failure — i.e. the HTTP round-trip never completed (proxy / DNS / TCP / TLS
-// error, no HTTP status code received).
+// failure, either before response headers arrive or while reading the response body.
 type upstreamTransportErrorClass struct {
 	// Persistent marks failures where retrying the same proxy/account is
 	// pointless: expired or rejected proxy credentials, a dead proxy endpoint,
@@ -92,8 +91,9 @@ func classifyUpstreamTransportError(err error) upstreamTransportErrorClass {
 }
 
 // handleOpenAIUpstreamTransportError handles a transport-level upstream failure
-// (Do/DoWithTLS returned a non-HTTP error: proxy/DNS/TCP/TLS). It:
-//  1. records the failure in Ops error logs (status 0, kind=request_error);
+// (proxy/DNS/TCP/TLS or an interrupted response body). It:
+//  1. records the failure in Ops error logs (status 0, kind=request_error; there is
+//     no complete usable HTTP response);
 //  2. for durable faults (expired/rejected proxy creds, dead proxy, DNS/routing)
 //     temporarily unschedules the account (DB + in-memory) and logs a stable
 //     warn event that alert rules can key on;
@@ -107,6 +107,28 @@ func classifyUpstreamTransportError(err error) upstreamTransportErrorClass {
 // passthrough tags the Ops error event for the OpenAI passthrough forward path.
 func (s *OpenAIGatewayService) handleOpenAIUpstreamTransportError(ctx context.Context, c *gin.Context, account *Account, err error, passthrough bool) error {
 	return s.handleOpenAIUpstreamTransportErrorWithURL(ctx, c, account, err, passthrough, "")
+}
+
+// handleOpenAIUpstreamResponseBodyReadError promotes an interrupted non-streaming
+// response body to the same observable, rule-aware failover used by round-trip
+// transport errors. Size enforcement and cancellation remain terminal because
+// they do not indicate a fault on the selected upstream account.
+func (s *OpenAIGatewayService) handleOpenAIUpstreamResponseBodyReadError(
+	ctx context.Context,
+	c *gin.Context,
+	account *Account,
+	err error,
+	passthrough bool,
+	upstreamURL string,
+) error {
+	var requestCtx context.Context
+	if c != nil && c.Request != nil {
+		requestCtx = c.Request.Context()
+	}
+	if account == nil || !shouldClassifyOpenAIUpstreamStreamReadError(err, ctx, requestCtx) {
+		return err
+	}
+	return s.handleOpenAIUpstreamTransportErrorWithURL(ctx, c, account, err, passthrough, upstreamURL)
 }
 
 // handleOpenAIUpstreamTransportErrorWithURL is handleOpenAIUpstreamTransportError

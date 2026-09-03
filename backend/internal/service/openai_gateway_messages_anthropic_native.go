@@ -213,7 +213,7 @@ func (s *OpenAIGatewayService) handleNativeAnthropicBufferedResponse(
 
 	body, err := ReadUpstreamResponseBody(resp.Body, s.cfg, c, anthropicTooLargeError)
 	if err != nil {
-		return nil, err
+		return nil, s.handleOpenAIUpstreamResponseBodyReadError(ctx, c, account, err, true, "")
 	}
 	observer := upstreamResponseModelObserverFromContext(c)
 	if observer == nil {

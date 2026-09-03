@@ -5,6 +5,7 @@ package handler
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -27,6 +28,54 @@ type openAIResponsesFailoverCancelUpstream struct {
 	accountIDs []int64
 	onFirstDo  func()
 }
+
+type openAIResponsesBodyReadFailoverUpstream struct {
+	service.HTTPUpstream
+	mu         sync.Mutex
+	accountIDs []int64
+}
+
+func (u *openAIResponsesBodyReadFailoverUpstream) Do(_ *http.Request, _ string, accountID int64, _ int) (*http.Response, error) {
+	u.mu.Lock()
+	u.accountIDs = append(u.accountIDs, accountID)
+	u.mu.Unlock()
+	body := io.ReadCloser(io.NopCloser(bytes.NewBufferString(
+		`{"id":"resp_ok","object":"response","model":"gpt-5.1","output":[],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}`,
+	)))
+	if accountID == 1 {
+		body = &openAIResponsesInterruptedBody{
+			payload: []byte(`{"id":"resp_partial"`),
+			err:     errors.New("http2: client connection lost"),
+		}
+	}
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       body,
+	}, nil
+}
+
+func (u *openAIResponsesBodyReadFailoverUpstream) calls() []int64 {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return append([]int64(nil), u.accountIDs...)
+}
+
+type openAIResponsesInterruptedBody struct {
+	payload []byte
+	err     error
+}
+
+func (r *openAIResponsesInterruptedBody) Read(p []byte) (int, error) {
+	if len(r.payload) > 0 {
+		n := copy(p, r.payload)
+		r.payload = r.payload[n:]
+		return n, nil
+	}
+	return 0, r.err
+}
+
+func (r *openAIResponsesInterruptedBody) Close() error { return nil }
 
 func (u *openAIResponsesFailoverCancelUpstream) Do(_ *http.Request, _ string, accountID int64, _ int) (*http.Response, error) {
 	u.mu.Lock()
@@ -191,4 +240,26 @@ func TestOpenAIGatewayHandlerResponses_FailoverContinuesForConnectedClient(t *te
 	require.Equal(t, []int64{1, 2}, upstream.calls(), "在线客户端应正常切换账号")
 	require.Equal(t, http.StatusBadGateway, rec.Code)
 	require.Equal(t, "upstream_error", gjson.GetBytes(rec.Body.Bytes(), "error.type").String())
+}
+
+func TestOpenAIGatewayHandlerResponses_BodyReadErrorSwitchesAccount(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	upstream := &openAIResponsesBodyReadFailoverUpstream{}
+	handler := newOpenAIResponsesFailoverTestHandler(t, upstream)
+	c, rec := newOpenAIResponsesFailoverTestContext(t, nil)
+
+	handler.Responses(c)
+
+	require.Equal(t, []int64{1, 2}, upstream.calls(), "body 读取中断后应切换到账号 2")
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "resp_ok", gjson.GetBytes(rec.Body.Bytes(), "id").String())
+	rawEvents, ok := c.Get(service.OpsUpstreamErrorsKey)
+	require.True(t, ok)
+	events, ok := rawEvents.([]*service.OpsUpstreamErrorEvent)
+	require.True(t, ok)
+	require.Len(t, events, 1)
+	require.Equal(t, "request_error", events[0].Kind)
+	require.Equal(t, int64(1), events[0].AccountID)
+	require.Equal(t, 0, events[0].UpstreamStatusCode)
 }
