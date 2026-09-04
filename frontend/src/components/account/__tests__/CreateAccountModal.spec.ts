@@ -318,6 +318,47 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     )
   })
 
+  it('omits the strip-none-reasoning-effort key by default', async () => {
+    await submitApiKeyAccount('openai')
+
+    expect(createAccountMock).toHaveBeenCalledTimes(1)
+    expect(createAccountMock.mock.calls[0]?.[0]?.extra).not.toHaveProperty(
+      'openai_strip_none_reasoning_effort'
+    )
+  })
+
+  it('submits the strip-none-reasoning-effort switch when enabled', async () => {
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'OpenAI')
+    await selectButtonByText(wrapper, 'API Key')
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('openai account')
+    await wrapper.get('form#create-account-form input[type="password"]').setValue('test-api-key')
+    await wrapper
+      .get('[data-testid="openai-strip-none-reasoning-effort-toggle"]')
+      .trigger('click')
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(createAccountMock).toHaveBeenCalledTimes(1)
+    expect(createAccountMock.mock.calls[0]?.[0]?.extra?.openai_strip_none_reasoning_effort).toBe(
+      true
+    )
+  })
+
+  it('hides the strip-none-reasoning-effort toggle for non-OpenAI-gateway platforms', async () => {
+    const openaiWrapper = mountModal()
+    await selectButtonByText(openaiWrapper, 'OpenAI')
+    expect(
+      openaiWrapper.find('[data-testid="openai-strip-none-reasoning-effort-toggle"]').exists()
+    ).toBe(true)
+
+    const anthropicWrapper = mountModal()
+    await selectButtonByText(anthropicWrapper, 'admin.accounts.claudeConsole')
+    expect(
+      anthropicWrapper.find('[data-testid="openai-strip-none-reasoning-effort-toggle"]').exists()
+    ).toBe(false)
+  })
+
   // namespace 摊平是仅 OAuth 的兼容开关：API Key 走 chat completions 回退桥时由桥自行摊平
   it('shows the Codex namespace flatten toggle only for OpenAI OAuth accounts', async () => {
     const wrapper = mountModal()

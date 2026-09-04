@@ -3030,6 +3030,39 @@
         </div>
       </div>
 
+      <!-- 摘除 none 推理档（仅走 OpenAI 网关的账号） -->
+      <div
+        v-if="supportsStripNoneReasoningEffort"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+      >
+        <div class="flex items-center justify-between gap-4">
+          <div>
+            <label class="input-label mb-0">{{ t('admin.accounts.openai.stripNoneReasoningEffort') }}</label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.openai.stripNoneReasoningEffortDesc') }}
+            </p>
+          </div>
+          <button
+            type="button"
+            data-testid="openai-strip-none-reasoning-effort-toggle"
+            role="switch"
+            :aria-checked="openaiStripNoneReasoningEffortEnabled"
+            @click="openaiStripNoneReasoningEffortEnabled = !openaiStripNoneReasoningEffortEnabled"
+            :class="[
+              'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
+              openaiStripNoneReasoningEffortEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
+            ]"
+          >
+            <span
+              :class="[
+                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+                openaiStripNoneReasoningEffortEnabled ? 'translate-x-5' : 'translate-x-0'
+              ]"
+            />
+          </button>
+        </div>
+      </div>
+
       <!-- OpenAI Codex namespace 工具摊平（兼容开关，仅 OAuth） -->
       <div
         v-if="form.platform === 'openai' && form.type === 'oauth'"
@@ -3871,6 +3904,7 @@ import {
 } from '@/utils/format'
 import { createStableObjectKeyResolver } from '@/utils/stableObjectKey'
 import { VERTEX_LOCATION_OPTIONS } from '@/constants/account'
+import { isOpenAICompatiblePlatform } from '@/constants/platforms'
 import {
   OPENAI_WS_MODE_CTX_POOL,
   OPENAI_WS_MODE_OFF,
@@ -4268,6 +4302,9 @@ const openaiPassthroughEnabled = ref(false)
 // OpenAI Codex namespace 工具摊平兼容开关（仅 OAuth），缺省关闭即原样保留
 const openaiFlattenNamespacesEnabled = ref(false)
 const openAILongContextBillingEnabled = ref(false)
+// 摘除 none 推理档（默认关闭即原样透传 reasoning.effort）
+const openaiStripNoneReasoningEffortEnabled = ref(false)
+const supportsStripNoneReasoningEffort = computed(() => isOpenAICompatiblePlatform(form.platform))
 const openAILongContextBillingTouched = ref(false)
 const openAICompactMode = ref<OpenAICompactMode>('auto')
 const openAIResponsesMode = ref<OpenAIResponsesMode>('auto')
@@ -4744,6 +4781,9 @@ watch(
       codexCLIOnlyEnabled.value = false
       codexCLIOnlyAppServerEnabled.value = false
     }
+    if (!isOpenAICompatiblePlatform(newPlatform)) {
+      openaiStripNoneReasoningEffortEnabled.value = false
+    }
     if (newPlatform !== 'anthropic') {
       anthropicPassthroughEnabled.value = false
       anthropicAPIKeyAuthScheme.value = 'x_api_key'
@@ -5068,6 +5108,23 @@ const withTraceIdExtra = (payload: CreateAccountRequest): CreateAccountRequest =
   }
 }
 
+// 摘除 none 推理档：与 X-Trace-Id 同理，开关对所有走 OpenAI 网关的平台生效，
+// 而 extra 组装分散在多处，因此也在提交前的通用出口补写。关闭时不写 key。
+const withStripNoneReasoningEffortExtra = (payload: CreateAccountRequest): CreateAccountRequest => {
+  if (!openaiStripNoneReasoningEffortEnabled.value || !supportsStripNoneReasoningEffort.value) return payload
+  return {
+    ...payload,
+    extra: {
+      ...((payload.extra as Record<string, unknown>) || {}),
+      openai_strip_none_reasoning_effort: true
+    }
+  }
+}
+
+// 提交前的通用 extra 出口：跨平台开关统一在此补写。
+const withSharedExtraFlags = (payload: CreateAccountRequest): CreateAccountRequest =>
+  withStripNoneReasoningEffortExtra(withTraceIdExtra(payload))
+
 const ensureAntigravityMixedChannelConfirmed = async (onConfirm: () => Promise<void>): Promise<boolean> => {
   if (!needsMixedChannelCheck(form.platform)) {
     return true
@@ -5101,7 +5158,7 @@ const ensureAntigravityMixedChannelConfirmed = async (onConfirm: () => Promise<v
 const submitCreateAccount = async (payload: CreateAccountRequest) => {
   submitting.value = true
   try {
-    const account = await adminAPI.accounts.create(withAntigravityConfirmFlag(withTraceIdExtra(withCustomHeadersPayload(payload))))
+    const account = await adminAPI.accounts.create(withAntigravityConfirmFlag(withSharedExtraFlags(withCustomHeadersPayload(payload))))
     const modelMapping = payload.credentials.model_mapping
     const hasConcreteMappedTarget = payload.type === 'apikey' &&
       typeof modelMapping === 'object' &&
@@ -5207,6 +5264,7 @@ const resetForm = () => {
   openaiFlattenNamespacesEnabled.value = false
   openAILongContextBillingEnabled.value = false
   openAILongContextBillingTouched.value = false
+  openaiStripNoneReasoningEffortEnabled.value = false
   openAICompactMode.value = 'auto'
   openAIResponsesMode.value = 'auto'
   openAIEndpointCapabilities.value = ['chat_completions', 'embeddings']
@@ -5900,7 +5958,7 @@ const handleGrokValidateRT = async (refreshTokenInput: string) => {
           return
         }
 
-        await adminAPI.accounts.create(withTraceIdExtra({
+        await adminAPI.accounts.create(withSharedExtraFlags({
           name: accountName,
           notes: form.notes,
           platform: 'grok',
@@ -6176,7 +6234,7 @@ const handleOpenAIExchange = async (authCode: string) => {
     }
 
     if (shouldCreateOpenAI) {
-      await adminAPI.accounts.create(withTraceIdExtra(withCustomHeadersPayload({
+      await adminAPI.accounts.create(withSharedExtraFlags(withCustomHeadersPayload({
         name: form.name,
         notes: form.notes,
         platform: 'openai',
@@ -6457,7 +6515,7 @@ const handleOpenAIBatchRT = async (refreshTokenInput: string, clientId?: string)
         const accountName = refreshTokens.length > 1 ? `${baseName} #${i + 1}` : baseName
 
         if (shouldCreateOpenAI) {
-          await adminAPI.accounts.create(withTraceIdExtra(withCustomHeadersPayload({
+          await adminAPI.accounts.create(withSharedExtraFlags(withCustomHeadersPayload({
             name: accountName,
             notes: form.notes,
             platform: 'openai',
@@ -6556,7 +6614,7 @@ const handleAntigravityValidateRT = async (refreshTokenInput: string) => {
         const accountName = refreshTokens.length > 1 ? `${form.name} #${i + 1}` : form.name
 
         // Note: Antigravity doesn't have buildExtraInfo, so we pass empty extra or rely on credentials
-        const createPayload = withAntigravityConfirmFlag(withTraceIdExtra(withCustomHeadersPayload({
+        const createPayload = withAntigravityConfirmFlag(withSharedExtraFlags(withCustomHeadersPayload({
           name: accountName,
           notes: form.notes,
           platform: 'antigravity',
@@ -6937,7 +6995,7 @@ const handleCookieAuth = async (sessionKey: string) => {
           credentials.temp_unschedulable_rules = tempUnschedPayload
         }
 
-        await adminAPI.accounts.create(withTraceIdExtra(withCustomHeadersPayload({
+        await adminAPI.accounts.create(withSharedExtraFlags(withCustomHeadersPayload({
           name: accountName,
           notes: form.notes,
           platform: form.platform,
