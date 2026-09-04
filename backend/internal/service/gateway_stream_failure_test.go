@@ -313,11 +313,11 @@ func TestPassthroughUnmatchedStreamErrorIsSanitized(t *testing.T) {
 func TestRecordStreamFailureCauseIsNilSafe(t *testing.T) {
 	svc := &GatewayService{}
 	require.NotPanics(t, func() {
-		svc.recordStreamFailureCause(context.Background(), nil, nil, "m", streamFailureReadError, "boom", false, false)
+		svc.recordStreamFailureCause(context.Background(), nil, nil, "m", streamFailureReadError, "boom", false, false, true)
 	})
 	c, _ := newErrorHandlingRuleTestContextWithRecorder()
 	require.NotPanics(t, func() {
-		svc.recordStreamFailureCause(context.Background(), c, nil, "m", streamFailureReadError, "boom", false, false)
+		svc.recordStreamFailureCause(context.Background(), c, nil, "m", streamFailureReadError, "boom", false, false, true)
 	})
 	_, ok := c.Get(OpsUpstreamErrorsKey)
 	require.False(t, ok, "account 缺失时不应写入 ops")
@@ -334,7 +334,7 @@ func TestRecordStreamFailureCauseTagsClientDisconnected(t *testing.T) {
 	c, _ := newErrorHandlingRuleTestContextWithRecorder()
 	ctx, logs := newStreamFailureLogObserver(t)
 
-	svc.recordStreamFailureCause(ctx, c, account, "claude-sonnet-4-5", streamFailureMissingTerminal, "stream usage incomplete: missing terminal event", false, true)
+	svc.recordStreamFailureCause(ctx, c, account, "claude-sonnet-4-5", streamFailureMissingTerminal, "stream usage incomplete: missing terminal event", false, true, true)
 
 	entries := logs.FilterMessage("gateway.stream_failure").All()
 	require.Len(t, entries, 1)

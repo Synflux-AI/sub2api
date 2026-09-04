@@ -22,6 +22,63 @@ type anthropicSafeError struct {
 	} `json:"error"`
 }
 
+const (
+	anthropicStreamMissingTerminalMessage = "stream usage incomplete: missing terminal event"
+	anthropicStreamMissingTerminalBody    = `{"type":"error","error":{"type":"stream_error","message":"stream usage incomplete: missing terminal event"}}`
+)
+
+func syntheticAnthropicStreamRuleError(err error) (body []byte, errType, message string, ok bool) {
+	if err == nil {
+		return nil, "", "", false
+	}
+
+	message = err.Error()
+	switch {
+	case message == anthropicStreamMissingTerminalMessage:
+		return []byte(anthropicStreamMissingTerminalBody), "stream_error", message, true
+	case strings.HasPrefix(message, "stream usage incomplete: "),
+		strings.HasPrefix(message, "stream read error: "),
+		message == "stream data interval timeout":
+	default:
+		return nil, "", "", false
+	}
+
+	payload := struct {
+		Type  string `json:"type"`
+		Error struct {
+			Type    string `json:"type"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}{Type: "error"}
+	payload.Error.Type = "stream_error"
+	payload.Error.Message = message
+	body, marshalErr := json.Marshal(payload)
+	if marshalErr != nil {
+		return nil, "", "", false
+	}
+	return body, "stream_error", message, true
+}
+
+// streamOnlyWroteKeepalive 报告本次流除了本机注入的 keepalive 心跳之外，没有向
+// 客户端写出任何字节 —— 也就是「还可以干净换号」。
+//
+// 不能直接用 c.Writer.Size() == before：stream_keepalive_interval 默认 10s 且默认
+// 开启，任何静默超过一个心跳周期的流中断都会先被写进一帧 event: ping，裸比较会
+// 把这些请求全部误判为「已交付内容」，从而让规则引擎的换号钩子在最常见的场景上
+// 彻底失效（#204）。心跳不是语义输出，扣掉它才是真正的「已写出内容」口径，与
+// OpenAI 侧 OpenAICompactKeepaliveAdjustedWrittenSize 的处理一致。
+//
+// 两侧都要 clamp 到非负：gin 的 Writer.Size() 在首次写入前是 noWritten(-1)，而
+// 心跳的 Flush() 会先 WriteHeaderNow() 把它置 0 再累加，直接相减永远不相等。
+func streamOnlyWroteKeepalive(c *gin.Context, writerSizeBeforeStream, keepaliveBytes int) bool {
+	if c == nil || c.Writer == nil {
+		return false
+	}
+	baseline := max(writerSizeBeforeStream, 0)
+	written := max(c.Writer.Size()-keepaliveBytes, 0)
+	return written <= baseline
+}
+
 func safeAnthropicError(body []byte) (string, string) {
 	var payload anthropicSafeError
 	if json.Unmarshal(body, &payload) == nil && payload.Error != nil {
