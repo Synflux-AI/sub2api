@@ -55,25 +55,20 @@ func buildOpenAIResponsesURLForPlatform(platform string, base string) string {
 	return buildOpenAIResponsesURL(base)
 }
 
-func shouldPreserveOpenAIResponsesNoneReasoningEffort(account *Account) bool {
-	if account == nil {
-		return false
-	}
-	if account.IsOpenAIOAuthLike() {
-		return true
-	}
-	if !account.IsOpenAIApiKey() {
-		return false
-	}
-	baseURL := strings.TrimSpace(account.GetCredential("base_url"))
-	return baseURL == "" || isOfficialOpenAIModelsBaseURL(baseURL)
+// shouldStripOpenAIResponsesNoneReasoningEffort 是 effort 改写的唯一判定入口。
+// HTTP Forward 与 WS v2 桥接都必须经它，避免两处语义分叉。
+//
+// 默认（开关关闭）不改写任何 effort：客户端下发的 none / minimal 原样透传上游。
+// 历史行为——把 none 当"未指定"摘除、把 minimal 改写成 none——是为了让 Codex
+// 0.149.0 能用目录里的 none 档直接选中非推理模型，但对本就支持 none 的上游
+// （另一台 sub2api / 兼容网关）会静默丢弃客户端的显式意图，且客户端无从察觉。
+// 因此收敛成账号级 opt-in 开关，仅在上游确实不认 none 时开启。
+func shouldStripOpenAIResponsesNoneReasoningEffort(account *Account) bool {
+	return account.IsOpenAIStripNoneReasoningEffortEnabled()
 }
 
-// Codex 0.149.0 needs a single advertised effort to directly select a visible
-// non-reasoning model. Treat that catalog-only "none" value as omission for
-// compatible upstreams, while preserving official OpenAI request semantics.
 func filterOpenAIResponsesNoneReasoningEffortForAccount(account *Account, body []byte) ([]byte, error) {
-	if len(body) == 0 || shouldPreserveOpenAIResponsesNoneReasoningEffort(account) {
+	if len(body) == 0 || !shouldStripOpenAIResponsesNoneReasoningEffort(account) {
 		return body, nil
 	}
 
@@ -100,7 +95,7 @@ func filterOpenAIResponsesNoneReasoningEffortForAccount(account *Account, body [
 }
 
 func deleteOpenAIResponsesNoneReasoningEffortFromObject(account *Account, body map[string]any) {
-	if body == nil || shouldPreserveOpenAIResponsesNoneReasoningEffort(account) {
+	if body == nil || !shouldStripOpenAIResponsesNoneReasoningEffort(account) {
 		return
 	}
 	if effort, ok := body["reasoning_effort"].(string); ok && strings.EqualFold(strings.TrimSpace(effort), "none") {
