@@ -955,6 +955,53 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 					ResponseBody: body,
 				}
 			}
+			// 转换路径的流处理发生在 HTTP 重试循环之后，不能安全地原账号重放。
+			// 仅在本次流尚未向客户端交付语义内容、客户端仍连接时，把流中断合成为
+			// 虚拟 502 交给规则引擎；retry 会按已到最大 attempt 的语义降级为换号。
+			if streamResult != nil && !streamResult.clientDisconnect && ctx.Err() == nil &&
+				streamOnlyWroteKeepalive(c, writerSizeBeforeStream, streamResult.keepaliveBytes) {
+				body, errType, errMessage, ok := syntheticAnthropicStreamRuleError(err)
+				if ok {
+					decision := s.decideErrorHandlingRule(ctx, &errorRuleTracker, account, http.StatusBadGateway, body, reqModel, errorHandlingRuleDecisionOptions{
+						Attempt: maxRetryAttempts, IgnoreRetryElapsed: true, IndependentRetryBudget: true,
+					})
+					if decision.Matched {
+						s.logErrorHandlingRuleDecision(ctx, c, account, http.StatusBadGateway, resp.Header, body, maxRetryAttempts, false, decision)
+						switch decision.EffectiveAction {
+						case ErrorHandlingActionFailover:
+							virtualResp := &http.Response{StatusCode: http.StatusBadGateway, Header: resp.Header.Clone(), Body: http.NoBody}
+							ruleErr := s.errorHandlingRuleFailover(ctx, virtualResp, body, account, reqModel, decision, true)
+							if failoverErr, ok := ruleErr.(*UpstreamFailoverError); ok {
+								// 本机注入的 keepalive 心跳会把 Writer.Size() 推离
+								// handler 的 writerSizeBeforeForward 基线，令
+								// gatewayForwardMayFailover 的第一道闸门失效。心跳是
+								// 非语义帧，下一账号的 message_start 拼在它之后仍协议
+								// 合规，因此显式放行；已交付过终止性输出时仍然禁止。
+								failoverErr.SafeToFailoverAfterWrite = !IsResponseCommitted(c)
+							}
+							return nil, ruleErr
+						case ErrorHandlingActionPassthrough:
+							match := &anthropicPassthroughStreamRuleMatch{
+								decision: decision, statusCode: http.StatusBadGateway, body: body,
+								errType: errType, errMessage: errMessage, synthetic: true,
+							}
+							ruleErr := s.writeAnthropicPassthroughStreamRuleError(ctx, c, resp, account, reqModel, match)
+							if partial := partialStreamUsageResult(c, resp, streamResult, originalModel, mappedModel, startTime, ruleErr); partial != nil {
+								return partial, ruleErr
+							}
+							return nil, ruleErr
+						}
+					}
+				}
+			}
+			// 规则未命中（或本次中断不属于可合成的形态）时，至少把中断原因落进
+			// 计数与可搜索通道 —— 转换路径此前完全不记，ops_error_logs 的
+			// upstream_errors 恒为 NULL，线上无从区分「引擎没命中」和「引擎没跑」
+			// （#204）。命中规则的分支已在上面 return，不会叠加两条记录。
+			if streamResult != nil && streamResult.failureCause != "" {
+				s.recordStreamFailureCause(ctx, c, account, reqModel,
+					streamResult.failureCause, err.Error(), streamResult.firstTokenMs != nil, streamResult.clientDisconnect, false)
+			}
 			// 流中断（缺失 terminal 事件、读错误、数据间隔超时等）时保留已观测到的
 			// usage 与错误一起返回，handler 在错误处理完成后照常提交 usage 记录。
 			if partial := partialStreamUsageResult(c, resp, streamResult, originalModel, mappedModel, startTime, err); partial != nil {

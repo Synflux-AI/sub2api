@@ -51,6 +51,7 @@ func (s *GatewayService) recordStreamFailureCause(
 	message string,
 	firstTokenSeen bool,
 	clientDisconnected bool,
+	passthrough bool,
 ) {
 	if account == nil {
 		return
@@ -68,7 +69,7 @@ func (s *GatewayService) recordStreamFailureCause(
 		zap.Int64("account_id", account.ID),
 		zap.String("account_name", account.Name),
 		zap.String("model", model),
-		zap.Bool("passthrough", true),
+		zap.Bool("passthrough", passthrough),
 		zap.Bool("client_disconnected", clientDisconnected),
 		zap.String("message", safeMessage),
 	)
@@ -88,7 +89,7 @@ func (s *GatewayService) recordStreamFailureCause(
 		Platform:    account.Platform,
 		AccountID:   account.ID,
 		AccountName: account.Name,
-		Passthrough: true,
+		Passthrough: passthrough,
 		Kind:        opsUpstreamErrorKindStreamFailure,
 		Reason:      string(cause),
 		Scope:       scope,

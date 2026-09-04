@@ -883,21 +883,21 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthroughWithRu
 						}
 					}
 					if !semanticEventForwarded && !sawAnyErrorEvent && !clientDisconnected && ctx.Err() == nil {
-						body := []byte(`{"type":"error","error":{"type":"stream_error","message":"stream usage incomplete: missing terminal event"}}`)
+						body := []byte(anthropicStreamMissingTerminalBody)
 						decision := s.decideErrorHandlingRule(ctx, ruleTracker, account, http.StatusBadGateway, body, model, errorHandlingRuleDecisionOptions{
 							Attempt: attempt, IgnoreRetryElapsed: true, IndependentRetryBudget: true,
 						})
 						if decision.Matched {
 							return resultWithUsage(), &anthropicPassthroughStreamRuleMatch{
 								decision: decision, statusCode: http.StatusBadGateway, body: body,
-								errType: "stream_error", errMessage: "stream usage incomplete: missing terminal event",
+								errType: "stream_error", errMessage: anthropicStreamMissingTerminalMessage,
 								synthetic: true,
 							}, nil
 						}
 					}
 					s.recordStreamFailureCause(ctx, c, account, model,
-						streamFailureMissingTerminal, "stream usage incomplete: missing terminal event", firstTokenMs != nil, clientDisconnected)
-					return resultWithUsage(), nil, fmt.Errorf("stream usage incomplete: missing terminal event")
+						streamFailureMissingTerminal, anthropicStreamMissingTerminalMessage, firstTokenMs != nil, clientDisconnected, true)
+					return resultWithUsage(), nil, errors.New(anthropicStreamMissingTerminalMessage)
 				}
 				return resultWithUsage(), nil, nil
 			}
@@ -917,7 +917,7 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthroughWithRu
 					return resultWithUsage(), nil, ev.err
 				}
 				s.recordStreamFailureCause(ctx, c, account, model,
-					streamFailureReadError, fmt.Sprintf("stream read error: %v", ev.err), firstTokenMs != nil, clientDisconnected)
+					streamFailureReadError, fmt.Sprintf("stream read error: %v", ev.err), firstTokenMs != nil, clientDisconnected, true)
 				return resultWithUsage(), nil, fmt.Errorf("stream read error: %w", ev.err)
 			}
 
@@ -948,7 +948,7 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthroughWithRu
 				s.rateLimitService.HandleStreamTimeout(ctx, account, model)
 			}
 			s.recordStreamFailureCause(ctx, c, account, model,
-				streamFailureIntervalTimeout, "stream data interval timeout", firstTokenMs != nil, clientDisconnected)
+				streamFailureIntervalTimeout, "stream data interval timeout", firstTokenMs != nil, clientDisconnected, true)
 			return resultWithUsage(), nil, fmt.Errorf("stream data interval timeout")
 
 		case <-keepaliveCh:

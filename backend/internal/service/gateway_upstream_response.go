@@ -640,6 +640,15 @@ type streamingResult struct {
 	usage            *ClaudeUsage
 	firstTokenMs     *int
 	clientDisconnect bool // 客户端是否在流式传输过程中断开
+	// keepaliveBytes 是本次流里本机注入的 keepalive 心跳字节数。心跳不是语义
+	// 输出，调用方判断「是否已向客户端交付内容」时必须先把它从 Writer.Size()
+	// 里扣掉，否则默认 10s 的 keepalive 会让所有静默超过一个心跳周期的流中断
+	// 都被误判为「已写出内容」而无法换号（#204）。
+	keepaliveBytes int
+	// failureCause 是流中断的结构性原因，取值由代码位置决定、不解析文案。
+	// 零值表示「无需记录」（正常结束，或客户端先行断开这类不归因上游的情况）。
+	// 调用方在错误处理规则未命中时用它落 recordStreamFailureCause。
+	failureCause streamFailureCause
 }
 
 // hasObservedTokens 报告流式过程中是否已观测到任何上游计量的 token。
@@ -788,6 +797,7 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 		keepaliveCh = keepaliveTimer.C
 	}
 	lastDataAt := time.Now()
+	keepaliveBytes := 0
 	resetKeepaliveTimer := func() {
 		if keepaliveTimer == nil {
 			return
@@ -1005,27 +1015,29 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 			if !ok {
 				// 上游完成，返回结果
 				if !sawTerminalEvent {
-					return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected}, fmt.Errorf("stream usage incomplete: missing terminal event")
+					return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected, keepaliveBytes: keepaliveBytes, failureCause: streamFailureMissingTerminal}, fmt.Errorf("stream usage incomplete: missing terminal event")
 				}
-				return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected}, nil
+				return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected, keepaliveBytes: keepaliveBytes}, nil
 			}
 			if ev.err != nil {
 				if sawTerminalEvent {
-					return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected}, nil
+					return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnected, keepaliveBytes: keepaliveBytes}, nil
 				}
 				// 检测 context 取消（客户端断开会导致 context 取消，进而影响上游读取）
+				// 刻意不设 failureCause：客户端先走不是上游断流，记进 stream_failure
+				// 只会污染归因桶（透传侧的 after disconnect 分支同样不记）。
 				if errors.Is(ev.err, context.Canceled) || errors.Is(ev.err, context.DeadlineExceeded) {
-					return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: true}, fmt.Errorf("stream usage incomplete: %w", ev.err)
+					return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: true, keepaliveBytes: keepaliveBytes}, fmt.Errorf("stream usage incomplete: %w", ev.err)
 				}
 				// 客户端已通过写入失败检测到断开，上游也出错了，返回已收集的 usage
 				if clientDisconnected {
-					return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: true}, fmt.Errorf("stream usage incomplete after disconnect: %w", ev.err)
+					return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: true, keepaliveBytes: keepaliveBytes}, fmt.Errorf("stream usage incomplete after disconnect: %w", ev.err)
 				}
 				// 客户端未断开，正常的错误处理
 				if errors.Is(ev.err, bufio.ErrTooLong) {
 					logger.CtxPrintf(ctx, "service.gateway", "SSE line too long: account=%d max_size=%d error=%v", account.ID, maxLineSize, ev.err)
 					sendErrorEvent("response_too_large", fmt.Sprintf("upstream SSE line exceeded %d bytes", maxLineSize))
-					return &streamingResult{usage: usage, firstTokenMs: firstTokenMs}, ev.err
+					return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, keepaliveBytes: keepaliveBytes}, ev.err
 				}
 				// 上游中途读错误（unexpected EOF / connection reset 等，常见于 HTTP/2 GOAWAY）：
 				// 若尚未向客户端写过任何字节，包成 UpstreamFailoverError 让 handler 层走 failover/重试。
@@ -1050,7 +1062,7 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 					}
 				}
 				sendErrorEvent("stream_read_error", disconnectMsg)
-				return &streamingResult{usage: usage, firstTokenMs: firstTokenMs}, fmt.Errorf("stream read error: %w", ev.err)
+				return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, keepaliveBytes: keepaliveBytes, failureCause: streamFailureReadError}, fmt.Errorf("stream read error: %w", ev.err)
 			}
 			line := ev.line
 			trimmed := strings.TrimSpace(line)
@@ -1064,7 +1076,7 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 				pendingEventLines = pendingEventLines[:0]
 				if err != nil {
 					if clientDisconnected {
-						return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: true}, nil
+						return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: true, keepaliveBytes: keepaliveBytes}, nil
 					}
 					return nil, err
 				}
@@ -1105,7 +1117,7 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 				continue
 			}
 			if clientDisconnected {
-				return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: true}, fmt.Errorf("stream usage incomplete after timeout")
+				return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: true, keepaliveBytes: keepaliveBytes}, fmt.Errorf("stream usage incomplete after timeout")
 			}
 			logger.CtxPrintf(ctx, "service.gateway", "Stream data interval timeout: account=%d model=%s interval=%s", account.ID, originalModel, streamInterval)
 			// 处理流超时，可能标记账户为临时不可调度或错误状态
@@ -1113,7 +1125,7 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 				s.rateLimitService.HandleStreamTimeout(ctx, account, originalModel)
 			}
 			sendErrorEvent("stream_timeout", fmt.Sprintf("upstream stream idle for %s", streamInterval))
-			return &streamingResult{usage: usage, firstTokenMs: firstTokenMs}, fmt.Errorf("stream data interval timeout")
+			return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, keepaliveBytes: keepaliveBytes, failureCause: streamFailureIntervalTimeout}, fmt.Errorf("stream data interval timeout")
 
 		case <-keepaliveCh:
 			if clientDisconnected {
@@ -1129,11 +1141,16 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 					keepaliveBlock = block
 				}
 			}
-			if _, werr := fmt.Fprint(w, keepaliveBlock); werr != nil {
+			n, werr := fmt.Fprint(w, keepaliveBlock)
+			if werr != nil {
 				clientDisconnected = true
 				logger.CtxPrintf(ctx, "service.gateway", "Client disconnected during keepalive ping, continuing to drain upstream for billing")
 				continue
 			}
+			// 心跳字节单独记账：调用方判断「是否已交付语义内容」时要把它扣掉。
+			// 写失败分支刻意不计 —— 那里已置 clientDisconnected，调用方的守卫
+			// 本就会拦住，不需要精确字节数。
+			keepaliveBytes += n
 			flusher.Flush()
 			lastDataAt = time.Now()
 			resetKeepaliveTimer()
