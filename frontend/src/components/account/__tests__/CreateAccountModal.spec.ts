@@ -345,7 +345,7 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     )
   })
 
-  it('hides the strip-none-reasoning-effort toggle for non-OpenAI-gateway platforms', async () => {
+  it('shows the strip-none-reasoning-effort toggle only for OpenAI', async () => {
     const openaiWrapper = mountModal()
     await selectButtonByText(openaiWrapper, 'OpenAI')
     expect(
@@ -356,6 +356,12 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     await selectButtonByText(anthropicWrapper, 'admin.accounts.claudeConsole')
     expect(
       anthropicWrapper.find('[data-testid="openai-strip-none-reasoning-effort-toggle"]').exists()
+    ).toBe(false)
+
+    const grokWrapper = mountModal()
+    await selectButtonByText(grokWrapper, 'Grok')
+    expect(
+      grokWrapper.find('[data-testid="openai-strip-none-reasoning-effort-toggle"]').exists()
     ).toBe(false)
   })
 

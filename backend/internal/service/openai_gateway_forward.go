@@ -83,6 +83,13 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	if legacyIngressChanged {
 		body = legacyIngressBody
 	}
+	if account.IsOpenAI() {
+		normalizedBody, normalizeErr := normalizeOpenAIResponsesReasoningEffortForAccount(account, body)
+		if normalizeErr != nil {
+			return nil, normalizeErr
+		}
+		body = normalizedBody
+	}
 	// 在分流到 passthrough / Codex transform / 原生 ChatCompletions 之前统一修正
 	// 显式为 null 的工具 Schema type，否则 upstream 的 400 会被归一成可重试的 502，
 	// 同一份坏定义在账号池里反复重放。
@@ -401,10 +408,9 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Upstream model resolved: %s -> %s (account: %s, type: %s, isCodexCLI: %v)", billingModel, upstreamModel, account.Name, account.Type, isCodexCLI)
 		}
 	}
-	// minimal → none 与 none 摘除同属"上游不认 none 档"的兼容改写，受同一个账号级
-	// 开关控制。默认关闭时 minimal 原样透传，不再与 none 的透传方向相反。
-	if shouldStripOpenAIResponsesNoneReasoningEffort(account) &&
-		strings.TrimSpace(gjson.GetBytes(body, "reasoning.effort").String()) == "minimal" {
+	// 非 OpenAI 平台保持历史分流顺序：只有走到 Responses 发送链的
+	// 请求才会把 minimal 改写为 none，Grok / 原生 Chat 等早退分支不变。
+	if !account.IsOpenAI() && strings.TrimSpace(gjson.GetBytes(body, "reasoning.effort").String()) == "minimal" {
 		markPatchSet("reasoning.effort", "none")
 		logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Normalized reasoning.effort: minimal -> none (account: %s)", account.Name)
 	}

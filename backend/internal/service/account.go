@@ -2053,9 +2053,9 @@ func (a *Account) IsOpenAIPassthroughEnabled() bool {
 // 默认关闭：reasoning.effort（含 none / minimal）原样透传上游，客户端的显式
 // 意图不被静默改写。仅当上游不认 none（返回 400 unknown_value 之类）时才为该
 // 账号开启，恢复"摘除 none、minimal 改写为 none"的历史行为。
-// 仅对走 OpenAI 网关的账号族生效；字段缺失或类型不正确时按 false 处理。
+// 仅对 OpenAI 平台账号生效；字段缺失或类型不正确时按 false 处理。
 func (a *Account) IsOpenAIStripNoneReasoningEffortEnabled() bool {
-	if a == nil || !a.IsOpenAICompatible() || a.Extra == nil {
+	if a == nil || !a.IsOpenAI() || a.Extra == nil {
 		return false
 	}
 	enabled, ok := a.Extra["openai_strip_none_reasoning_effort"].(bool)

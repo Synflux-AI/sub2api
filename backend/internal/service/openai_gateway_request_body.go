@@ -55,15 +55,19 @@ func buildOpenAIResponsesURLForPlatform(platform string, base string) string {
 	return buildOpenAIResponsesURL(base)
 }
 
-// shouldStripOpenAIResponsesNoneReasoningEffort 是 effort 改写的唯一判定入口。
-// HTTP Forward 与 WS v2 桥接都必须经它，避免两处语义分叉。
+// shouldStripOpenAIResponsesNoneReasoningEffort 是 none 兼容摘除的唯一判定入口。
+// OpenAI 平台反转为账号级 opt-in；其他平台保持旧版默认摘除行为。
 //
-// 默认（开关关闭）不改写任何 effort：客户端下发的 none / minimal 原样透传上游。
+// OpenAI 账号默认（开关关闭）不改写任何 effort：客户端下发的
+// none / minimal 原样透传上游。
 // 历史行为——把 none 当"未指定"摘除、把 minimal 改写成 none——是为了让 Codex
 // 0.149.0 能用目录里的 none 档直接选中非推理模型，但对本就支持 none 的上游
 // （另一台 sub2api / 兼容网关）会静默丢弃客户端的显式意图，且客户端无从察觉。
 // 因此收敛成账号级 opt-in 开关，仅在上游确实不认 none 时开启。
 func shouldStripOpenAIResponsesNoneReasoningEffort(account *Account) bool {
+	if account == nil || !account.IsOpenAI() {
+		return true
+	}
 	return account.IsOpenAIStripNoneReasoningEffortEnabled()
 }
 
@@ -94,19 +98,48 @@ func filterOpenAIResponsesNoneReasoningEffortForAccount(account *Account, body [
 	return out, nil
 }
 
-func deleteOpenAIResponsesNoneReasoningEffortFromObject(account *Account, body map[string]any) {
+func normalizeOpenAIResponsesReasoningEffortForAccount(account *Account, body []byte) ([]byte, error) {
+	out, err := filterOpenAIResponsesNoneReasoningEffortForAccount(account, body)
+	if err != nil || account == nil || !account.IsOpenAI() || !shouldStripOpenAIResponsesNoneReasoningEffort(account) {
+		return out, err
+	}
+
+	for _, path := range []string{"reasoning.effort", "reasoning_effort"} {
+		effort := gjson.GetBytes(out, path)
+		if effort.Type != gjson.String || !strings.EqualFold(strings.TrimSpace(effort.String()), "minimal") {
+			continue
+		}
+		out, err = sjson.SetBytes(out, path, "none")
+		if err != nil {
+			return body, fmt.Errorf("normalize %s minimal compatibility value: %w", path, err)
+		}
+	}
+	return out, nil
+}
+
+func normalizeOpenAIResponsesReasoningEffortForAccountObject(account *Account, body map[string]any) {
 	if body == nil || !shouldStripOpenAIResponsesNoneReasoningEffort(account) {
 		return
 	}
-	if effort, ok := body["reasoning_effort"].(string); ok && strings.EqualFold(strings.TrimSpace(effort), "none") {
-		delete(body, "reasoning_effort")
+	if effort, ok := body["reasoning_effort"].(string); ok {
+		switch {
+		case strings.EqualFold(strings.TrimSpace(effort), "none"):
+			delete(body, "reasoning_effort")
+		case account != nil && account.IsOpenAI() && strings.EqualFold(strings.TrimSpace(effort), "minimal"):
+			body["reasoning_effort"] = "none"
+		}
 	}
 	reasoning, ok := body["reasoning"].(map[string]any)
 	if !ok {
 		return
 	}
-	if effort, ok := reasoning["effort"].(string); ok && strings.EqualFold(strings.TrimSpace(effort), "none") {
-		delete(reasoning, "effort")
+	if effort, ok := reasoning["effort"].(string); ok {
+		switch {
+		case strings.EqualFold(strings.TrimSpace(effort), "none"):
+			delete(reasoning, "effort")
+		case account != nil && account.IsOpenAI() && strings.EqualFold(strings.TrimSpace(effort), "minimal"):
+			reasoning["effort"] = "none"
+		}
 	}
 	if len(reasoning) == 0 {
 		delete(body, "reasoning")

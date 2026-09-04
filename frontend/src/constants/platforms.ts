@@ -26,20 +26,3 @@ export const GROUP_PLATFORM_OPTIONS = [
   ...CONCRETE_PLATFORM_OPTIONS,
   { value: 'composite', label: 'Composite' }
 ] as const satisfies readonly PlatformOption<GroupPlatform>[]
-
-/**
- * Platforms whose accounts are forwarded through the OpenAI gateway
- * (backend: Account.IsOpenAICompatible). Keep in sync with the backend
- * predicate — switches that only the OpenAI gateway reads are gated on it.
- */
-export const OPENAI_COMPATIBLE_PLATFORMS = [
-  'openai',
-  'grok',
-  'kimi',
-  'zhipu',
-  'deepseek'
-] as const satisfies readonly AccountPlatform[]
-
-export function isOpenAICompatiblePlatform(platform: unknown): boolean {
-  return (OPENAI_COMPATIBLE_PLATFORMS as readonly string[]).includes(platform as string)
-}

@@ -65,6 +65,12 @@ func TestPrepareOpenAIWSHTTPBridgeBodyReasoningEffortFollowsAccountStripSwitch(t
 	require.NoError(t, err)
 	require.False(t, gjson.GetBytes(strippedBody, "reasoning.effort").Exists())
 	require.False(t, gjson.GetBytes(strippedBody, "reasoning").Exists())
+
+	minimalBody, err := prepareOpenAIWSHTTPBridgeBody(thirdParty,
+		[]byte(`{"type":"response.create","model":"company-coding-model","reasoning":{"effort":"minimal"},"reasoning_effort":"minimal","input":"hi"}`))
+	require.NoError(t, err)
+	require.Equal(t, "none", gjson.GetBytes(minimalBody, "reasoning.effort").String())
+	require.Equal(t, "none", gjson.GetBytes(minimalBody, "reasoning_effort").String())
 }
 
 func TestProxyOpenAIWSHTTPBridgeTurn_KeepsOutboundAndObservedServiceTiersSeparate(t *testing.T) {

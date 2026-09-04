@@ -675,10 +675,15 @@ describe('EditAccountModal', () => {
     expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.openai_strip_none_reasoning_effort).toBe(true)
   })
 
-  it('hides the strip-none-reasoning-effort toggle for non-OpenAI-gateway accounts', async () => {
+  it('hides the strip-none-reasoning-effort toggle for non-OpenAI accounts', async () => {
     const wrapper = mountModal(buildVertexAccount())
     expect(
       wrapper.find('[data-testid="openai-strip-none-reasoning-effort-toggle"]').exists()
+    ).toBe(false)
+
+    const grokWrapper = mountModal(buildGrokAPIKeyAccount())
+    expect(
+      grokWrapper.find('[data-testid="openai-strip-none-reasoning-effort-toggle"]').exists()
     ).toBe(false)
   })
 

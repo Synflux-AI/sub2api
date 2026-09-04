@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
@@ -138,16 +139,21 @@ func TestFilterOpenAIResponsesNoneReasoningEffortDropsEmptiedReasoningObject(t *
 	require.JSONEq(t, `{"model":"m"}`, string(got))
 }
 
-// 开关仅在 OpenAI 协议族账号上生效；Anthropic / Gemini 账号即使误挂该 extra 也不参与。
+// 开关仅在 OpenAI 平台账号上生效；其他平台保持旧版默认摘除行为。
 func TestOpenAIStripNoneReasoningEffortSwitchScope(t *testing.T) {
 	extra := map[string]any{"openai_strip_none_reasoning_effort": true}
-	for _, platform := range []string{PlatformOpenAI, PlatformGrok, PlatformKimi, PlatformZhipu, PlatformDeepseek} {
-		account := &Account{Platform: platform, Type: AccountTypeAPIKey, Extra: extra}
-		require.True(t, account.IsOpenAIStripNoneReasoningEffortEnabled(), platform)
-	}
-	for _, platform := range []string{PlatformAnthropic, PlatformGemini} {
+	openAIAccount := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Extra: extra}
+	require.True(t, openAIAccount.IsOpenAIStripNoneReasoningEffortEnabled())
+	for _, platform := range []string{PlatformGrok, PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformAnthropic, PlatformGemini} {
 		account := &Account{Platform: platform, Type: AccountTypeAPIKey, Extra: extra}
 		require.False(t, account.IsOpenAIStripNoneReasoningEffortEnabled(), platform)
+		require.True(t, shouldStripOpenAIResponsesNoneReasoningEffort(account), platform)
+		got, err := filterOpenAIResponsesNoneReasoningEffortForAccount(account, []byte(`{"reasoning":{"effort":"none"}}`))
+		require.NoError(t, err)
+		require.False(t, gjson.GetBytes(got, "reasoning").Exists(), platform)
+		got, err = normalizeOpenAIResponsesReasoningEffortForAccount(account, []byte(`{"reasoning":{"effort":"minimal"}}`))
+		require.NoError(t, err)
+		require.Equal(t, "minimal", gjson.GetBytes(got, "reasoning.effort").String(), platform)
 	}
 
 	require.False(t, (*Account)(nil).IsOpenAIStripNoneReasoningEffortEnabled())
@@ -204,4 +210,77 @@ func TestForwardStripSwitchRestoresLegacyReasoningEffortRewrite(t *testing.T) {
 	sent = forwardCapturedReasoningBody(t, account,
 		[]byte(`{"model":"gpt-5.6-sol","input":"hi","stream":false,"reasoning":{"effort":"minimal"}}`))
 	require.Equal(t, "none", gjson.GetBytes(sent, "reasoning.effort").String())
+}
+
+func TestForwardNonOpenAILegacyChatShapeKeepsMinimalRewrite(t *testing.T) {
+	account := &Account{
+		ID:          9221,
+		Name:        "kimi-responses-account",
+		Platform:    PlatformKimi,
+		Type:        AccountTypeAPIKey,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key":      "sk-test",
+			"base_url":     "https://api.moonshot.cn/v1",
+			"api_protocol": APIProtocolResponses,
+		},
+	}
+
+	sent := forwardCapturedReasoningBody(t, account,
+		[]byte(`{"model":"kimi-k2","messages":[{"role":"user","content":"hi"}],"reasoning_effort":"minimal","stream":false}`))
+	require.Equal(t, "none", gjson.GetBytes(sent, "reasoning.effort").String())
+	require.False(t, gjson.GetBytes(sent, "reasoning_effort").Exists())
+}
+
+func forwardCapturedChatReasoningBody(t *testing.T, account *Account, body []byte) []byte {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	upstream := &httpUpstreamRecorder{err: errors.New("stop after capture")}
+	svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig(), httpUpstream: upstream}
+
+	_, err := svc.ForwardAsChatCompletions(context.Background(), c, account, body, "", "")
+	require.Error(t, err)
+	require.NotNil(t, upstream.lastBody)
+	return upstream.lastBody
+}
+
+func TestForwardAsChatCompletionsReasoningEffortFollowsStripSwitch(t *testing.T) {
+	for _, mode := range []openai_compat.ResponsesSupportMode{
+		openai_compat.ResponsesSupportModeForceChatCompletions,
+		openai_compat.ResponsesSupportModeForceResponses,
+	} {
+		mode := mode
+		t.Run(string(mode), func(t *testing.T) {
+			account := rawChatCompletionsTestAccount()
+			account.Extra = map[string]any{openai_compat.ExtraKeyResponsesMode: string(mode)}
+
+			sent := forwardCapturedChatReasoningBody(t, account,
+				[]byte(`{"model":"gpt-5.6-sol","messages":[{"role":"user","content":"hi"}],"reasoning_effort":"none","stream":false}`))
+			if mode == openai_compat.ResponsesSupportModeForceChatCompletions {
+				require.Equal(t, "none", gjson.GetBytes(sent, "reasoning_effort").String())
+			} else {
+				require.Equal(t, "none", gjson.GetBytes(sent, "reasoning.effort").String())
+			}
+
+			account.Extra["openai_strip_none_reasoning_effort"] = true
+			sent = forwardCapturedChatReasoningBody(t, account,
+				[]byte(`{"model":"gpt-5.6-sol","messages":[{"role":"user","content":"hi"}],"reasoning_effort":"none","stream":false}`))
+			require.False(t, gjson.GetBytes(sent, "reasoning_effort").Exists())
+			require.False(t, gjson.GetBytes(sent, "reasoning.effort").Exists())
+
+			sent = forwardCapturedChatReasoningBody(t, account,
+				[]byte(`{"model":"gpt-5.6-sol","messages":[{"role":"user","content":"hi"}],"reasoning_effort":"minimal","stream":false}`))
+			if mode == openai_compat.ResponsesSupportModeForceChatCompletions {
+				require.Equal(t, "none", gjson.GetBytes(sent, "reasoning_effort").String())
+			} else {
+				require.Equal(t, "none", gjson.GetBytes(sent, "reasoning.effort").String())
+			}
+		})
+	}
 }

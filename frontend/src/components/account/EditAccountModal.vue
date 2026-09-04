@@ -3001,7 +3001,6 @@ import {
 import { createStableObjectKeyResolver } from '@/utils/stableObjectKey'
 import { allSelectedGroupsEnableLongContextPricing } from '@/components/account/longContextBilling'
 import { VERTEX_LOCATION_OPTIONS } from '@/constants/account'
-import { isOpenAICompatiblePlatform } from '@/constants/platforms'
 import {
   OPENAI_WS_MODE_CTX_POOL,
   OPENAI_WS_MODE_OFF,
@@ -3343,9 +3342,7 @@ const openaiFlattenNamespacesEnabled = ref(false)
 const openAILongContextBillingEnabled = ref(false)
 // 摘除 none 推理档（默认关闭即原样透传 reasoning.effort）
 const openaiStripNoneReasoningEffortEnabled = ref(false)
-const supportsStripNoneReasoningEffort = computed(() =>
-  isOpenAICompatiblePlatform(props.account?.platform)
-)
+const supportsStripNoneReasoningEffort = computed(() => props.account?.platform === 'openai')
 // OpenAI 订阅档位（Plus/Pro/Free）手动覆盖值,存于 credentials.plan_type;'' 表示清空/自动识别
 const editPlanType = ref<string>('')
 const openAICompactMode = ref<OpenAICompactMode>('auto')
@@ -3832,9 +3829,9 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   openaiPassthroughEnabled.value = false
   openaiFlattenNamespacesEnabled.value = false
   openAILongContextBillingEnabled.value = false
-  // 走 OpenAI 网关的账号族共用该开关，按 extra 直接回填（无 type 分支）
+  // OpenAI 账号按 extra 直接回填（无 type 分支）
   openaiStripNoneReasoningEffortEnabled.value =
-    isOpenAICompatiblePlatform(newAccount.platform) && extra?.openai_strip_none_reasoning_effort === true
+    newAccount.platform === 'openai' && extra?.openai_strip_none_reasoning_effort === true
   editPlanType.value = ''
   openAICompactMode.value = 'auto'
   openAIResponsesMode.value = 'auto'
@@ -5452,7 +5449,7 @@ const handleSubmit = async () => {
       }
     }
 
-    // 摘除 none 推理档：对所有走 OpenAI 网关的平台生效（openai/grok/kimi/zhipu/deepseek），
+    // 摘除 none 推理档：仅对 OpenAI 平台账号生效，
     // 与 X-Trace-Id 同理放在平台专属 extra 块之后复用已组装的 extra；
     // 关闭时删除 key 而非写 false，避免 extra 堆积默认项。
     if (supportsStripNoneReasoningEffort.value) {

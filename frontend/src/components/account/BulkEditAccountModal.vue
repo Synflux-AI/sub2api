@@ -84,7 +84,7 @@
 
       <!-- 摘除 none 推理档（仅走 OpenAI 网关的账号） -->
       <div
-        v-if="allOpenAIGatewayCapable"
+        v-if="allOpenAIStripNoneCapable"
         class="border-t border-gray-200 pt-4 dark:border-dark-600"
       >
         <div class="mb-3 flex items-center justify-between">
@@ -1569,7 +1569,6 @@ import {
   resolveOpenAIWSModeConcurrencyHintKey
 } from '@/utils/openaiWsMode'
 import type { OpenAIWSMode } from '@/utils/openaiWsMode'
-import { isOpenAICompatiblePlatform } from '@/constants/platforms'
 interface Props {
   show: boolean
   accountIds: number[]
@@ -1617,12 +1616,10 @@ const allOpenAIPassthroughCapable = computed(() => {
   )
 })
 
-// 摘除 none 推理档的开关由 OpenAI 网关读取，因此覆盖整个 OpenAI 协议族
-// （openai/grok/kimi/zhipu/deepseek），而不像透传开关那样只限 openai。
-const allOpenAIGatewayCapable = computed(
+const allOpenAIStripNoneCapable = computed(
   () =>
     targetSelectedPlatforms.value.length === 1 &&
-    isOpenAICompatiblePlatform(targetSelectedPlatforms.value[0])
+    targetSelectedPlatforms.value[0] === 'openai'
 )
 
 const allOpenAIOAuth = computed(() => {
@@ -2058,8 +2055,8 @@ const buildUpdatePayload = (): Record<string, unknown> | null => {
     extra.openai_long_context_billing_enabled = openAILongContextBillingEnabled.value
   }
 
-  // 同时校验可见性：勾选后又改了目标筛选条件时，不应把该键写到非 OpenAI 网关账号上
-  if (enableOpenAIStripNoneReasoningEffort.value && allOpenAIGatewayCapable.value) {
+  // 同时校验可见性：勾选后又改了目标筛选条件时，不应把该键写到非 OpenAI 账号上
+  if (enableOpenAIStripNoneReasoningEffort.value && allOpenAIStripNoneCapable.value) {
     const extra = ensureExtra()
     extra.openai_strip_none_reasoning_effort = openaiStripNoneReasoningEffortEnabled.value
   }
@@ -2274,7 +2271,7 @@ const handleSubmit = async () => {
     enableOpenAIPassthrough.value ||
     enableOpenAIFlattenNamespaces.value ||
     (enableOpenAILongContextBilling.value && allOpenAIPassthroughCapable.value) ||
-    (enableOpenAIStripNoneReasoningEffort.value && allOpenAIGatewayCapable.value) ||
+    (enableOpenAIStripNoneReasoningEffort.value && allOpenAIStripNoneCapable.value) ||
     (enableOpenAIEndpointCapabilities.value && allOpenAIAPIKey.value) ||
     (enableOpenAIResponsesMode.value && allOpenAIAPIKey.value) ||
     enableModelRestriction.value ||

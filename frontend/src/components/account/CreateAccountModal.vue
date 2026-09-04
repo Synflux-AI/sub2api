@@ -3904,7 +3904,6 @@ import {
 } from '@/utils/format'
 import { createStableObjectKeyResolver } from '@/utils/stableObjectKey'
 import { VERTEX_LOCATION_OPTIONS } from '@/constants/account'
-import { isOpenAICompatiblePlatform } from '@/constants/platforms'
 import {
   OPENAI_WS_MODE_CTX_POOL,
   OPENAI_WS_MODE_OFF,
@@ -4304,7 +4303,7 @@ const openaiFlattenNamespacesEnabled = ref(false)
 const openAILongContextBillingEnabled = ref(false)
 // 摘除 none 推理档（默认关闭即原样透传 reasoning.effort）
 const openaiStripNoneReasoningEffortEnabled = ref(false)
-const supportsStripNoneReasoningEffort = computed(() => isOpenAICompatiblePlatform(form.platform))
+const supportsStripNoneReasoningEffort = computed(() => form.platform === 'openai')
 const openAILongContextBillingTouched = ref(false)
 const openAICompactMode = ref<OpenAICompactMode>('auto')
 const openAIResponsesMode = ref<OpenAIResponsesMode>('auto')
@@ -4775,14 +4774,12 @@ watch(
     if (newPlatform !== 'openai') {
       openaiPassthroughEnabled.value = false
       openaiFlattenNamespacesEnabled.value = false
+      openaiStripNoneReasoningEffortEnabled.value = false
       openAIEndpointCapabilities.value = ['chat_completions', 'embeddings']
       openaiOAuthResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF
       openaiAPIKeyResponsesWebSocketV2Mode.value = OPENAI_WS_MODE_OFF
       codexCLIOnlyEnabled.value = false
       codexCLIOnlyAppServerEnabled.value = false
-    }
-    if (!isOpenAICompatiblePlatform(newPlatform)) {
-      openaiStripNoneReasoningEffortEnabled.value = false
     }
     if (newPlatform !== 'anthropic') {
       anthropicPassthroughEnabled.value = false
@@ -5108,8 +5105,8 @@ const withTraceIdExtra = (payload: CreateAccountRequest): CreateAccountRequest =
   }
 }
 
-// 摘除 none 推理档：与 X-Trace-Id 同理，开关对所有走 OpenAI 网关的平台生效，
-// 而 extra 组装分散在多处，因此也在提交前的通用出口补写。关闭时不写 key。
+// 摘除 none 推理档：与 X-Trace-Id 同理，账号 extra 组装分散在多处，
+// 因此也在提交前的通用出口补写。关闭时不写 key。
 const withStripNoneReasoningEffortExtra = (payload: CreateAccountRequest): CreateAccountRequest => {
   if (!openaiStripNoneReasoningEffortEnabled.value || !supportsStripNoneReasoningEffort.value) return payload
   return {
@@ -6135,7 +6132,7 @@ const handleGrokAuthorizePassword = async (emailPasswordInput: string) => {
           return
         }
 
-        await adminAPI.accounts.create({
+        await adminAPI.accounts.create(withSharedExtraFlags({
           name: accountName,
           notes: form.notes,
           platform: 'grok',
@@ -6150,7 +6147,7 @@ const handleGrokAuthorizePassword = async (emailPasswordInput: string) => {
           group_ids: form.group_ids,
           expires_at: form.expires_at,
           auto_pause_on_expired: autoPauseOnExpired.value
-        })
+        }))
         successCount++
       } catch (error: any) {
         failedCount++
