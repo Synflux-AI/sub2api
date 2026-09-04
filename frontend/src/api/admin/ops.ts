@@ -314,9 +314,16 @@ export interface AccountConcurrencyInfo {
   waiting_in_queue: number
 }
 
+export interface ModelConcurrencyInfo {
+  model: string
+  current_in_use: number
+  waiting_in_queue: number
+}
+
 export interface OpsConcurrencyStatsResponse {
   enabled: boolean
   platform: Record<string, PlatformConcurrencyInfo>
+  model?: Record<string, ModelConcurrencyInfo>
   group: Record<string, GroupConcurrencyInfo>
   account: Record<string, AccountConcurrencyInfo>
   timestamp?: string
