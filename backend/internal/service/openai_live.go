@@ -177,6 +177,13 @@ func (s *OpenAIGatewayService) CreateLiveCall(
 
 		account := selection.Account
 		leaseID := generateRequestID()
+		model := requestModelForConcurrency(ctx)
+		if model == "" {
+			model = strings.TrimSpace(gjson.GetBytes(request.Session, "model").String())
+		}
+		if model == "" {
+			model = "gpt-live"
+		}
 		acquired, acquireErr := liveCache.AcquireLiveLease(
 			ctx,
 			account.ID,
@@ -198,7 +205,7 @@ func (s *OpenAIGatewayService) CreateLiveCall(
 		created, createErr := s.createUpstreamLiveCall(ctx, account, request, attestation)
 		selection.ReleaseFunc()
 		if createErr != nil {
-			s.releaseLiveLease(account.ID, identity.UserID, identity.APIKeyID, leaseID)
+			s.releaseLiveLease(account.ID, identity.UserID, identity.APIKeyID, "", leaseID)
 			if !s.shouldFailoverLiveCreateError(createErr) {
 				return nil, createErr
 			}
@@ -208,10 +215,6 @@ func (s *OpenAIGatewayService) CreateLiveCall(
 		}
 
 		now := time.Now()
-		model := strings.TrimSpace(gjson.GetBytes(request.Session, "model").String())
-		if model == "" {
-			model = "gpt-live"
-		}
 		record := &LiveCallRecord{
 			CallID:                created.CallID,
 			CallHash:              hashLiveCallID(created.CallID),
@@ -232,8 +235,14 @@ func (s *OpenAIGatewayService) CreateLiveCall(
 		}
 		mappingTTL := s.liveMaxSessionDuration() + 5*time.Minute
 		if saveErr := store.SaveLiveCall(ctx, record, mappingTTL); saveErr != nil {
-			s.releaseLiveLease(account.ID, identity.UserID, identity.APIKeyID, leaseID)
+			s.releaseLiveLease(account.ID, identity.UserID, identity.APIKeyID, "", leaseID)
 			return nil, fmt.Errorf("save live call mapping: %w", saveErr)
+		}
+		trackedModel := modelNameForConcurrency(model)
+		if tracker, ok := liveCache.(ModelConcurrencyCache); ok && trackedModel != "" {
+			if trackErr := tracker.TrackModelSlot(ctx, trackedModel, leaseID); trackErr != nil {
+				logger.CtxPrintf(ctx, "service.openai_live", "Warning: failed to track live model concurrency for %q: %v", trackedModel, trackErr)
+			}
 		}
 		created.Account = account
 		go s.observeLiveCall(record)
@@ -793,10 +802,19 @@ func (s *OpenAIGatewayService) refreshLiveLease(record *LiveCallRecord) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), liveRedisOperationTimeout)
 	defer cancel()
 	refreshed, err := cache.RefreshLiveLease(ctx, record.AccountID, record.UserID, record.APIKeyID, record.LeaseID)
-	return err == nil && refreshed
+	if err != nil || !refreshed {
+		return false
+	}
+	trackedModel := modelNameForConcurrency(record.Model)
+	if tracker, ok := cache.(ModelConcurrencyCache); ok && trackedModel != "" {
+		if err := tracker.TrackModelSlot(ctx, trackedModel, record.LeaseID); err != nil {
+			logger.CtxPrintf(ctx, "service.openai_live", "Warning: failed to refresh live model concurrency for %q: %v", trackedModel, err)
+		}
+	}
+	return true
 }
 
-func (s *OpenAIGatewayService) releaseLiveLease(accountID, userID, apiKeyID int64, leaseID string) {
+func (s *OpenAIGatewayService) releaseLiveLease(accountID, userID, apiKeyID int64, model, leaseID string) {
 	cache, err := s.liveConcurrencyCache()
 	if err != nil {
 		return
@@ -804,6 +822,10 @@ func (s *OpenAIGatewayService) releaseLiveLease(accountID, userID, apiKeyID int6
 	ctx, cancel := context.WithTimeout(context.Background(), liveRedisOperationTimeout)
 	defer cancel()
 	_ = cache.ReleaseLiveLease(ctx, accountID, userID, apiKeyID, leaseID)
+	trackedModel := modelNameForConcurrency(model)
+	if tracker, ok := cache.(ModelConcurrencyCache); ok && trackedModel != "" {
+		_ = tracker.ReleaseModelSlot(ctx, trackedModel, leaseID)
+	}
 }
 
 func (s *OpenAIGatewayService) finalizeLiveCall(record *LiveCallRecord) {
@@ -820,7 +842,7 @@ func (s *OpenAIGatewayService) finalizeLiveCall(record *LiveCallRecord) {
 	if err != nil || !first {
 		return
 	}
-	s.releaseLiveLease(record.AccountID, record.UserID, record.APIKeyID, record.LeaseID)
+	s.releaseLiveLease(record.AccountID, record.UserID, record.APIKeyID, record.Model, record.LeaseID)
 	if s.usageLogRepo == nil {
 		return
 	}

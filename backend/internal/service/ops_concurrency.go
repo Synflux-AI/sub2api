@@ -406,3 +406,28 @@ func (s *OpsService) GetUserConcurrencyStats(ctx context.Context) (map[int64]*Us
 
 	return result, &collectedAt, nil
 }
+
+func (s *OpsService) GetModelConcurrencyStats(ctx context.Context) (map[string]*ModelConcurrencyInfo, error) {
+	if err := s.RequireMonitoringEnabled(ctx); err != nil {
+		return nil, err
+	}
+	if s == nil || s.concurrencyService == nil {
+		return map[string]*ModelConcurrencyInfo{}, nil
+	}
+	loads, err := s.concurrencyService.GetModelConcurrency(ctx)
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[string]*ModelConcurrencyInfo, len(loads))
+	for model, load := range loads {
+		if load.CurrentConcurrency == 0 && load.WaitingCount == 0 {
+			continue
+		}
+		result[model] = &ModelConcurrencyInfo{
+			Model:          model,
+			CurrentInUse:   int64(load.CurrentConcurrency),
+			WaitingInQueue: int64(load.WaitingCount),
+		}
+	}
+	return result, nil
+}

@@ -44,8 +44,22 @@ type apiKeyConcurrencyCacheForTest interface {
 	GetAPIKeyConcurrencyBatch(ctx context.Context, apiKeyIDs []int64) (map[int64]int, error)
 }
 
+type modelConcurrencyCacheForTest interface {
+	TrackModelSlot(ctx context.Context, model, requestID string) error
+	ReleaseModelSlot(ctx context.Context, model, requestID string) error
+	TrackModelWait(ctx context.Context, model, requestID string) error
+	ReleaseModelWait(ctx context.Context, model, requestID string) error
+	GetModelConcurrency(ctx context.Context) (map[string]service.ModelLoadInfo, error)
+}
+
 func (s *ConcurrencyCacheSuite) apiKeyConcurrencyCache() apiKeyConcurrencyCacheForTest {
 	cache, ok := s.cache.(apiKeyConcurrencyCacheForTest)
+	require.True(s.T(), ok)
+	return cache
+}
+
+func (s *ConcurrencyCacheSuite) modelConcurrencyCache() modelConcurrencyCacheForTest {
+	cache, ok := s.cache.(modelConcurrencyCacheForTest)
 	require.True(s.T(), ok)
 	return cache
 }
@@ -342,6 +356,25 @@ func (s *ConcurrencyCacheSuite) TestAPIKeySlot_TrackReleaseAndBatchCount() {
 	counts, err = cache.GetAPIKeyConcurrencyBatch(s.ctx, []int64{apiKeyID})
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), 0, counts[apiKeyID])
+}
+
+func (s *ConcurrencyCacheSuite) TestModelSlot_TracksActiveAndWaitingByModel() {
+	cache := s.modelConcurrencyCache()
+	require.NoError(s.T(), cache.TrackModelSlot(s.ctx, "gpt-5", "active-1"))
+	require.NoError(s.T(), cache.TrackModelSlot(s.ctx, "gpt-5", "active-2"))
+	require.NoError(s.T(), cache.TrackModelSlot(s.ctx, "claude-sonnet-4-6", "active-3"))
+	require.NoError(s.T(), cache.TrackModelWait(s.ctx, "gpt-5", "waiting-1"))
+
+	loads, err := cache.GetModelConcurrency(s.ctx)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), service.ModelLoadInfo{CurrentConcurrency: 2, WaitingCount: 1}, loads["gpt-5"])
+	require.Equal(s.T(), service.ModelLoadInfo{CurrentConcurrency: 1}, loads["claude-sonnet-4-6"])
+
+	require.NoError(s.T(), cache.ReleaseModelSlot(s.ctx, "gpt-5", "active-1"))
+	require.NoError(s.T(), cache.ReleaseModelWait(s.ctx, "gpt-5", "waiting-1"))
+	loads, err = cache.GetModelConcurrency(s.ctx)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), service.ModelLoadInfo{CurrentConcurrency: 1}, loads["gpt-5"])
 }
 
 func (s *ConcurrencyCacheSuite) TestWaitQueue_IncrementAndDecrement() {

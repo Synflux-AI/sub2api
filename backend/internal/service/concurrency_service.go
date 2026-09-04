@@ -9,10 +9,12 @@ import (
 	"errors"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"go.uber.org/zap"
 	"golang.org/x/sync/singleflight"
@@ -59,6 +61,14 @@ type APIKeyConcurrencyCache interface {
 	TrackAPIKeySlot(ctx context.Context, apiKeyID int64, requestID string) error
 	ReleaseAPIKeySlot(ctx context.Context, apiKeyID int64, requestID string) error
 	GetAPIKeyConcurrencyBatch(ctx context.Context, apiKeyIDs []int64) (map[int64]int, error)
+}
+
+type ModelConcurrencyCache interface {
+	TrackModelSlot(ctx context.Context, model, requestID string) error
+	ReleaseModelSlot(ctx context.Context, model, requestID string) error
+	TrackModelWait(ctx context.Context, model, requestID string) error
+	ReleaseModelWait(ctx context.Context, model, requestID string) error
+	GetModelConcurrency(ctx context.Context) (map[string]ModelLoadInfo, error)
 }
 
 // OpenAIWSIngressLeaseCache owns the short-lived distributed lease used to
@@ -225,6 +235,7 @@ const (
 	maxAccountLoadBatchCacheEntries = 256
 	apiKeyConcurrencyFetchTimeout   = 3 * time.Second
 	apiKeySlotTrackTimeout          = 2 * time.Second
+	modelConcurrencyMaxModelBytes   = 512
 )
 
 // ConcurrencyService 管理账号和用户的并发限制。
@@ -336,6 +347,11 @@ type UserLoadInfo struct {
 	LoadRate           int // 0-100+ (percent)
 }
 
+type ModelLoadInfo struct {
+	CurrentConcurrency int
+	WaitingCount       int
+}
+
 // AcquireAccountSlot attempts to acquire a concurrency slot for an account.
 // If the account is at max concurrency, it waits until a slot is available or timeout.
 // Returns a release function that MUST be called when the request completes.
@@ -383,7 +399,7 @@ func (s *ConcurrencyService) AcquireUserSlot(ctx context.Context, userID int64, 
 	if maxConcurrency <= 0 {
 		return &AcquireResult{
 			Acquired:    true,
-			ReleaseFunc: func() {}, // no-op
+			ReleaseFunc: s.TrackModelSlot(ctx),
 		}, nil
 	}
 
@@ -396,6 +412,7 @@ func (s *ConcurrencyService) AcquireUserSlot(ctx context.Context, userID int64, 
 	}
 
 	if acquired {
+		modelRelease := s.TrackModelSlot(ctx)
 		return &AcquireResult{
 			Acquired: true,
 			ReleaseFunc: func() {
@@ -404,6 +421,7 @@ func (s *ConcurrencyService) AcquireUserSlot(ctx context.Context, userID int64, 
 				if err := s.cache.ReleaseUserSlot(bgCtx, userID, requestID); err != nil {
 					logger.LegacyPrintf("service.concurrency", "Warning: failed to release user slot for %d (req=%s): %v", userID, requestID, err)
 				}
+				modelRelease()
 			},
 		}, nil
 	}
@@ -412,6 +430,88 @@ func (s *ConcurrencyService) AcquireUserSlot(ctx context.Context, userID int64, 
 		Acquired:    false,
 		ReleaseFunc: nil,
 	}, nil
+}
+
+func requestModelForConcurrency(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	model, _ := ctx.Value(ctxkey.Model).(string)
+	return modelNameForConcurrency(model)
+}
+
+func modelNameForConcurrency(model string) string {
+	model = strings.TrimSpace(model)
+	if len(model) > modelConcurrencyMaxModelBytes {
+		return ""
+	}
+	return model
+}
+
+func (s *ConcurrencyService) trackModel(ctx context.Context, waiting bool) func() {
+	model := requestModelForConcurrency(ctx)
+	if s == nil || s.cache == nil || model == "" {
+		return func() {}
+	}
+	cache, ok := s.cache.(ModelConcurrencyCache)
+	if !ok {
+		return func() {}
+	}
+
+	requestID := generateRequestID()
+	baseCtx := context.Background()
+	if ctx != nil {
+		baseCtx = context.WithoutCancel(ctx)
+	}
+	trackCtx, cancel := context.WithTimeout(baseCtx, apiKeySlotTrackTimeout)
+	var err error
+	if waiting {
+		err = cache.TrackModelWait(trackCtx, model, requestID)
+	} else {
+		err = cache.TrackModelSlot(trackCtx, model, requestID)
+	}
+	cancel()
+	if err != nil {
+		logger.LegacyPrintf("service.concurrency", "Warning: failed to track model concurrency for %q (req=%s): %v", model, requestID, err)
+		return func() {}
+	}
+
+	return func() {
+		bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		var releaseErr error
+		if waiting {
+			releaseErr = cache.ReleaseModelWait(bgCtx, model, requestID)
+		} else {
+			releaseErr = cache.ReleaseModelSlot(bgCtx, model, requestID)
+		}
+		if releaseErr != nil {
+			logger.LegacyPrintf("service.concurrency", "Warning: failed to release model concurrency for %q (req=%s): %v", model, requestID, releaseErr)
+		}
+	}
+}
+
+// TrackModelSlot records a stats-only active request for the model in ctx.
+func (s *ConcurrencyService) TrackModelSlot(ctx context.Context) func() {
+	return s.trackModel(ctx, false)
+}
+
+// TrackModelWait records a request waiting for a user slot for the model in ctx.
+func (s *ConcurrencyService) TrackModelWait(ctx context.Context) func() {
+	return s.trackModel(ctx, true)
+}
+
+func (s *ConcurrencyService) GetModelConcurrency(ctx context.Context) (map[string]ModelLoadInfo, error) {
+	if s == nil || s.cache == nil {
+		return map[string]ModelLoadInfo{}, nil
+	}
+	cache, ok := s.cache.(ModelConcurrencyCache)
+	if !ok {
+		return map[string]ModelLoadInfo{}, nil
+	}
+	redisCtx, cancel := context.WithTimeout(ctx, apiKeyConcurrencyFetchTimeout)
+	defer cancel()
+	return cache.GetModelConcurrency(redisCtx)
 }
 
 // TrackAPIKeySlot records one active request slot for an API key without
