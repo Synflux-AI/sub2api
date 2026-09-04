@@ -385,7 +385,8 @@ type UpdateSettingsRequest struct {
 	AuthSourceGooglePlatformQuotas   map[string]*service.DefaultPlatformQuotaSetting `json:"auth_source_default_google_platform_quotas"`
 	AuthSourceDingTalkPlatformQuotas map[string]*service.DefaultPlatformQuotaSetting `json:"auth_source_default_dingtalk_platform_quotas"`
 
-	AllowUserViewErrorRequests *bool `json:"allow_user_view_error_requests"`
+	AllowUserViewErrorRequests *bool    `json:"allow_user_view_error_requests"`
+	PlatformSettlementRate     *float64 `json:"platform_settlement_rate"`
 }
 
 // UpdateSettings 更新系统设置
@@ -507,6 +508,10 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 	previousAuthSourceDefaults, err := h.settingService.GetAuthSourceDefaultSettings(c.Request.Context())
 	if err != nil {
 		response.ErrorFrom(c, err)
+		return
+	}
+	if req.PlatformSettlementRate != nil && *req.PlatformSettlementRate <= 0 {
+		response.BadRequest(c, "Platform settlement rate must be greater than 0")
 		return
 	}
 
@@ -1660,6 +1665,12 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			}
 			return previousSettings.AllowUserViewErrorRequests
 		}(),
+		PlatformSettlementRate: func() float64 {
+			if req.PlatformSettlementRate != nil {
+				return *req.PlatformSettlementRate
+			}
+			return previousSettings.PlatformSettlementRate
+		}(),
 		OpsMonitoringEnabled: func() bool {
 			if req.OpsMonitoringEnabled != nil {
 				return *req.OpsMonitoringEnabled
@@ -2433,6 +2444,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		CyberSessionBlockTTLSeconds: updatedSettings.CyberSessionBlockTTLSeconds,
 		AccountSchedulingThresholds: updatedSettings.AccountSchedulingThresholds,
 		AllowUserViewErrorRequests:  updatedSettings.AllowUserViewErrorRequests,
+		PlatformSettlementRate:      updatedSettings.PlatformSettlementRate,
 	}
 	if fastPolicy, err := h.settingService.GetOpenAIFastPolicySettings(c.Request.Context()); err != nil {
 		slog.Error("openai_fast_policy_settings_get_failed", "error", err)

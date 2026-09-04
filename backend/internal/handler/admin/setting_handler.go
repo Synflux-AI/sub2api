@@ -62,6 +62,7 @@ type SettingHandler struct {
 	notificationEmailService *service.NotificationEmailService
 	totpService              *service.TotpService
 	userService              *service.UserService
+	billingEntityService     *service.BillingEntityService
 }
 
 // NewSettingHandler 创建系统设置处理器
@@ -398,6 +399,7 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 
 		AccountSchedulingThresholds: settings.AccountSchedulingThresholds,
 		AllowUserViewErrorRequests:  settings.AllowUserViewErrorRequests,
+		PlatformSettlementRate:      settings.PlatformSettlementRate,
 	}
 
 	// OpenAI fast policy (stored under a dedicated setting key)

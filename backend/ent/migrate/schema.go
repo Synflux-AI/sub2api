@@ -619,6 +619,21 @@ var (
 			},
 		},
 	}
+	// BillingEntitiesColumns holds the columns for the "billing_entities" table.
+	BillingEntitiesColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeInt64, Increment: true},
+		{Name: "created_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
+		{Name: "updated_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
+		{Name: "name", Type: field.TypeString, Unique: true, Size: 200},
+		{Name: "currency", Type: field.TypeString, Size: 3},
+		{Name: "status", Type: field.TypeString, Default: "active"},
+	}
+	// BillingEntitiesTable holds the schema information for the "billing_entities" table.
+	BillingEntitiesTable = &schema.Table{
+		Name:       "billing_entities",
+		Columns:    BillingEntitiesColumns,
+		PrimaryKey: []*schema.Column{BillingEntitiesColumns[0]},
+	}
 	// ChannelMonitorsColumns holds the columns for the "channel_monitors" table.
 	ChannelMonitorsColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeInt64, Increment: true},
@@ -1867,12 +1882,21 @@ var (
 		{Name: "balance_notify_extra_emails", Type: field.TypeString, Default: "[]", SchemaType: map[string]string{"postgres": "text"}},
 		{Name: "total_recharged", Type: field.TypeFloat64, Default: 0, SchemaType: map[string]string{"postgres": "decimal(20,8)"}},
 		{Name: "rpm_limit", Type: field.TypeInt, Default: 0},
+		{Name: "billing_entity_id", Type: field.TypeInt64, Nullable: true},
 	}
 	// UsersTable holds the schema information for the "users" table.
 	UsersTable = &schema.Table{
 		Name:       "users",
 		Columns:    UsersColumns,
 		PrimaryKey: []*schema.Column{UsersColumns[0]},
+		ForeignKeys: []*schema.ForeignKey{
+			{
+				Symbol:     "users_billing_entities_users",
+				Columns:    []*schema.Column{UsersColumns[26]},
+				RefColumns: []*schema.Column{BillingEntitiesColumns[0]},
+				OnDelete:   schema.SetNull,
+			},
+		},
 		Indexes: []*schema.Index{
 			{
 				Name:    "user_status",
@@ -2153,6 +2177,7 @@ var (
 		BatchImageEventsTable,
 		BatchImageItemsTable,
 		BatchImageJobsTable,
+		BillingEntitiesTable,
 		ChannelMonitorsTable,
 		ChannelMonitorDailyRollupsTable,
 		ChannelMonitorHistoriesTable,
@@ -2226,6 +2251,9 @@ func init() {
 	}
 	BatchImageJobsTable.Annotation = &entsql.Annotation{
 		Table: "batch_image_jobs",
+	}
+	BillingEntitiesTable.Annotation = &entsql.Annotation{
+		Table: "billing_entities",
 	}
 	ChannelMonitorsTable.ForeignKeys[0].RefTable = ChannelMonitorRequestTemplatesTable
 	ChannelMonitorsTable.Annotation = &entsql.Annotation{
@@ -2317,6 +2345,7 @@ func init() {
 	UsageLogsTable.Annotation = &entsql.Annotation{
 		Table: "usage_logs",
 	}
+	UsersTable.ForeignKeys[0].RefTable = BillingEntitiesTable
 	UsersTable.Annotation = &entsql.Annotation{
 		Table: "users",
 	}

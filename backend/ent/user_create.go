@@ -14,6 +14,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/announcementread"
 	"github.com/Wei-Shaw/sub2api/ent/apikey"
 	"github.com/Wei-Shaw/sub2api/ent/authidentity"
+	"github.com/Wei-Shaw/sub2api/ent/billingentity"
 	"github.com/Wei-Shaw/sub2api/ent/group"
 	"github.com/Wei-Shaw/sub2api/ent/paymentorder"
 	"github.com/Wei-Shaw/sub2api/ent/pendingauthsession"
@@ -368,6 +369,20 @@ func (_c *UserCreate) SetNillableRpmLimit(v *int) *UserCreate {
 	return _c
 }
 
+// SetBillingEntityID sets the "billing_entity_id" field.
+func (_c *UserCreate) SetBillingEntityID(v int64) *UserCreate {
+	_c.mutation.SetBillingEntityID(v)
+	return _c
+}
+
+// SetNillableBillingEntityID sets the "billing_entity_id" field if the given value is not nil.
+func (_c *UserCreate) SetNillableBillingEntityID(v *int64) *UserCreate {
+	if v != nil {
+		_c.SetBillingEntityID(*v)
+	}
+	return _c
+}
+
 // AddAPIKeyIDs adds the "api_keys" edge to the APIKey entity by IDs.
 func (_c *UserCreate) AddAPIKeyIDs(ids ...int64) *UserCreate {
 	_c.mutation.AddAPIKeyIDs(ids...)
@@ -561,6 +576,11 @@ func (_c *UserCreate) AddPlatformQuotas(v ...*UserPlatformQuota) *UserCreate {
 		ids[i] = v[i].ID
 	}
 	return _c.AddPlatformQuotaIDs(ids...)
+}
+
+// SetBillingEntity sets the "billing_entity" edge to the BillingEntity entity.
+func (_c *UserCreate) SetBillingEntity(v *BillingEntity) *UserCreate {
+	return _c.SetBillingEntityID(v.ID)
 }
 
 // Mutation returns the UserMutation object of the builder.
@@ -1105,6 +1125,23 @@ func (_c *UserCreate) createSpec() (*User, *sqlgraph.CreateSpec) {
 		}
 		_spec.Edges = append(_spec.Edges, edge)
 	}
+	if nodes := _c.mutation.BillingEntityIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.M2O,
+			Inverse: true,
+			Table:   user.BillingEntityTable,
+			Columns: []string{user.BillingEntityColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(billingentity.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_node.BillingEntityID = &nodes[0]
+		_spec.Edges = append(_spec.Edges, edge)
+	}
 	return _node, _spec
 }
 
@@ -1514,6 +1551,24 @@ func (u *UserUpsert) UpdateRpmLimit() *UserUpsert {
 // AddRpmLimit adds v to the "rpm_limit" field.
 func (u *UserUpsert) AddRpmLimit(v int) *UserUpsert {
 	u.Add(user.FieldRpmLimit, v)
+	return u
+}
+
+// SetBillingEntityID sets the "billing_entity_id" field.
+func (u *UserUpsert) SetBillingEntityID(v int64) *UserUpsert {
+	u.Set(user.FieldBillingEntityID, v)
+	return u
+}
+
+// UpdateBillingEntityID sets the "billing_entity_id" field to the value that was provided on create.
+func (u *UserUpsert) UpdateBillingEntityID() *UserUpsert {
+	u.SetExcluded(user.FieldBillingEntityID)
+	return u
+}
+
+// ClearBillingEntityID clears the value of the "billing_entity_id" field.
+func (u *UserUpsert) ClearBillingEntityID() *UserUpsert {
+	u.SetNull(user.FieldBillingEntityID)
 	return u
 }
 
@@ -1979,6 +2034,27 @@ func (u *UserUpsertOne) AddRpmLimit(v int) *UserUpsertOne {
 func (u *UserUpsertOne) UpdateRpmLimit() *UserUpsertOne {
 	return u.Update(func(s *UserUpsert) {
 		s.UpdateRpmLimit()
+	})
+}
+
+// SetBillingEntityID sets the "billing_entity_id" field.
+func (u *UserUpsertOne) SetBillingEntityID(v int64) *UserUpsertOne {
+	return u.Update(func(s *UserUpsert) {
+		s.SetBillingEntityID(v)
+	})
+}
+
+// UpdateBillingEntityID sets the "billing_entity_id" field to the value that was provided on create.
+func (u *UserUpsertOne) UpdateBillingEntityID() *UserUpsertOne {
+	return u.Update(func(s *UserUpsert) {
+		s.UpdateBillingEntityID()
+	})
+}
+
+// ClearBillingEntityID clears the value of the "billing_entity_id" field.
+func (u *UserUpsertOne) ClearBillingEntityID() *UserUpsertOne {
+	return u.Update(func(s *UserUpsert) {
+		s.ClearBillingEntityID()
 	})
 }
 
@@ -2610,6 +2686,27 @@ func (u *UserUpsertBulk) AddRpmLimit(v int) *UserUpsertBulk {
 func (u *UserUpsertBulk) UpdateRpmLimit() *UserUpsertBulk {
 	return u.Update(func(s *UserUpsert) {
 		s.UpdateRpmLimit()
+	})
+}
+
+// SetBillingEntityID sets the "billing_entity_id" field.
+func (u *UserUpsertBulk) SetBillingEntityID(v int64) *UserUpsertBulk {
+	return u.Update(func(s *UserUpsert) {
+		s.SetBillingEntityID(v)
+	})
+}
+
+// UpdateBillingEntityID sets the "billing_entity_id" field to the value that was provided on create.
+func (u *UserUpsertBulk) UpdateBillingEntityID() *UserUpsertBulk {
+	return u.Update(func(s *UserUpsert) {
+		s.UpdateBillingEntityID()
+	})
+}
+
+// ClearBillingEntityID clears the value of the "billing_entity_id" field.
+func (u *UserUpsertBulk) ClearBillingEntityID() *UserUpsertBulk {
+	return u.Update(func(s *UserUpsert) {
+		s.ClearBillingEntityID()
 	})
 }
 

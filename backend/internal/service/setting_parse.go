@@ -261,6 +261,7 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyOpenAIAdvancedSchedulerWeightSessionSticky:         "",
 
 		SettingKeyAllowUserViewErrorRequests: "false",
+		SettingKeyPlatformSettlementRate:     "6.8",
 	}
 
 	return s.settingRepo.SetMultiple(ctx, defaults)
@@ -996,6 +997,10 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	}
 
 	result.AllowUserViewErrorRequests = settings[SettingKeyAllowUserViewErrorRequests] == "true" // default false
+	result.PlatformSettlementRate = 6.8
+	if value, err := strconv.ParseFloat(settings[SettingKeyPlatformSettlementRate], 64); err == nil && value > 0 {
+		result.PlatformSettlementRate = value
+	}
 
 	// Publish Grok default model_mapping options for accounts with empty mapping.
 	xai.SetRuntimeModelMappingOptions(xai.ModelMappingOptions{

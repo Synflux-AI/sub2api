@@ -320,6 +320,13 @@ func (r *userRepository) Update(ctx context.Context, userIn *service.User, field
 	if fields.RestrictPublicGroups {
 		updateOp = updateOp.SetRestrictPublicGroups(userIn.RestrictPublicGroups)
 	}
+	if fields.BillingEntity {
+		if userIn.BillingEntityID == nil {
+			updateOp = updateOp.ClearBillingEntityID()
+		} else {
+			updateOp = updateOp.SetBillingEntityID(*userIn.BillingEntityID)
+		}
+	}
 	if fields.BalanceNotifySettings {
 		updateOp = updateOp.
 			SetBalanceNotifyEnabled(userIn.BalanceNotifyEnabled).
@@ -1564,6 +1571,7 @@ func applyUserEntityToService(dst *service.User, src *dbent.User) {
 	dst.LastActiveAt = src.LastActiveAt
 	dst.CreatedAt = src.CreatedAt
 	dst.UpdatedAt = src.UpdatedAt
+	dst.BillingEntityID = src.BillingEntityID
 }
 
 func userSignupSourceOrDefault(signupSource string) string {

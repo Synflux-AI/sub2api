@@ -45,6 +45,16 @@ func TestMigrationsRunner_IsIdempotent_AndSchemaIsUpToDate(t *testing.T) {
 	// users: columns required by repository queries
 	requireColumn(t, tx, "users", "username", "character varying", 100, false)
 	requireColumn(t, tx, "users", "notes", "text", 0, false)
+	requireColumn(t, tx, "users", "billing_entity_id", "bigint", 0, true)
+	requireIndex(t, tx, "users", "idx_users_billing_entity_id")
+	requireForeignKeyOnDelete(t, tx, "users", "billing_entity_id", "billing_entities", "RESTRICT")
+
+	var billingEntitiesRegclass sql.NullString
+	require.NoError(t, tx.QueryRowContext(context.Background(), "SELECT to_regclass('public.billing_entities')").Scan(&billingEntitiesRegclass))
+	require.True(t, billingEntitiesRegclass.Valid, "expected billing_entities table to exist")
+	requireColumn(t, tx, "billing_entities", "name", "character varying", 200, false)
+	requireColumn(t, tx, "billing_entities", "currency", "character varying", 3, false)
+	requireColumn(t, tx, "billing_entities", "status", "character varying", 20, false)
 
 	// accounts: schedulable and rate-limit fields
 	requireColumn(t, tx, "accounts", "notes", "text", 0, true)

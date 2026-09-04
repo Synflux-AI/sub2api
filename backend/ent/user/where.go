@@ -180,6 +180,11 @@ func RpmLimit(v int) predicate.User {
 	return predicate.User(sql.FieldEQ(FieldRpmLimit, v))
 }
 
+// BillingEntityID applies equality check predicate on the "billing_entity_id" field. It's identical to BillingEntityIDEQ.
+func BillingEntityID(v int64) predicate.User {
+	return predicate.User(sql.FieldEQ(FieldBillingEntityID, v))
+}
+
 // CreatedAtEQ applies the EQ predicate on the "created_at" field.
 func CreatedAtEQ(v time.Time) predicate.User {
 	return predicate.User(sql.FieldEQ(FieldCreatedAt, v))
@@ -1400,6 +1405,36 @@ func RpmLimitLTE(v int) predicate.User {
 	return predicate.User(sql.FieldLTE(FieldRpmLimit, v))
 }
 
+// BillingEntityIDEQ applies the EQ predicate on the "billing_entity_id" field.
+func BillingEntityIDEQ(v int64) predicate.User {
+	return predicate.User(sql.FieldEQ(FieldBillingEntityID, v))
+}
+
+// BillingEntityIDNEQ applies the NEQ predicate on the "billing_entity_id" field.
+func BillingEntityIDNEQ(v int64) predicate.User {
+	return predicate.User(sql.FieldNEQ(FieldBillingEntityID, v))
+}
+
+// BillingEntityIDIn applies the In predicate on the "billing_entity_id" field.
+func BillingEntityIDIn(vs ...int64) predicate.User {
+	return predicate.User(sql.FieldIn(FieldBillingEntityID, vs...))
+}
+
+// BillingEntityIDNotIn applies the NotIn predicate on the "billing_entity_id" field.
+func BillingEntityIDNotIn(vs ...int64) predicate.User {
+	return predicate.User(sql.FieldNotIn(FieldBillingEntityID, vs...))
+}
+
+// BillingEntityIDIsNil applies the IsNil predicate on the "billing_entity_id" field.
+func BillingEntityIDIsNil() predicate.User {
+	return predicate.User(sql.FieldIsNull(FieldBillingEntityID))
+}
+
+// BillingEntityIDNotNil applies the NotNil predicate on the "billing_entity_id" field.
+func BillingEntityIDNotNil() predicate.User {
+	return predicate.User(sql.FieldNotNull(FieldBillingEntityID))
+}
+
 // HasAPIKeys applies the HasEdge predicate on the "api_keys" edge.
 func HasAPIKeys() predicate.User {
 	return predicate.User(func(s *sql.Selector) {
@@ -1691,6 +1726,29 @@ func HasPlatformQuotas() predicate.User {
 func HasPlatformQuotasWith(preds ...predicate.UserPlatformQuota) predicate.User {
 	return predicate.User(func(s *sql.Selector) {
 		step := newPlatformQuotasStep()
+		sqlgraph.HasNeighborsWith(s, step, func(s *sql.Selector) {
+			for _, p := range preds {
+				p(s)
+			}
+		})
+	})
+}
+
+// HasBillingEntity applies the HasEdge predicate on the "billing_entity" edge.
+func HasBillingEntity() predicate.User {
+	return predicate.User(func(s *sql.Selector) {
+		step := sqlgraph.NewStep(
+			sqlgraph.From(Table, FieldID),
+			sqlgraph.Edge(sqlgraph.M2O, true, BillingEntityTable, BillingEntityColumn),
+		)
+		sqlgraph.HasNeighbors(s, step)
+	})
+}
+
+// HasBillingEntityWith applies the HasEdge predicate on the "billing_entity" edge with a given conditions (other predicates).
+func HasBillingEntityWith(preds ...predicate.BillingEntity) predicate.User {
+	return predicate.User(func(s *sql.Selector) {
+		step := newBillingEntityStep()
 		sqlgraph.HasNeighborsWith(s, step, func(s *sql.Selector) {
 			for _, p := range preds {
 				p(s)

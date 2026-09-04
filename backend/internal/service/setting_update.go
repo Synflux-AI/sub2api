@@ -549,6 +549,14 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	}
 
 	updates[SettingKeyAllowUserViewErrorRequests] = strconv.FormatBool(settings.AllowUserViewErrorRequests)
+	settlementRate := settings.PlatformSettlementRate
+	if settlementRate == 0 {
+		settlementRate = 6.8
+	}
+	if math.IsNaN(settlementRate) || math.IsInf(settlementRate, 0) || settlementRate < 0 {
+		return nil, infraerrors.BadRequest("PLATFORM_SETTLEMENT_RATE_INVALID", "platform settlement rate must be greater than 0")
+	}
+	updates[SettingKeyPlatformSettlementRate] = strconv.FormatFloat(settlementRate, 'f', -1, 64)
 
 	return updates, nil
 }

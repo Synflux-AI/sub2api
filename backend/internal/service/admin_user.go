@@ -13,6 +13,7 @@ import (
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/ent/authidentity"
 	"github.com/Wei-Shaw/sub2api/ent/authidentitychannel"
+	"github.com/Wei-Shaw/sub2api/ent/billingentity"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
@@ -285,6 +286,31 @@ func (s *adminServiceImpl) UpdateUser(ctx context.Context, id int64, input *Upda
 	if input.RestrictPublicGroups != nil {
 		user.RestrictPublicGroups = *input.RestrictPublicGroups
 		fields.RestrictPublicGroups = true
+	}
+	if input.BillingEntityID != nil {
+		entityID := *input.BillingEntityID
+		if entityID <= 0 {
+			user.BillingEntityID = nil
+		} else {
+			changing := user.BillingEntityID == nil || *user.BillingEntityID != entityID
+			if changing {
+				if s.entClient == nil {
+					return nil, errors.New("billing entity validation unavailable")
+				}
+				entity, err := s.entClient.BillingEntity.Query().Where(billingentity.IDEQ(entityID)).Only(ctx)
+				if dbent.IsNotFound(err) {
+					return nil, ErrBillingEntityNotFound
+				}
+				if err != nil {
+					return nil, err
+				}
+				if entity.Status != "active" {
+					return nil, infraerrors.BadRequest("BILLING_ENTITY_INACTIVE", "inactive billing entity cannot be assigned")
+				}
+			}
+			user.BillingEntityID = &entityID
+		}
+		fields.BillingEntity = true
 	}
 
 	if err := s.userRepo.Update(ctx, user, fields); err != nil {

@@ -599,6 +599,10 @@ func registerSettingsRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	{
 		adminSettings.GET("", h.Admin.Setting.GetSettings)
 		adminSettings.PUT("", h.Admin.Setting.UpdateSettings)
+		adminSettings.GET("/billing-entities", h.Admin.Setting.ListBillingEntities)
+		adminSettings.POST("/billing-entities", h.Admin.Setting.CreateBillingEntity)
+		adminSettings.PUT("/billing-entities/:id", h.Admin.Setting.UpdateBillingEntity)
+		adminSettings.DELETE("/billing-entities/:id", h.Admin.Setting.DeleteBillingEntity)
 		adminSettings.POST("/test-smtp", h.Admin.Setting.TestSMTPConnection)
 		adminSettings.POST("/send-test-email", h.Admin.Setting.SendTestEmail)
 		adminSettings.GET("/email-templates", h.Admin.Setting.ListEmailTemplates)

@@ -15,6 +15,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/batchimageevent"
 	"github.com/Wei-Shaw/sub2api/ent/batchimageitem"
 	"github.com/Wei-Shaw/sub2api/ent/batchimagejob"
+	"github.com/Wei-Shaw/sub2api/ent/billingentity"
 	"github.com/Wei-Shaw/sub2api/ent/channelmonitor"
 	"github.com/Wei-Shaw/sub2api/ent/channelmonitordailyrollup"
 	"github.com/Wei-Shaw/sub2api/ent/channelmonitorhistory"
@@ -611,6 +612,64 @@ func init() {
 	batchimagejob.DefaultUpdatedAt = batchimagejobDescUpdatedAt.Default.(func() time.Time)
 	// batchimagejob.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
 	batchimagejob.UpdateDefaultUpdatedAt = batchimagejobDescUpdatedAt.UpdateDefault.(func() time.Time)
+	billingentityMixin := schema.BillingEntity{}.Mixin()
+	billingentityMixinFields0 := billingentityMixin[0].Fields()
+	_ = billingentityMixinFields0
+	billingentityFields := schema.BillingEntity{}.Fields()
+	_ = billingentityFields
+	// billingentityDescCreatedAt is the schema descriptor for created_at field.
+	billingentityDescCreatedAt := billingentityMixinFields0[0].Descriptor()
+	// billingentity.DefaultCreatedAt holds the default value on creation for the created_at field.
+	billingentity.DefaultCreatedAt = billingentityDescCreatedAt.Default.(func() time.Time)
+	// billingentityDescUpdatedAt is the schema descriptor for updated_at field.
+	billingentityDescUpdatedAt := billingentityMixinFields0[1].Descriptor()
+	// billingentity.DefaultUpdatedAt holds the default value on creation for the updated_at field.
+	billingentity.DefaultUpdatedAt = billingentityDescUpdatedAt.Default.(func() time.Time)
+	// billingentity.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
+	billingentity.UpdateDefaultUpdatedAt = billingentityDescUpdatedAt.UpdateDefault.(func() time.Time)
+	// billingentityDescName is the schema descriptor for name field.
+	billingentityDescName := billingentityFields[0].Descriptor()
+	// billingentity.NameValidator is a validator for the "name" field. It is called by the builders before save.
+	billingentity.NameValidator = func() func(string) error {
+		validators := billingentityDescName.Validators
+		fns := [...]func(string) error{
+			validators[0].(func(string) error),
+			validators[1].(func(string) error),
+		}
+		return func(name string) error {
+			for _, fn := range fns {
+				if err := fn(name); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+	}()
+	// billingentityDescCurrency is the schema descriptor for currency field.
+	billingentityDescCurrency := billingentityFields[1].Descriptor()
+	// billingentity.CurrencyValidator is a validator for the "currency" field. It is called by the builders before save.
+	billingentity.CurrencyValidator = func() func(string) error {
+		validators := billingentityDescCurrency.Validators
+		fns := [...]func(string) error{
+			validators[0].(func(string) error),
+			validators[1].(func(string) error),
+			validators[2].(func(string) error),
+		}
+		return func(currency string) error {
+			for _, fn := range fns {
+				if err := fn(currency); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+	}()
+	// billingentityDescStatus is the schema descriptor for status field.
+	billingentityDescStatus := billingentityFields[2].Descriptor()
+	// billingentity.DefaultStatus holds the default value on creation for the status field.
+	billingentity.DefaultStatus = billingentityDescStatus.Default.(string)
+	// billingentity.StatusValidator is a validator for the "status" field. It is called by the builders before save.
+	billingentity.StatusValidator = billingentityDescStatus.Validators[0].(func(string) error)
 	channelmonitorMixin := schema.ChannelMonitor{}.Mixin()
 	channelmonitorMixinFields0 := channelmonitorMixin[0].Fields()
 	_ = channelmonitorMixinFields0

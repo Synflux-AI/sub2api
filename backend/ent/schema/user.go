@@ -120,6 +120,9 @@ func (User) Fields() []ent.Field {
 		// 用户级每分钟请求数上限（0 = 不限制）。仅当所在分组未设置 rpm_limit 时作为兜底生效。
 		field.Int("rpm_limit").
 			Default(0),
+		field.Int64("billing_entity_id").
+			Optional().
+			Nillable(),
 	}
 }
 
@@ -140,6 +143,11 @@ func (User) Edges() []ent.Edge {
 			Annotations(entsql.OnDelete(entsql.Cascade)),
 		edge.To("pending_auth_sessions", PendingAuthSession.Type),
 		edge.To("platform_quotas", UserPlatformQuota.Type),
+		edge.From("billing_entity", BillingEntity.Type).
+			Ref("users").
+			Field("billing_entity_id").
+			Unique().
+			Annotations(entsql.OnDelete(entsql.Restrict)),
 	}
 }
 
