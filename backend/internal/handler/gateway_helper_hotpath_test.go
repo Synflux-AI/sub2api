@@ -21,18 +21,22 @@ type helperConcurrencyCacheStub struct {
 	accountSeq []bool
 	userSeq    []bool
 
-	accountAcquireCalls int
-	userAcquireCalls    int
-	accountReleaseCalls int
-	userReleaseCalls    int
-	waitAllowed         bool
-	waitIncrementCalls  int
-	waitDecrementCalls  int
-	waitMaxWait         int
-	waitIncrementHook   func()
-	apiKeyTrackCalls    int
-	apiKeyReleaseCalls  int
-	apiKeyTrackIDs      []int64
+	accountAcquireCalls   int
+	userAcquireCalls      int
+	accountReleaseCalls   int
+	userReleaseCalls      int
+	waitAllowed           bool
+	waitIncrementCalls    int
+	waitDecrementCalls    int
+	waitMaxWait           int
+	waitIncrementHook     func()
+	apiKeyTrackCalls      int
+	apiKeyReleaseCalls    int
+	apiKeyTrackIDs        []int64
+	modelTrackCalls       int
+	modelReleaseCalls     int
+	modelWaitTrackCalls   int
+	modelWaitReleaseCalls int
 }
 
 func (s *helperConcurrencyCacheStub) AcquireAccountSlot(ctx context.Context, accountID int64, maxConcurrency int, requestID string) (bool, error) {
@@ -122,6 +126,38 @@ func (s *helperConcurrencyCacheStub) GetAPIKeyConcurrencyBatch(ctx context.Conte
 		out[apiKeyID] = 0
 	}
 	return out, nil
+}
+
+func (s *helperConcurrencyCacheStub) TrackModelSlot(context.Context, string, string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.modelTrackCalls++
+	return nil
+}
+
+func (s *helperConcurrencyCacheStub) ReleaseModelSlot(context.Context, string, string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.modelReleaseCalls++
+	return nil
+}
+
+func (s *helperConcurrencyCacheStub) TrackModelWait(context.Context, string, string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.modelWaitTrackCalls++
+	return nil
+}
+
+func (s *helperConcurrencyCacheStub) ReleaseModelWait(context.Context, string, string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.modelWaitReleaseCalls++
+	return nil
+}
+
+func (s *helperConcurrencyCacheStub) GetModelConcurrency(context.Context) (map[string]service.ModelLoadInfo, error) {
+	return map[string]service.ModelLoadInfo{}, nil
 }
 
 func (s *helperConcurrencyCacheStub) IncrementWaitCount(ctx context.Context, userID int64, maxWait int) (bool, error) {
@@ -284,6 +320,7 @@ func TestAcquireUserSlotWithWait_ImmediateAcquireSkipsWaitQueue(t *testing.T) {
 	concurrency := service.NewConcurrencyService(cache)
 	helper := NewConcurrencyHelper(concurrency, SSEPingFormatNone, 5*time.Millisecond)
 	c, _ := newHelperTestContext(http.MethodPost, "/v1/messages")
+	setOpsRequestContext(c, "gpt-5", false)
 	streamStarted := false
 
 	release, err := helper.acquireUserSlotWithWaitTimeout(c, 202, 3, time.Second, false, &streamStarted)
@@ -347,6 +384,7 @@ func TestAcquireUserSlotWithWait_WaitSuccessDecrementsBeforeReturn(t *testing.T)
 	concurrency := service.NewConcurrencyService(cache)
 	helper := NewConcurrencyHelper(concurrency, SSEPingFormatNone, 5*time.Millisecond)
 	c, _ := newHelperTestContext(http.MethodPost, "/v1/messages")
+	setOpsRequestContext(c, "gpt-5", false)
 	streamStarted := false
 
 	release, err := helper.acquireUserSlotWithWaitTimeout(c, 202, 3, time.Second, false, &streamStarted)
@@ -357,9 +395,13 @@ func TestAcquireUserSlotWithWait_WaitSuccessDecrementsBeforeReturn(t *testing.T)
 	require.Equal(t, 1, cache.waitIncrementCalls)
 	require.Equal(t, 20, cache.waitMaxWait)
 	require.Equal(t, 1, cache.waitDecrementCalls)
+	require.Equal(t, 1, cache.modelWaitTrackCalls)
+	require.Equal(t, 1, cache.modelWaitReleaseCalls)
+	require.Equal(t, 1, cache.modelTrackCalls)
 
 	release()
 	require.Equal(t, 1, cache.userReleaseCalls)
+	require.Equal(t, 1, cache.modelReleaseCalls)
 }
 
 func TestAcquireUserSlotWithWait_TimeoutDecrementsWaitQueue(t *testing.T) {
@@ -370,6 +412,7 @@ func TestAcquireUserSlotWithWait_TimeoutDecrementsWaitQueue(t *testing.T) {
 	concurrency := service.NewConcurrencyService(cache)
 	helper := NewConcurrencyHelper(concurrency, SSEPingFormatNone, 5*time.Millisecond)
 	c, _ := newHelperTestContext(http.MethodPost, "/v1/messages")
+	setOpsRequestContext(c, "gpt-5", false)
 	streamStarted := false
 
 	release, err := helper.acquireUserSlotWithWaitTimeout(c, 202, 3, 30*time.Millisecond, false, &streamStarted)
@@ -380,6 +423,9 @@ func TestAcquireUserSlotWithWait_TimeoutDecrementsWaitQueue(t *testing.T) {
 	require.Equal(t, 1, cache.waitIncrementCalls)
 	require.Equal(t, 1, cache.waitDecrementCalls)
 	require.Equal(t, 0, cache.userReleaseCalls)
+	require.Equal(t, 1, cache.modelWaitTrackCalls)
+	require.Equal(t, 1, cache.modelWaitReleaseCalls)
+	require.Equal(t, 0, cache.modelTrackCalls)
 }
 
 func TestAcquireUserSlotWithWait_RequestCancelDecrementsWaitQueue(t *testing.T) {
@@ -400,6 +446,7 @@ func TestAcquireUserSlotWithWait_RequestCancelDecrementsWaitQueue(t *testing.T) 
 	cancel = cancelFunc
 	defer cancel()
 	c.Request = c.Request.WithContext(reqCtx)
+	setOpsRequestContext(c, "gpt-5", false)
 	streamStarted := false
 
 	release, err := helper.acquireUserSlotWithWaitTimeout(c, 202, 3, time.Second, false, &streamStarted)
@@ -409,6 +456,9 @@ func TestAcquireUserSlotWithWait_RequestCancelDecrementsWaitQueue(t *testing.T) 
 	require.Equal(t, 1, cache.waitIncrementCalls)
 	require.Equal(t, 1, cache.waitDecrementCalls)
 	require.Equal(t, 0, cache.userReleaseCalls)
+	require.Equal(t, 1, cache.modelWaitTrackCalls)
+	require.Equal(t, 1, cache.modelWaitReleaseCalls)
+	require.Equal(t, 0, cache.modelTrackCalls)
 }
 
 func TestWaitForSlotWithPingTimeout_TimeoutAndStreamPing(t *testing.T) {

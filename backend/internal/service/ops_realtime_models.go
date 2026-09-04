@@ -48,6 +48,14 @@ type UserConcurrencyInfo struct {
 	WaitingInQueue int64   `json:"waiting_in_queue"`
 }
 
+// ModelConcurrencyInfo represents stats-only request occupancy for one requested model.
+// Models do not have an independent concurrency capacity.
+type ModelConcurrencyInfo struct {
+	Model          string `json:"model"`
+	CurrentInUse   int64  `json:"current_in_use"`
+	WaitingInQueue int64  `json:"waiting_in_queue"`
+}
+
 // PlatformAvailability aggregates account availability by platform.
 type PlatformAvailability struct {
 	Platform       string `json:"platform"`

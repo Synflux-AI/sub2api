@@ -234,6 +234,38 @@ func (c *liveTestConcurrencyCache) ReleaseLiveLease(
 	return nil
 }
 
+type liveTestModelConcurrencyCache struct {
+	liveTestConcurrencyCache
+	modelTracks   []string
+	modelReleases []string
+}
+
+func (c *liveTestModelConcurrencyCache) TrackModelSlot(_ context.Context, model, _ string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.modelTracks = append(c.modelTracks, model)
+	return nil
+}
+
+func (c *liveTestModelConcurrencyCache) ReleaseModelSlot(_ context.Context, model, _ string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.modelReleases = append(c.modelReleases, model)
+	return nil
+}
+
+func (*liveTestModelConcurrencyCache) TrackModelWait(context.Context, string, string) error {
+	return nil
+}
+
+func (*liveTestModelConcurrencyCache) ReleaseModelWait(context.Context, string, string) error {
+	return nil
+}
+
+func (*liveTestModelConcurrencyCache) GetModelConcurrency(context.Context) (map[string]ModelLoadInfo, error) {
+	return map[string]ModelLoadInfo{}, nil
+}
+
 type liveTestUsageRepo struct {
 	UsageLogRepository
 	mu   sync.Mutex
@@ -265,7 +297,7 @@ func TestRunLiveControllerClosesExpiredSession(t *testing.T) {
 	}
 }
 
-func TestFinalizeLiveCallIsIdempotentAndWritesZeroUsage(t *testing.T) {
+func TestLiveModelConcurrencyRefreshAndFinalize(t *testing.T) {
 	record := &LiveCallRecord{
 		CallID:          "call_secret",
 		CallHash:        hashLiveCallID("call_secret"),
@@ -282,7 +314,7 @@ func TestFinalizeLiveCallIsIdempotentAndWritesZeroUsage(t *testing.T) {
 	}
 	store := &liveTestStore{}
 	require.NoError(t, store.SaveLiveCall(context.Background(), record, time.Hour))
-	concurrencyCache := &liveTestConcurrencyCache{}
+	concurrencyCache := &liveTestModelConcurrencyCache{}
 	usageRepo := &liveTestUsageRepo{}
 	service := &OpenAIGatewayService{
 		cache:              store,
@@ -290,11 +322,14 @@ func TestFinalizeLiveCallIsIdempotentAndWritesZeroUsage(t *testing.T) {
 		usageLogRepo:       usageRepo,
 	}
 
+	require.True(t, service.refreshLiveLease(record))
 	service.finalizeLiveCall(record)
 	service.finalizeLiveCall(record)
 
 	concurrencyCache.mu.Lock()
 	require.Equal(t, 1, concurrencyCache.releases)
+	require.Equal(t, []string{record.Model}, concurrencyCache.modelTracks)
+	require.Equal(t, []string{record.Model}, concurrencyCache.modelReleases)
 	concurrencyCache.mu.Unlock()
 	usageRepo.mu.Lock()
 	require.Len(t, usageRepo.logs, 1)

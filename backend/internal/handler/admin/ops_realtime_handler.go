@@ -29,6 +29,7 @@ func (h *OpsHandler) GetConcurrencyStats(c *gin.Context) {
 		response.Success(c, gin.H{
 			"enabled":   false,
 			"platform":  map[string]*service.PlatformConcurrencyInfo{},
+			"model":     map[string]*service.ModelConcurrencyInfo{},
 			"group":     map[int64]*service.GroupConcurrencyInfo{},
 			"account":   map[int64]*service.AccountConcurrencyInfo{},
 			"timestamp": time.Now().UTC(),
@@ -55,10 +56,19 @@ func (h *OpsHandler) GetConcurrencyStats(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
+	model, err := h.opsService.GetModelConcurrencyStats(c.Request.Context())
+	if err != nil {
+		if isOpsRealtimeRequestCanceled(c, err) {
+			return
+		}
+		response.ErrorFrom(c, err)
+		return
+	}
 
 	payload := gin.H{
 		"enabled":  true,
 		"platform": platform,
+		"model":    model,
 		"group":    group,
 		"account":  account,
 	}

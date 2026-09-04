@@ -2,9 +2,11 @@ package repository
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -33,6 +35,8 @@ const (
 	liveAccountSlotKeyPrefix = "concurrency:live:account:"
 	liveUserSlotKeyPrefix    = "concurrency:live:user:"
 	liveAPIKeySlotKeyPrefix  = "concurrency:live:api_key:"
+	modelSlotKey             = "concurrency:model:active"
+	modelWaitKey             = "concurrency:model:waiting"
 	// API-key-scoped client WebSocket ingress leases use a shorter TTL than
 	// ordinary request slots, because idle ingress sessions do not hold a turn slot.
 	openAIWSIngressLeaseKeyPrefix  = "concurrency:openai_ws_ingress:api_key:"
@@ -388,6 +392,19 @@ func userSlotKey(userID int64) string {
 
 func apiKeySlotKey(apiKeyID int64) string {
 	return fmt.Sprintf("%s%d", apiKeySlotKeyPrefix, apiKeyID)
+}
+
+func modelSlotMember(model, requestID string) string {
+	return base64.RawURLEncoding.EncodeToString([]byte(model)) + ":" + requestID
+}
+
+func modelFromSlotMember(member string) (string, bool) {
+	encoded, _, ok := strings.Cut(member, ":")
+	if !ok {
+		return "", false
+	}
+	decoded, err := base64.RawURLEncoding.DecodeString(encoded)
+	return string(decoded), err == nil && len(decoded) > 0
 }
 
 func liveAccountSlotKey(accountID int64) string {
@@ -750,6 +767,24 @@ func (c *concurrencyCache) ReleaseAPIKeySlot(ctx context.Context, apiKeyID int64
 	return c.rdb.ZRem(ctx, key, requestID).Err()
 }
 
+func (c *concurrencyCache) TrackModelSlot(ctx context.Context, model, requestID string) error {
+	_, err := trackSlotScript.Run(ctx, c.rdb, []string{modelSlotKey}, c.slotTTLSeconds, modelSlotMember(model, requestID)).Result()
+	return err
+}
+
+func (c *concurrencyCache) ReleaseModelSlot(ctx context.Context, model, requestID string) error {
+	return c.rdb.ZRem(ctx, modelSlotKey, modelSlotMember(model, requestID)).Err()
+}
+
+func (c *concurrencyCache) TrackModelWait(ctx context.Context, model, requestID string) error {
+	_, err := trackSlotScript.Run(ctx, c.rdb, []string{modelWaitKey}, c.waitQueueTTLSeconds, modelSlotMember(model, requestID)).Result()
+	return err
+}
+
+func (c *concurrencyCache) ReleaseModelWait(ctx context.Context, model, requestID string) error {
+	return c.rdb.ZRem(ctx, modelWaitKey, modelSlotMember(model, requestID)).Err()
+}
+
 func (c *concurrencyCache) AcquireOpenAIWSIngressLease(ctx context.Context, apiKeyID int64, maxConnections int, leaseID string) (bool, error) {
 	if c == nil || c.rdb == nil || apiKeyID <= 0 || maxConnections <= 0 || leaseID == "" {
 		return false, nil
@@ -880,6 +915,40 @@ func (c *concurrencyCache) GetAPIKeyConcurrencyBatch(ctx context.Context, apiKey
 	result := make(map[int64]int, len(apiKeyIDs))
 	for _, cmd := range cmds {
 		result[cmd.apiKeyID] = int(cmd.zcardCmd.Val() + cmd.liveCmd.Val())
+	}
+	return result, nil
+}
+
+func (c *concurrencyCache) GetModelConcurrency(ctx context.Context) (map[string]service.ModelLoadInfo, error) {
+	now, err := c.rdb.Time(ctx).Result()
+	if err != nil {
+		return nil, fmt.Errorf("redis TIME: %w", err)
+	}
+
+	pipe := c.rdb.Pipeline()
+	pipe.ZRemRangeByScore(ctx, modelSlotKey, "-inf", strconv.FormatInt(now.Unix()-int64(c.slotTTLSeconds), 10))
+	pipe.ZRemRangeByScore(ctx, modelWaitKey, "-inf", strconv.FormatInt(now.Unix()-int64(c.waitQueueTTLSeconds), 10))
+	active := pipe.ZRange(ctx, modelSlotKey, 0, -1)
+	waiting := pipe.ZRange(ctx, modelWaitKey, 0, -1)
+	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		return nil, fmt.Errorf("pipeline exec: %w", err)
+	}
+
+	// ponytail: this is O(active requests); split into per-model keys only if measured concurrency makes polling expensive.
+	result := make(map[string]service.ModelLoadInfo)
+	for _, member := range active.Val() {
+		if model, ok := modelFromSlotMember(member); ok {
+			load := result[model]
+			load.CurrentConcurrency++
+			result[model] = load
+		}
+	}
+	for _, member := range waiting.Val() {
+		if model, ok := modelFromSlotMember(member); ok {
+			load := result[model]
+			load.WaitingCount++
+			result[model] = load
+		}
 	}
 	return result, nil
 }

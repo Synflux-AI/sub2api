@@ -292,6 +292,8 @@ func (h *ConcurrencyHelper) acquireUserSlotWithWaitTimeout(c *gin.Context, userI
 		return nil, &WaitQueueFullError{SlotType: "user"}
 	}
 	defer h.DecrementWaitCount(ctx, userID)
+	modelWaitRelease := h.concurrencyService.TrackModelWait(ctx)
+	defer modelWaitRelease()
 
 	// Need to wait - handle streaming ping if needed
 	releaseFunc, err = h.waitForSlotWithPingTimeout(c, "user", userID, maxConcurrency, timeout, isStream, streamStarted, false)

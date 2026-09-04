@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { opsAPI, type OpsAccountAvailabilityStatsResponse, type OpsConcurrencyStatsResponse, type OpsUserConcurrencyStatsResponse } from '@/api/admin/ops'
+import { opsAPI, type ModelConcurrencyInfo, type OpsAccountAvailabilityStatsResponse, type OpsConcurrencyStatsResponse, type OpsUserConcurrencyStatsResponse } from '@/api/admin/ops'
+import ModelIcon from '@/components/common/ModelIcon.vue'
 
 interface Props {
   platformFilter?: string
@@ -24,8 +25,10 @@ const userConcurrency = ref<OpsUserConcurrencyStatsResponse | null>(null)
 
 // 用户视图开关
 const showByUser = ref(false)
+const showByModel = ref(false)
 
 const realtimeEnabled = computed(() => {
+  if (showByModel.value) return concurrency.value?.enabled ?? true
   return (concurrency.value?.enabled ?? true) && (availability.value?.enabled ?? true)
 })
 
@@ -34,10 +37,11 @@ function safeNumber(n: unknown): number {
 }
 
 // 计算显示维度
-const displayDimension = computed<'platform' | 'group' | 'account' | 'user'>(() => {
+const displayDimension = computed<'platform' | 'model' | 'group' | 'account' | 'user'>(() => {
   if (showByUser.value) {
     return 'user'
   }
+  if (showByModel.value) return 'model'
   if (typeof props.groupIdFilter === 'number' && props.groupIdFilter > 0) {
     return 'account'
   }
@@ -97,6 +101,13 @@ interface UserRow {
   max_capacity: number
   waiting_in_queue: number
   load_percentage: number
+}
+
+interface ModelRow {
+  key: string
+  model: string
+  current_in_use: number
+  waiting_in_queue: number
 }
 
 // 平台维度汇总
@@ -244,9 +255,22 @@ const userRows = computed((): UserRow[] => {
     .sort((a, b) => b.current_in_use - a.current_in_use || b.load_percentage - a.load_percentage)
 })
 
+const modelRows = computed((): ModelRow[] => {
+  const modelStats = concurrency.value?.model || {}
+  return Object.values(modelStats)
+    .map((model: ModelConcurrencyInfo) => ({
+      key: model.model,
+      model: model.model,
+      current_in_use: safeNumber(model.current_in_use),
+      waiting_in_queue: safeNumber(model.waiting_in_queue)
+    }))
+    .sort((a, b) => b.current_in_use - a.current_in_use || b.waiting_in_queue - a.waiting_in_queue)
+})
+
 // 根据维度选择数据
 const displayRows = computed(() => {
   if (displayDimension.value === 'user') return userRows.value
+  if (displayDimension.value === 'model') return modelRows.value
   if (displayDimension.value === 'account') return accountRows.value
   if (displayDimension.value === 'group') return groupRows.value
   return platformRows.value
@@ -254,6 +278,7 @@ const displayRows = computed(() => {
 
 const displayTitle = computed(() => {
   if (displayDimension.value === 'user') return t('admin.ops.concurrency.byUser')
+  if (displayDimension.value === 'model') return t('admin.ops.concurrency.byModel')
   if (displayDimension.value === 'account') return t('admin.ops.concurrency.byAccount')
   if (displayDimension.value === 'group') return t('admin.ops.concurrency.byGroup')
   return t('admin.ops.concurrency.byPlatform')
@@ -351,6 +376,20 @@ watch(
         {{ t('admin.ops.concurrency.title') }}
       </h3>
       <div class="flex items-center gap-2">
+        <!-- 模型视图切换按钮 -->
+        <button
+          class="flex items-center justify-center rounded-lg px-2 py-1 transition-colors"
+          :class="showByModel
+            ? 'bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400'
+            : 'bg-gray-100 text-gray-500 hover:bg-gray-200 hover:text-gray-700 dark:bg-dark-700 dark:text-gray-400 dark:hover:bg-dark-600 dark:hover:text-gray-300'"
+          :title="showByModel ? t('admin.ops.concurrency.switchToPlatform') : t('admin.ops.concurrency.switchToModel')"
+          :aria-pressed="showByModel"
+          @click="showByModel = !showByModel; showByUser = false"
+        >
+          <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v18m9-9H3m12.364-6.364L6.636 17.364M17.364 17.364L6.636 6.636" />
+          </svg>
+        </button>
         <!-- 用户视图切换按钮 -->
         <button
           class="flex items-center justify-center rounded-lg px-2 py-1 transition-colors"
@@ -358,7 +397,8 @@ watch(
             ? 'bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400'
             : 'bg-gray-100 text-gray-500 hover:bg-gray-200 hover:text-gray-700 dark:bg-dark-700 dark:text-gray-400 dark:hover:bg-dark-600 dark:hover:text-gray-300'"
           :title="showByUser ? t('admin.ops.concurrency.switchToPlatform') : t('admin.ops.concurrency.switchToUser')"
-          @click="showByUser = !showByUser"
+          :aria-pressed="showByUser"
+          @click="showByUser = !showByUser; showByModel = false"
         >
           <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
@@ -406,6 +446,27 @@ watch(
       <!-- 空状态 -->
       <div v-if="displayRows.length === 0" class="flex flex-1 items-center justify-center text-sm text-gray-500 dark:text-gray-400">
         {{ t('admin.ops.concurrency.empty') }}
+      </div>
+
+      <!-- 模型视图 -->
+      <div v-else-if="displayDimension === 'model'" class="custom-scrollbar max-h-[360px] flex-1 space-y-2 overflow-y-auto p-3">
+        <div v-for="row in (displayRows as ModelRow[])" :key="row.key" class="rounded-lg bg-gray-50 p-2.5 dark:bg-dark-900">
+          <div class="flex items-center justify-between gap-2">
+            <div class="flex min-w-0 items-center gap-1.5">
+              <ModelIcon :model="row.model" size="18px" />
+              <span class="truncate text-[11px] font-bold text-gray-900 dark:text-white" :title="row.model">{{ row.model }}</span>
+            </div>
+            <div class="flex shrink-0 items-center gap-2 text-[10px]">
+              <span class="font-mono font-bold text-gray-900 dark:text-white">{{ row.current_in_use }}</span>
+              <span v-if="row.waiting_in_queue > 0" class="rounded-full bg-purple-100 px-1.5 py-0.5 font-semibold text-purple-700 dark:bg-purple-900/30 dark:text-purple-400">
+                {{ t('admin.ops.concurrency.queued', { count: row.waiting_in_queue }) }}
+              </span>
+            </div>
+          </div>
+          <div class="mt-1 text-[10px] text-gray-400 dark:text-gray-500">
+            {{ t('admin.ops.concurrency.modelNoLimit') }}
+          </div>
+        </div>
       </div>
 
       <!-- 用户视图 -->

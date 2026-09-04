@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/stretchr/testify/require"
 )
 
@@ -34,6 +35,10 @@ type stubConcurrencyCacheForTest struct {
 	apiKeyReleaseErr     error
 	apiKeyConcurrency    map[int64]int
 	apiKeyConcurrencyErr error
+	modelTrackErr        error
+	modelReleaseErr      error
+	modelConcurrency     map[string]ModelLoadInfo
+	modelConcurrencyErr  error
 
 	// 记录调用
 	releasedAccountIDs       []int64
@@ -43,6 +48,12 @@ type stubConcurrencyCacheForTest struct {
 	trackedAPIKeyRequestIDs  []string
 	releasedAPIKeyIDs        []int64
 	releasedAPIKeyRequestIDs []string
+	trackedModels            []string
+	trackedModelRequestIDs   []string
+	releasedModels           []string
+	releasedModelRequestIDs  []string
+	trackedWaitingModels     []string
+	releasedWaitingModels    []string
 }
 
 type ingressLeaseCacheForTest struct {
@@ -145,6 +156,27 @@ func (c *stubConcurrencyCacheForTest) GetAPIKeyConcurrencyBatch(_ context.Contex
 		result[apiKeyID] = c.apiKeyConcurrency[apiKeyID]
 	}
 	return result, nil
+}
+func (c *stubConcurrencyCacheForTest) TrackModelSlot(_ context.Context, model, requestID string) error {
+	c.trackedModels = append(c.trackedModels, model)
+	c.trackedModelRequestIDs = append(c.trackedModelRequestIDs, requestID)
+	return c.modelTrackErr
+}
+func (c *stubConcurrencyCacheForTest) ReleaseModelSlot(_ context.Context, model, requestID string) error {
+	c.releasedModels = append(c.releasedModels, model)
+	c.releasedModelRequestIDs = append(c.releasedModelRequestIDs, requestID)
+	return c.modelReleaseErr
+}
+func (c *stubConcurrencyCacheForTest) TrackModelWait(_ context.Context, model, _ string) error {
+	c.trackedWaitingModels = append(c.trackedWaitingModels, model)
+	return c.modelTrackErr
+}
+func (c *stubConcurrencyCacheForTest) ReleaseModelWait(_ context.Context, model, _ string) error {
+	c.releasedWaitingModels = append(c.releasedWaitingModels, model)
+	return c.modelReleaseErr
+}
+func (c *stubConcurrencyCacheForTest) GetModelConcurrency(_ context.Context) (map[string]ModelLoadInfo, error) {
+	return c.modelConcurrency, c.modelConcurrencyErr
 }
 func (c *stubConcurrencyCacheForTest) IncrementWaitCount(_ context.Context, _ int64, _ int) (bool, error) {
 	return c.waitAllowed, c.waitErr
@@ -262,11 +294,71 @@ func TestAcquireUserSlot_IndependentFromAccount(t *testing.T) {
 }
 
 func TestAcquireUserSlot_UnlimitedConcurrency(t *testing.T) {
-	svc := NewConcurrencyService(&stubConcurrencyCacheForTest{})
+	cache := &stubConcurrencyCacheForTest{}
+	svc := NewConcurrencyService(cache)
+	ctx := context.WithValue(context.Background(), ctxkey.Model, " gpt-5 ")
 
-	result, err := svc.AcquireUserSlot(context.Background(), 1, 0)
+	result, err := svc.AcquireUserSlot(ctx, 1, 0)
 	require.NoError(t, err)
 	require.True(t, result.Acquired)
+	require.Equal(t, []string{"gpt-5"}, cache.trackedModels)
+	result.ReleaseFunc()
+	require.Equal(t, cache.trackedModels, cache.releasedModels)
+	require.Equal(t, cache.trackedModelRequestIDs, cache.releasedModelRequestIDs)
+}
+
+func TestAcquireUserSlot_TracksModelUntilRelease(t *testing.T) {
+	cache := &stubConcurrencyCacheForTest{acquireResult: true}
+	svc := NewConcurrencyService(cache)
+	ctx := context.WithValue(context.Background(), ctxkey.Model, "claude-sonnet-4-6")
+
+	result, err := svc.AcquireUserSlot(ctx, 1, 3)
+	require.NoError(t, err)
+	require.True(t, result.Acquired)
+	require.Equal(t, []string{"claude-sonnet-4-6"}, cache.trackedModels)
+
+	result.ReleaseFunc()
+	require.Equal(t, cache.trackedModels, cache.releasedModels)
+	require.Equal(t, cache.trackedModelRequestIDs, cache.releasedModelRequestIDs)
+}
+
+func TestAcquireUserSlot_SkipsOverlongModel(t *testing.T) {
+	cache := &stubConcurrencyCacheForTest{}
+	ctx := context.WithValue(context.Background(), ctxkey.Model, strings.Repeat("m", modelConcurrencyMaxModelBytes+1))
+
+	result, err := NewConcurrencyService(cache).AcquireUserSlot(ctx, 1, 0)
+	require.NoError(t, err)
+	result.ReleaseFunc()
+	require.Empty(t, cache.trackedModels)
+}
+
+func TestGetModelConcurrency(t *testing.T) {
+	t.Run("returns model loads", func(t *testing.T) {
+		cache := &stubConcurrencyCacheForTest{modelConcurrency: map[string]ModelLoadInfo{
+			"gpt-5": {CurrentConcurrency: 2, WaitingCount: 1},
+		}}
+		loads, err := NewConcurrencyService(cache).GetModelConcurrency(context.Background())
+		require.NoError(t, err)
+		require.Equal(t, cache.modelConcurrency, loads)
+	})
+
+	t.Run("does not turn Redis errors into zeroes", func(t *testing.T) {
+		cache := &stubConcurrencyCacheForTest{modelConcurrencyErr: errors.New("redis down")}
+		loads, err := NewConcurrencyService(cache).GetModelConcurrency(context.Background())
+		require.Error(t, err)
+		require.Nil(t, loads)
+	})
+}
+
+func TestOpsServiceGetModelConcurrencyStats(t *testing.T) {
+	cache := &stubConcurrencyCacheForTest{modelConcurrency: map[string]ModelLoadInfo{
+		"gpt-5": {CurrentConcurrency: 2, WaitingCount: 1},
+	}}
+	ops := NewOpsService(nil, nil, nil, nil, nil, NewConcurrencyService(cache), nil, nil, nil, nil, nil)
+
+	models, err := ops.GetModelConcurrencyStats(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, &ModelConcurrencyInfo{Model: "gpt-5", CurrentInUse: 2, WaitingInQueue: 1}, models["gpt-5"])
 }
 
 func TestTrackAPIKeySlot_ReleaseDecrements(t *testing.T) {
