@@ -302,6 +302,12 @@ func (s *adminServiceImpl) UpdateUser(ctx context.Context, id int64, input *Upda
 		if err := s.userGroupRateRepo.SyncUserGroupRates(ctx, user.ID, input.GroupRates); err != nil {
 			logger.LegacyPrintf("service.admin", "failed to sync user group rates: user_id=%d err=%v", user.ID, err)
 		}
+		rates, err := s.userGroupRateRepo.GetByUserID(ctx, user.ID)
+		if err != nil {
+			logger.LegacyPrintf("service.admin", "failed to load user group rates: user_id=%d err=%v", user.ID, err)
+		} else {
+			user.GroupRates = rates
+		}
 	}
 
 	if s.authCacheInvalidator != nil {

@@ -14,6 +14,8 @@ import (
 
 // userGroupRateRepoStubForGroupRate implements UserGroupRateRepository for group rate tests.
 type userGroupRateRepoStubForGroupRate struct {
+	userRates map[int64]map[int64]float64
+
 	getByGroupIDData map[int64][]UserGroupRateEntry
 	getByGroupIDErr  error
 
@@ -29,8 +31,8 @@ type userGroupRateRepoStubForGroupRate struct {
 	rpmSyncErr       error
 }
 
-func (s *userGroupRateRepoStubForGroupRate) GetByUserID(_ context.Context, _ int64) (map[int64]float64, error) {
-	panic("unexpected GetByUserID call")
+func (s *userGroupRateRepoStubForGroupRate) GetByUserID(_ context.Context, userID int64) (map[int64]float64, error) {
+	return s.userRates[userID], nil
 }
 
 func (s *userGroupRateRepoStubForGroupRate) GetByUserAndGroup(_ context.Context, _, _ int64) (*float64, error) {
@@ -48,8 +50,18 @@ func (s *userGroupRateRepoStubForGroupRate) GetByGroupID(_ context.Context, grou
 	return s.getByGroupIDData[groupID], nil
 }
 
-func (s *userGroupRateRepoStubForGroupRate) SyncUserGroupRates(_ context.Context, _ int64, _ map[int64]*float64) error {
-	panic("unexpected SyncUserGroupRates call")
+func (s *userGroupRateRepoStubForGroupRate) SyncUserGroupRates(_ context.Context, userID int64, rates map[int64]*float64) error {
+	if s.userRates[userID] == nil {
+		s.userRates[userID] = make(map[int64]float64)
+	}
+	for groupID, rate := range rates {
+		if rate == nil {
+			delete(s.userRates[userID], groupID)
+		} else {
+			s.userRates[userID][groupID] = *rate
+		}
+	}
+	return nil
 }
 
 func (s *userGroupRateRepoStubForGroupRate) SyncGroupRateMultipliers(_ context.Context, groupID int64, entries []GroupRateMultiplierInput) error {
@@ -75,6 +87,24 @@ func (s *userGroupRateRepoStubForGroupRate) DeleteByGroupID(_ context.Context, g
 
 func (s *userGroupRateRepoStubForGroupRate) DeleteByUserID(_ context.Context, _ int64) error {
 	panic("unexpected DeleteByUserID call")
+}
+
+func TestAdminService_UpdateUser_ReturnsUpdatedGroupRates(t *testing.T) {
+	rate := 0.8
+	rateRepo := &userGroupRateRepoStubForGroupRate{
+		userRates: map[int64]map[int64]float64{42: {9: 1.1}},
+	}
+	svc := &adminServiceImpl{
+		userRepo:          &userRepoStub{user: &User{ID: 42, Email: "u@example.com"}},
+		userGroupRateRepo: rateRepo,
+	}
+
+	updated, err := svc.UpdateUser(context.Background(), 42, &UpdateUserInput{
+		GroupRates: map[int64]*float64{7: &rate},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, map[int64]float64{7: 0.8, 9: 1.1}, updated.GroupRates)
 }
 
 func TestAdminService_GetGroupRateMultipliers(t *testing.T) {
