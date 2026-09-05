@@ -30,9 +30,9 @@ func newSessionIDUsageLog(sessionID *string) *service.UsageLog {
 
 // TestPrepareUsageLogInsert_SessionIDArgWiring pins session_id and trace_id to the
 // arg slice / arg-type table so the five INSERT column lists stay in sync.
-// Tail order: session_id, trace_id, image_response_format, native_compaction_v2, created_at.
+// Tail order: upstream_request_id, session_id, trace_id, image_response_format, native_compaction_v2, created_at.
 func TestPrepareUsageLogInsert_SessionIDArgWiring(t *testing.T) {
-	require.Len(t, usageLogInsertArgTypes, 67, "arg-type table must include session_id, trace_id, image_response_format, native_compaction_v2, and the four phase latencies")
+	require.Len(t, usageLogInsertArgTypes, 68, "arg-type table must include upstream_request_id, session_id, trace_id, image_response_format, native_compaction_v2, and the four phase latencies")
 
 	sessionID := "sess-persisted-123"
 	traceID := "trace-persisted-123"

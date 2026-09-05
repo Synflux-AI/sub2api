@@ -271,6 +271,85 @@ func TestNormalizeOpenAIParallelToolCallsWithoutTools(t *testing.T) {
 	require.False(t, gjson.GetBytes(normalized, "parallel_tool_calls").Exists())
 }
 
+func TestFilterOpenAIResponsesNoneReasoningEffortForAccount_UpstreamMatrix(t *testing.T) {
+	tests := []struct {
+		name          string
+		account       *Account
+		body          string
+		wantNested    bool
+		wantFlat      bool
+		wantSummary   bool
+		wantReasoning bool
+	}{
+		{
+			// 本仓库把 none 摘除收敛为账号级 opt-in 开关：兼容端点默认不摘，开关开了才摘。
+			name:          "custom compatible endpoint with strip switch on strips none placeholders",
+			account:       &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Credentials: map[string]any{"base_url": "https://compat.example/v1"}, Extra: map[string]any{"openai_strip_none_reasoning_effort": true}},
+			body:          `{"reasoning":{"effort":"none"},"reasoning_effort":"NONE"}`,
+			wantReasoning: false,
+		},
+		{
+			name:          "third-party platform keeps other reasoning members",
+			account:       &Account{Platform: PlatformGrok, Type: AccountTypeAPIKey},
+			body:          `{"reasoning":{"effort":" none ","summary":"auto"}}`,
+			wantSummary:   true,
+			wantReasoning: true,
+		},
+		{
+			name:          "non-none effort is unchanged",
+			account:       &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Credentials: map[string]any{"base_url": "https://compat.example/v1"}},
+			body:          `{"reasoning":{"effort":"high"},"reasoning_effort":"low"}`,
+			wantNested:    true,
+			wantFlat:      true,
+			wantReasoning: true,
+		},
+		{
+			name:          "official OpenAI API key preserves none",
+			account:       &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey},
+			body:          `{"reasoning":{"effort":"none"},"reasoning_effort":"none"}`,
+			wantNested:    true,
+			wantFlat:      true,
+			wantReasoning: true,
+		},
+		{
+			name:          "OpenAI OAuth preserves none",
+			account:       &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth},
+			body:          `{"reasoning":{"effort":"none"}}`,
+			wantNested:    true,
+			wantReasoning: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := filterOpenAIResponsesNoneReasoningEffortForAccount(tt.account, []byte(tt.body))
+			require.NoError(t, err)
+			require.Equal(t, tt.wantNested, gjson.GetBytes(got, "reasoning.effort").Exists())
+			require.Equal(t, tt.wantFlat, gjson.GetBytes(got, "reasoning_effort").Exists())
+			require.Equal(t, tt.wantSummary, gjson.GetBytes(got, "reasoning.summary").Exists())
+			require.Equal(t, tt.wantReasoning, gjson.GetBytes(got, "reasoning").Exists())
+		})
+	}
+}
+
+func TestFilterOpenAIResponsesNoneReasoningEffortForAccount_APIKeyAutomaticPassthroughPreservesRequest(t *testing.T) {
+	body := []byte(`{"model":"qwen3.8-27b","input":"hi","max_output_tokens":20,"reasoning":{"effort":"none"},"presence_penalty":1.5}`)
+	account := &Account{
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"base_url": "https://compat.example/v1",
+		},
+		// 开关开着也不摘：passthrough 承诺请求体原样透传。
+		Extra: map[string]any{"openai_passthrough": true, "openai_strip_none_reasoning_effort": true},
+	}
+
+	got, err := filterOpenAIResponsesNoneReasoningEffortForAccount(account, body)
+
+	require.NoError(t, err)
+	require.JSONEq(t, string(body), string(got))
+}
+
 // Lite 工具迁移到 input[].additional_tools 后，仍应按有工具请求处理。
 func TestNormalizeOpenAIParallelToolCallsWithoutTools_KeepsResponsesLiteAdditionalTools(t *testing.T) {
 	liteBody := []byte(`{"input":[{"type":"message","role":"user","content":"hi"},{"type":"additional_tools","tools":[{"type":"function","name":"spawn_agent"}]}],"parallel_tool_calls":false}`)
