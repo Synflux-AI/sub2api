@@ -292,6 +292,60 @@ describe('BulkEditAccountModal', () => {
     })
   })
 
+  it('OpenAI 账号批量编辑可开启摘除 none 推理档', async () => {
+    const wrapper = mountModal({
+      selectedPlatforms: ['openai'],
+      selectedTypes: ['apikey']
+    })
+
+    await wrapper.get('#bulk-edit-openai-strip-none-effort-enabled').setValue(true)
+    await wrapper.get('#bulk-edit-openai-strip-none-effort-toggle').trigger('click')
+    await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledTimes(1)
+    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
+      extra: {
+        openai_strip_none_reasoning_effort: true
+      }
+    })
+  })
+
+  it('OpenAI 账号批量编辑可关回默认的 effort 透传', async () => {
+    const wrapper = mountModal({
+      selectedPlatforms: ['openai'],
+      selectedTypes: ['apikey']
+    })
+
+    await wrapper.get('#bulk-edit-openai-strip-none-effort-enabled').setValue(true)
+    await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
+      extra: {
+        openai_strip_none_reasoning_effort: false
+      }
+    })
+  })
+
+  it('grok 账号不展示摘除 none 推理档开关', async () => {
+    const wrapper = mountModal({
+      selectedPlatforms: ['grok'],
+      selectedTypes: ['apikey']
+    })
+
+    expect(wrapper.find('#bulk-edit-openai-strip-none-effort-enabled').exists()).toBe(false)
+  })
+
+  it('非 OpenAI 协议族账号不展示摘除 none 推理档开关', async () => {
+    const wrapper = mountModal({
+      selectedPlatforms: ['anthropic'],
+      selectedTypes: ['apikey']
+    })
+
+    expect(wrapper.find('#bulk-edit-openai-strip-none-effort-enabled').exists()).toBe(false)
+  })
+
   it('OpenAI OAuth 批量编辑可开启 namespace 摊平兼容开关', async () => {
     const wrapper = mountModal({
       selectedPlatforms: ['openai'],

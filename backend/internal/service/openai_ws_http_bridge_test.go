@@ -44,20 +44,33 @@ func TestPrepareOpenAIWSHTTPBridgeBodyStripsWSFields(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestPrepareOpenAIWSHTTPBridgeBodyStripsNoneReasoningForCompatibleEndpoint(t *testing.T) {
+// WS v2 桥接与 HTTP 路径共用同一个判定函数：默认透传 none，
+// 仅在账号开启 openai_strip_none_reasoning_effort 后才摘除。
+func TestPrepareOpenAIWSHTTPBridgeBodyReasoningEffortFollowsAccountStripSwitch(t *testing.T) {
 	payload := []byte(`{"type":"response.create","model":"company-coding-model","reasoning":{"effort":"none"},"input":"hi"}`)
-	compatible := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Credentials: map[string]any{
+	thirdParty := &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Credentials: map[string]any{
 		"base_url": "https://compat.example/v1",
 	}}
 
-	body, err := prepareOpenAIWSHTTPBridgeBody(compatible, payload)
+	body, err := prepareOpenAIWSHTTPBridgeBody(thirdParty, payload)
 	require.NoError(t, err)
-	require.False(t, gjson.GetBytes(body, "reasoning.effort").Exists())
-	require.False(t, gjson.GetBytes(body, "reasoning").Exists())
+	require.Equal(t, "none", gjson.GetBytes(body, "reasoning.effort").String(), "默认透传 none")
 
 	officialBody, err := prepareOpenAIWSHTTPBridgeBody(&Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey}, payload)
 	require.NoError(t, err)
 	require.Equal(t, "none", gjson.GetBytes(officialBody, "reasoning.effort").String())
+
+	thirdParty.Extra = map[string]any{"openai_strip_none_reasoning_effort": true}
+	strippedBody, err := prepareOpenAIWSHTTPBridgeBody(thirdParty, payload)
+	require.NoError(t, err)
+	require.False(t, gjson.GetBytes(strippedBody, "reasoning.effort").Exists())
+	require.False(t, gjson.GetBytes(strippedBody, "reasoning").Exists())
+
+	minimalBody, err := prepareOpenAIWSHTTPBridgeBody(thirdParty,
+		[]byte(`{"type":"response.create","model":"company-coding-model","reasoning":{"effort":"minimal"},"reasoning_effort":"minimal","input":"hi"}`))
+	require.NoError(t, err)
+	require.Equal(t, "none", gjson.GetBytes(minimalBody, "reasoning.effort").String())
+	require.Equal(t, "none", gjson.GetBytes(minimalBody, "reasoning_effort").String())
 }
 
 func TestProxyOpenAIWSHTTPBridgeTurn_KeepsOutboundAndObservedServiceTiersSeparate(t *testing.T) {

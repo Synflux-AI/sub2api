@@ -579,6 +579,9 @@ export default {
         longContextBilling: 'API long-context pricing',
         longContextBillingDesc:
           'Disabled by default. Enable only when this account\'s upstream charges OpenAI API long-context rates above the model threshold.',
+        stripNoneReasoningEffort: 'Strip "none" reasoning effort (compatibility)',
+        stripNoneReasoningEffortDesc:
+          'Disabled by default: the client\'s reasoning.effort is forwarded as-is, including "none" (reasoning off) and "minimal". Enable only when this account\'s upstream rejects "none" with a 400 (unknown_value / invalid_value) — once enabled, "none" is dropped as if unspecified and "minimal" is rewritten to "none", silently discarding the client\'s explicit choice.',
         responsesWebsocketsV2: 'Responses WebSocket v2',
         responsesWebsocketsV2Desc:
           'Disabled by default. Enable to allow responses_websockets_v2 capability (still gated by global and account-type switches).',

@@ -633,6 +633,60 @@ describe('EditAccountModal', () => {
     expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.openai_long_context_billing_enabled).toBe(false)
   })
 
+  it('loads and clears the strip-none-reasoning-effort toggle', async () => {
+    const account = buildAccount()
+    account.extra = {
+      openai_strip_none_reasoning_effort: true
+    }
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account)
+    const toggle = wrapper.get('[data-testid="openai-strip-none-reasoning-effort-toggle"]')
+    expect(toggle.attributes('aria-checked')).toBe('true')
+
+    // 关闭即回到默认透传：删除该键而不是写 false
+    await toggle.trigger('click')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra).not.toHaveProperty(
+      'openai_strip_none_reasoning_effort'
+    )
+  })
+
+  it('submits the strip-none-reasoning-effort toggle when switched on', async () => {
+    const account = buildAccount()
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account)
+    const toggle = wrapper.get('[data-testid="openai-strip-none-reasoning-effort-toggle"]')
+    expect(toggle.attributes('aria-checked')).toBe('false')
+
+    await toggle.trigger('click')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.openai_strip_none_reasoning_effort).toBe(true)
+  })
+
+  it('hides the strip-none-reasoning-effort toggle for non-OpenAI accounts', async () => {
+    const wrapper = mountModal(buildVertexAccount())
+    expect(
+      wrapper.find('[data-testid="openai-strip-none-reasoning-effort-toggle"]').exists()
+    ).toBe(false)
+
+    const grokWrapper = mountModal(buildGrokAPIKeyAccount())
+    expect(
+      grokWrapper.find('[data-testid="openai-strip-none-reasoning-effort-toggle"]').exists()
+    ).toBe(false)
+  })
+
   it('loads and clears the OAuth-only Codex namespace flatten toggle', async () => {
     const account = buildAccount()
     account.type = 'oauth'

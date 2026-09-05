@@ -73,6 +73,14 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 ) (*OpenAIForwardResult, error) {
 	beginUpstreamResponseModelObservation(c)
 	ClearActualOpenAIUpstreamEndpoint(c)
+	clientBody := body
+	if account != nil && account.IsOpenAI() {
+		normalizedBody, err := normalizeOpenAIResponsesReasoningEffortForAccount(account, body)
+		if err != nil {
+			return nil, err
+		}
+		body = normalizedBody
+	}
 	if shouldForwardOpenAIResponsesViaRawChatCompletions(account) {
 		SetActualOpenAIUpstreamEndpoint(c, "/v1/chat/completions")
 	}
@@ -366,7 +374,7 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 			if err := s.recoverAgentIdentityTask(ctx, account, expectedTaskID); err != nil {
 				return nil, fmt.Errorf("agent identity task recovery failed: %w", err)
 			}
-			return s.forwardAsChatCompletions(markAgentIdentityTaskRecoveryTried(ctx), c, account, body, promptCacheKey, defaultMappedModel, compatPromptCacheTenantIsolated)
+			return s.forwardAsChatCompletions(markAgentIdentityTaskRecoveryTried(ctx), c, account, clientBody, promptCacheKey, defaultMappedModel, compatPromptCacheTenantIsolated)
 		}
 		if account.Type == AccountTypeAPIKey &&
 			openai_compat.ResolveResponsesSupport(account.Extra) == openai_compat.ResponsesSupportUnknown &&

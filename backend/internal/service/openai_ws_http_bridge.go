@@ -251,7 +251,7 @@ func prepareOpenAIWSHTTPBridgeBody(account *Account, payload []byte) ([]byte, er
 	delete(body, "type")
 	delete(body, "generate")
 	delete(body, "previous_response_id")
-	deleteOpenAIResponsesNoneReasoningEffortFromObject(account, body)
+	normalizeOpenAIResponsesReasoningEffortForAccountObject(account, body)
 	body["stream"] = true
 	return json.Marshal(body)
 }

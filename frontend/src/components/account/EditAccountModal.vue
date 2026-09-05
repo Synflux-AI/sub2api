@@ -2082,6 +2082,39 @@
         </div>
       </div>
 
+      <!-- 摘除 none 推理档（仅走 OpenAI 网关的账号） -->
+      <div
+        v-if="supportsStripNoneReasoningEffort"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+      >
+        <div class="flex items-center justify-between gap-4">
+          <div>
+            <label class="input-label mb-0">{{ t('admin.accounts.openai.stripNoneReasoningEffort') }}</label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.openai.stripNoneReasoningEffortDesc') }}
+            </p>
+          </div>
+          <button
+            type="button"
+            data-testid="openai-strip-none-reasoning-effort-toggle"
+            role="switch"
+            :aria-checked="openaiStripNoneReasoningEffortEnabled"
+            @click="openaiStripNoneReasoningEffortEnabled = !openaiStripNoneReasoningEffortEnabled"
+            :class="[
+              'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
+              openaiStripNoneReasoningEffortEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
+            ]"
+          >
+            <span
+              :class="[
+                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+                openaiStripNoneReasoningEffortEnabled ? 'translate-x-5' : 'translate-x-0'
+              ]"
+            />
+          </button>
+        </div>
+      </div>
+
       <div
         v-if="account?.platform === 'openai' && (account?.type === 'oauth' || account?.type === 'setup-token')"
         class="border-t border-gray-200 pt-4 dark:border-dark-600"
@@ -3307,6 +3340,9 @@ const openaiPassthroughEnabled = ref(false)
 // OpenAI Codex namespace 工具摊平兼容开关（仅 OAuth），缺省关闭即原样保留
 const openaiFlattenNamespacesEnabled = ref(false)
 const openAILongContextBillingEnabled = ref(false)
+// 摘除 none 推理档（默认关闭即原样透传 reasoning.effort）
+const openaiStripNoneReasoningEffortEnabled = ref(false)
+const supportsStripNoneReasoningEffort = computed(() => props.account?.platform === 'openai')
 // OpenAI 订阅档位（Plus/Pro/Free）手动覆盖值,存于 credentials.plan_type;'' 表示清空/自动识别
 const editPlanType = ref<string>('')
 const openAICompactMode = ref<OpenAICompactMode>('auto')
@@ -3793,6 +3829,9 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   openaiPassthroughEnabled.value = false
   openaiFlattenNamespacesEnabled.value = false
   openAILongContextBillingEnabled.value = false
+  // OpenAI 账号按 extra 直接回填（无 type 分支）
+  openaiStripNoneReasoningEffortEnabled.value =
+    newAccount.platform === 'openai' && extra?.openai_strip_none_reasoning_effort === true
   editPlanType.value = ''
   openAICompactMode.value = 'auto'
   openAIResponsesMode.value = 'auto'
@@ -5406,6 +5445,23 @@ const handleSubmit = async () => {
       } else if ('trace_id_passthrough' in currentExtra) {
         const newExtra: Record<string, unknown> = { ...currentExtra }
         delete newExtra.trace_id_passthrough
+        updatePayload.extra = newExtra
+      }
+    }
+
+    // 摘除 none 推理档：仅对 OpenAI 平台账号生效，
+    // 与 X-Trace-Id 同理放在平台专属 extra 块之后复用已组装的 extra；
+    // 关闭时删除 key 而非写 false，避免 extra 堆积默认项。
+    if (supportsStripNoneReasoningEffort.value) {
+      const currentExtra = (updatePayload.extra as Record<string, unknown>) ||
+        (props.account.extra as Record<string, unknown>) || {}
+      if (openaiStripNoneReasoningEffortEnabled.value) {
+        const newExtra: Record<string, unknown> = { ...currentExtra }
+        newExtra.openai_strip_none_reasoning_effort = true
+        updatePayload.extra = newExtra
+      } else if ('openai_strip_none_reasoning_effort' in currentExtra) {
+        const newExtra: Record<string, unknown> = { ...currentExtra }
+        delete newExtra.openai_strip_none_reasoning_effort
         updatePayload.extra = newExtra
       }
     }

@@ -663,6 +663,9 @@ export default {
           '默认关闭：/responses 上的 namespace 工具声明原样转发，这正是 ChatGPT Codex 后端期望的形态。仅当该 OAuth 账号指向不认识 namespace 的兼容上游时才开启——摊平会把工具改名为 namespace__tool，使按 functions.<命名空间>.<工具> 寻址的模型（如 gpt-5.6 多智能体）无法调用。压缩（compact）请求不受该开关影响，始终摊平。',
         longContextBilling: 'API 长上下文计费',
         longContextBillingDesc: '默认关闭。仅当该账号的上游会按模型阈值收取 OpenAI API 长上下文费率时开启。',
+        stripNoneReasoningEffort: '摘除 none 推理档（兼容）',
+        stripNoneReasoningEffortDesc:
+          '默认关闭：客户端下发的 reasoning.effort 原样透传上游，包括 none（关闭推理）与 minimal。仅当该账号的上游不认 none、会返回 400（unknown_value / invalid_value）时才开启——开启后 none 被当作"未指定"摘除，minimal 改写为 none，客户端的显式意图会被静默丢弃。',
         responsesWebsocketsV2: 'Responses WebSocket v2',
         responsesWebsocketsV2Desc:
           '默认关闭。开启后可启用 responses_websockets_v2 协议能力（受网关全局开关与账号类型开关约束）。',

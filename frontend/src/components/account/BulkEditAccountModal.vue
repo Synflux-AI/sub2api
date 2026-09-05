@@ -82,6 +82,59 @@
         </div>
       </div>
 
+      <!-- 摘除 none 推理档（仅走 OpenAI 网关的账号） -->
+      <div
+        v-if="allOpenAIStripNoneCapable"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+      >
+        <div class="mb-3 flex items-center justify-between">
+          <div class="flex-1 pr-4">
+            <label
+              id="bulk-edit-openai-strip-none-effort-label"
+              class="input-label mb-0"
+              for="bulk-edit-openai-strip-none-effort-enabled"
+            >
+              {{ t('admin.accounts.openai.stripNoneReasoningEffort') }}
+            </label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.openai.stripNoneReasoningEffortDesc') }}
+            </p>
+          </div>
+          <input
+            v-model="enableOpenAIStripNoneReasoningEffort"
+            id="bulk-edit-openai-strip-none-effort-enabled"
+            type="checkbox"
+            aria-controls="bulk-edit-openai-strip-none-effort-body"
+            class="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+          />
+        </div>
+        <div
+          id="bulk-edit-openai-strip-none-effort-body"
+          :class="!enableOpenAIStripNoneReasoningEffort && 'pointer-events-none opacity-50'"
+          role="group"
+          aria-labelledby="bulk-edit-openai-strip-none-effort-label"
+        >
+          <button
+            id="bulk-edit-openai-strip-none-effort-toggle"
+            type="button"
+            role="switch"
+            :aria-checked="openaiStripNoneReasoningEffortEnabled"
+            :class="[
+              'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
+              openaiStripNoneReasoningEffortEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
+            ]"
+            @click="openaiStripNoneReasoningEffortEnabled = !openaiStripNoneReasoningEffortEnabled"
+          >
+            <span
+              :class="[
+                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+                openaiStripNoneReasoningEffortEnabled ? 'translate-x-5' : 'translate-x-0'
+              ]"
+            />
+          </button>
+        </div>
+      </div>
+
       <!-- OpenAI Codex namespace 工具摊平（兼容开关，仅 OAuth） -->
       <div
         v-if="allOpenAIOAuthOnly"
@@ -1563,6 +1616,12 @@ const allOpenAIPassthroughCapable = computed(() => {
   )
 })
 
+const allOpenAIStripNoneCapable = computed(
+  () =>
+    targetSelectedPlatforms.value.length === 1 &&
+    targetSelectedPlatforms.value[0] === 'openai'
+)
+
 const allOpenAIOAuth = computed(() => {
   return (
     targetSelectedPlatforms.value.length === 1 &&
@@ -1659,6 +1718,7 @@ const enableStatus = ref(false)
 const enableGroups = ref(false)
 const enableOpenAIPassthrough = ref(false)
 const enableOpenAIFlattenNamespaces = ref(false)
+const enableOpenAIStripNoneReasoningEffort = ref(false)
 const enableOpenAILongContextBilling = ref(false)
 const enableOpenAIEndpointCapabilities = ref(false)
 const enableOpenAIResponsesMode = ref(false)
@@ -1696,6 +1756,7 @@ const openaiPassthroughEnabled = ref(false)
 // Codex namespace 工具摊平兼容开关（仅 OAuth），缺省关闭即原样保留
 const openaiFlattenNamespacesEnabled = ref(false)
 const openAILongContextBillingEnabled = ref(false)
+const openaiStripNoneReasoningEffortEnabled = ref(false)
 const openAIEndpointCapabilities = ref<OpenAIEndpointCapability[]>([
   'chat_completions',
   'embeddings'
@@ -1994,6 +2055,12 @@ const buildUpdatePayload = (): Record<string, unknown> | null => {
     extra.openai_long_context_billing_enabled = openAILongContextBillingEnabled.value
   }
 
+  // 同时校验可见性：勾选后又改了目标筛选条件时，不应把该键写到非 OpenAI 账号上
+  if (enableOpenAIStripNoneReasoningEffort.value && allOpenAIStripNoneCapable.value) {
+    const extra = ensureExtra()
+    extra.openai_strip_none_reasoning_effort = openaiStripNoneReasoningEffortEnabled.value
+  }
+
   if (applyOpenAIEndpointCapabilities) {
     credentials.openai_capabilities =
       openAIEndpointCapabilities.value.length === 2
@@ -2204,6 +2271,7 @@ const handleSubmit = async () => {
     enableOpenAIPassthrough.value ||
     enableOpenAIFlattenNamespaces.value ||
     (enableOpenAILongContextBilling.value && allOpenAIPassthroughCapable.value) ||
+    (enableOpenAIStripNoneReasoningEffort.value && allOpenAIStripNoneCapable.value) ||
     (enableOpenAIEndpointCapabilities.value && allOpenAIAPIKey.value) ||
     (enableOpenAIResponsesMode.value && allOpenAIAPIKey.value) ||
     enableModelRestriction.value ||
@@ -2365,6 +2433,7 @@ watch(
       enableGroups.value = false
       enableOpenAIPassthrough.value = false
       enableOpenAIFlattenNamespaces.value = false
+      enableOpenAIStripNoneReasoningEffort.value = false
       enableOpenAILongContextBilling.value = false
       enableOpenAIEndpointCapabilities.value = false
       enableOpenAIResponsesMode.value = false
@@ -2384,6 +2453,7 @@ watch(
       openaiPassthroughEnabled.value = false
       openaiFlattenNamespacesEnabled.value = false
       openAILongContextBillingEnabled.value = false
+      openaiStripNoneReasoningEffortEnabled.value = false
       openAIEndpointCapabilities.value = ['chat_completions', 'embeddings']
       openAIResponsesMode.value = 'auto'
       modelRestrictionMode.value = 'whitelist'

@@ -60,34 +60,53 @@ func TestForwardResponses_ForceChatCompletionsRoutesNonStreamingToChatCompletion
 	require.False(t, result.Stream)
 }
 
-// Scenario: 第三方无推理模型不收到兼容档位。
-func TestForwardResponses_ForceChatCompletionsOmitsNoneReasoningEffort(t *testing.T) {
+// Scenario: Responses→ChatCompletions 降级路径同样遵守 effort 透传默认值。
+// 默认把客户端的 none 原样带给上游；仅在账号开启
+// openai_strip_none_reasoning_effort 后才恢复"不下发兼容档位"的旧行为。
+func TestForwardResponses_ForceChatCompletionsReasoningEffortFollowsStripSwitch(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	body := []byte(`{"model":"company-coding-model","input":"hello","reasoning":{"effort":"none"},"stream":false}`)
-	rec := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(rec)
-	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
-	c.Request.Header.Set("Content-Type", "application/json")
+	forward := func(t *testing.T, account *Account) (*httpUpstreamRecorder, *OpenAIForwardResult) {
+		t.Helper()
+		body := []byte(`{"model":"company-coding-model","input":"hello","reasoning":{"effort":"none"},"stream":false}`)
+		rec := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(rec)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+		c.Request.Header.Set("Content-Type", "application/json")
 
-	upstream := &httpUpstreamRecorder{resp: &http.Response{
-		StatusCode: http.StatusOK,
-		Header:     http.Header{"Content-Type": []string{"application/json"}},
-		Body: io.NopCloser(strings.NewReader(
-			`{"id":"chatcmpl_none","object":"chat.completion","model":"company-coding-model","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`,
-		)),
-	}}
-	svc := &OpenAIGatewayService{
-		cfg:          rawChatCompletionsTestConfig(),
-		httpUpstream: upstream,
+		upstream := &httpUpstreamRecorder{resp: &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body: io.NopCloser(strings.NewReader(
+				`{"id":"chatcmpl_none","object":"chat.completion","model":"company-coding-model","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`,
+			)),
+		}}
+		svc := &OpenAIGatewayService{
+			cfg:          rawChatCompletionsTestConfig(),
+			httpUpstream: upstream,
+		}
+
+		result, err := svc.Forward(context.Background(), c, account, body)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		require.Equal(t, "company-coding-model", gjson.GetBytes(upstream.lastBody, "model").String())
+		return upstream, result
 	}
 
-	result, err := svc.Forward(context.Background(), c, forceChatResponsesFallbackAccount(), body)
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	require.Equal(t, "company-coding-model", gjson.GetBytes(upstream.lastBody, "model").String())
-	require.False(t, gjson.GetBytes(upstream.lastBody, "reasoning_effort").Exists())
-	require.Nil(t, result.ReasoningEffort)
+	t.Run("default forwards none", func(t *testing.T) {
+		upstream, result := forward(t, forceChatResponsesFallbackAccount())
+		require.Equal(t, "none", gjson.GetBytes(upstream.lastBody, "reasoning_effort").String())
+		// 台账归一化仍把 none 记成空，属独立议题。
+		require.Nil(t, result.ReasoningEffort)
+	})
+
+	t.Run("strip switch omits none", func(t *testing.T) {
+		account := forceChatResponsesFallbackAccount()
+		account.Extra["openai_strip_none_reasoning_effort"] = true
+		upstream, result := forward(t, account)
+		require.False(t, gjson.GetBytes(upstream.lastBody, "reasoning_effort").Exists())
+		require.Nil(t, result.ReasoningEffort)
+	})
 }
 
 func TestForwardResponses_PassthroughFlagWithUnsupportedResponsesUsesAccountMapping(t *testing.T) {
