@@ -132,7 +132,7 @@ func TestOpenAINonStreamingBodyReadErrorReturnsFailoverAndRecordsOps(t *testing.
 			upstreamURL: "https://api.example.test/v1/images/generations",
 			invoke: func(s *OpenAIGatewayService, ctx context.Context, c *gin.Context, account *Account, resp *http.Response) error {
 				_, _, _, _, err := s.handleOpenAIImagesNonStreamingResponse(
-					ctx, resp, c, account, "https://api.example.test/v1/images/generations")
+					ctx, resp, c, account, "https://api.example.test/v1/images/generations", nil)
 				return err
 			},
 		},

@@ -32,5 +32,5 @@ func TestAPIKeyAuthSnapshotGroupForceOpenAIFastRoundtrip(t *testing.T) {
 	require.True(t, materialized.Group.Hydrated)
 	require.True(t, materialized.Group.ForceOpenAIFast)
 	require.True(t, materialized.Group.FreeOpenAIFast)
-	require.Equal(t, 23, cached.Snapshot.Version) // sync 合并后与本仓库 v22 撞号,升 23
+	require.Equal(t, apiKeyAuthSnapshotVersion, cached.Snapshot.Version)
 }

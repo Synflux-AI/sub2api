@@ -105,6 +105,7 @@ func TestUsageLogRepositoryCreateSyncRequestTypeAndLegacyFields(t *testing.T) {
 			sqlmock.AnyArg(), // billing_tier
 			sqlmock.AnyArg(), // billing_mode
 			sqlmock.AnyArg(), // account_stats_cost
+			sqlmock.AnyArg(), // upstream_request_id
 			sqlmock.AnyArg(), // session_id
 			traceID,
 			sqlmock.AnyArg(), // image_response_format
@@ -205,6 +206,7 @@ func TestUsageLogRepositoryCreate_PersistsServiceTier(t *testing.T) {
 			sqlmock.AnyArg(), // billing_tier
 			sqlmock.AnyArg(), // billing_mode
 			sqlmock.AnyArg(), // account_stats_cost
+			sqlmock.AnyArg(), // upstream_request_id
 			sqlmock.AnyArg(), // session_id
 			sqlmock.AnyArg(), // trace_id
 			sqlmock.AnyArg(), // image_response_format
@@ -1002,6 +1004,7 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullString{},
 			sql.NullString{},
 			sql.NullFloat64{},
+			sql.NullString{}, // upstream_request_id
 			sql.NullString{},
 			sql.NullString{},
 			sql.NullString{Valid: true, String: "url"}, // image_response_format
@@ -1089,6 +1092,7 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullString{},  // billing_tier
 			sql.NullString{},  // billing_mode
 			sql.NullFloat64{}, // account_stats_cost
+			sql.NullString{},  // upstream_request_id
 			sql.NullString{},  // session_id
 			sql.NullString{},  // trace_id
 			sql.NullString{},  // image_response_format
@@ -1157,6 +1161,7 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullString{},  // billing_tier
 			sql.NullString{},  // billing_mode
 			sql.NullFloat64{}, // account_stats_cost
+			sql.NullString{},  // upstream_request_id
 			sql.NullString{},  // session_id
 			sql.NullString{},  // trace_id
 			sql.NullString{},  // image_response_format
@@ -1226,6 +1231,7 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullString{},  // billing_tier
 			sql.NullString{},  // billing_mode
 			sql.NullFloat64{}, // account_stats_cost
+			sql.NullString{},  // upstream_request_id
 			sql.NullString{},  // session_id
 			sql.NullString{Valid: true, String: "trace-visible-123"}, // trace_id
 			sql.NullString{}, // image_response_format
