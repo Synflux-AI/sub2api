@@ -113,7 +113,8 @@ func TestOpenAIErrorHandlingRule_RetryActionSetsSameAccountBudget(t *testing.T) 
 	require.True(t, errors.As(err, &failoverErr))
 	require.True(t, failoverErr.RetryableOnSameAccount)
 	require.NotNil(t, failoverErr.RuleRetryLimit, "规则驱动的重试预算必须显式带出来，"+
-		"否则非 pool-mode 账号的 effectiveSameAccountRetryLimit 是 0，retry 会静默退化成换号")
+		"否则 effectiveSameAccountRetryLimit 会裸用账号的 GetPoolModeRetryCount() 兜底"+
+		"（非 pool-mode 或未显式配置时是默认值 3），跟规则配的次数不一致时会被顶掉")
 	require.Equal(t, 2, *failoverErr.RuleRetryLimit)
 }
 

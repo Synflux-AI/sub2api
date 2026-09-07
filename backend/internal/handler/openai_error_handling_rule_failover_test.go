@@ -15,8 +15,10 @@ import (
 //
 // 1. ExhaustedAction=passthrough 在 OpenAI 侧原先完全没人看：全仓只有 GatewayHandler
 //    的两处消费它，OpenAIGatewayHandler.handleFailoverExhausted 从头到尾没有这个分支。
-// 2. 规则的 retry 预算要能覆盖账号的 pool-mode 预算，否则非 pool-mode 账号上
-//    界面给了「原地重试 N 次」而行为是直接换号。
+// 2. 规则的 retry 预算要能覆盖账号的 pool-mode 预算，否则会被账号基数顶掉——
+//    非 pool-mode 或未显式配置时基数是默认值 3，规则配的次数比它大就只会重试
+//    3 次；管理员把 pool_mode_retry_count 显式设成 0 时，界面给了「原地重试
+//    N 次」而行为会直接换号。
 
 func TestOpenAIFailoverExhausted_RulePassthroughReturnsUpstreamError(t *testing.T) {
 	gin.SetMode(gin.TestMode)

@@ -101,8 +101,10 @@ func TestExecuteErrorHandlingRuleRetryCarriesRuleRetryLimit(t *testing.T) {
 	if !failoverErr.RetryableOnSameAccount {
 		t.Fatal("retry action must set RetryableOnSameAccount")
 	}
-	// RuleRetryLimit 必须显式带出：effectiveSameAccountRetryLimit 的基数是
-	// account.GetPoolModeRetryCount()，非 pool-mode 账号是 0，不带就静默退化成换号。
+	// RuleRetryLimit 必须显式带出：effectiveSameAccountRetryLimit 不带它时会
+	// 裸用 account.GetPoolModeRetryCount() 兜底，非 pool-mode 或未显式配置时
+	// 这个基数是默认值 3，跟这里规则配的重试次数未必一致，不显式带出就会被
+	// 账号基数顶掉而错。
 	if failoverErr.RuleRetryLimit == nil || *failoverErr.RuleRetryLimit != 3 {
 		t.Fatalf("expected RuleRetryLimit=3, got %v", failoverErr.RuleRetryLimit)
 	}
