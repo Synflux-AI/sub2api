@@ -980,7 +980,6 @@ router.beforeEach(async (to, _from, next) => {
   // 简易模式下限制访问某些页面
   if (authStore.isSimpleMode) {
     const restrictedPaths = [
-      '/admin/groups',
       // 旧的 /admin/routing-strategies 已重定向到智能调度页，路由匹配阶段就完成跳转，
       // 到达本守卫时 to.path 已是新路径，因此这里只需列新路径。
       '/admin/smart-routing',

@@ -660,7 +660,7 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 		upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
 		// 错误处理规则先算好，但不改「副作用照原顺序跑」这件事：规则只决定动作，
 		// 不决定是否记账。未命中时 ruleHandled=false，下面一行行为不变。
-		builtinWillFailover := s.shouldFailoverOpenAIUpstreamResponse(resp.StatusCode, upstreamMsg, respBody)
+		builtinWillFailover := s.shouldFailoverOpenAIUpstreamResponse(account, resp.StatusCode, upstreamMsg, respBody)
 		ruleErr, ruleHandled := s.openAIErrorHandlingRuleOverride(upstreamCtx, c, openAIErrorHandlingRuleInput{
 			Account: account, StatusCode: resp.StatusCode, Header: resp.Header, Body: respBody,
 			ReqModel: upstreamModel, BuiltinWillFailover: builtinWillFailover,

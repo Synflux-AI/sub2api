@@ -1,5 +1,13 @@
 export default {
     settings: {
+      disableTempUnsched: {
+        title: '禁用临时不可调度',
+        description: '开启后，Anthropic / OpenAI 平台账号在上游出错时不再被自动标记为「临时不可调度」，始终保留在调度池中。',
+        enabled: '禁用临时不可调度',
+        enabledHint: '跳过全部自动触发（自定义规则、OAuth 401 / OpenAI 403 冷却、流超时、传输错误、刷新失败、错误率自动摘除）；仅作用于 Anthropic / OpenAI 平台账号，其他平台不受影响。',
+        saved: '设置已保存',
+        saveFailed: '保存设置失败'
+      },
       title: '系统设置',
       description: '管理注册、邮箱验证、默认值和 SMTP 设置',
       tabs: {
@@ -468,7 +476,7 @@ export default {
         grokDefaultTextModel: '默认 Grok 文本模型',
         grokDefaultTextModelHint: '用于空模型值；仅在右侧开关开启时也用于其他客户端模型命名空间。允许填写自定义 Grok 模型 ID。',
         grokCrossClientMap: '映射其他客户端模型到 Grok',
-        grokCrossClientMapHint: '默认关闭。开启后，GPT、Codex、o 系列和 Claude 模型 ID 会路由到左侧默认 Grok 文本模型。',
+        grokCrossClientMapHint: '为兼容客户端，默认开启。GPT、Codex、o 系列和 Claude 模型 ID 会路由到左侧默认 Grok 文本模型；关闭后必须使用 Grok 模型 ID。',
         grokDefaultBaseURLMode: '默认 Grok 上游',
         grokDefaultBaseURLModeHint: '仅用于 Grok 账号未配置显式 base URL 的文本请求；媒体和语音仍使用官方 API 主机。',
         grokBaseURLModeCLI: 'CLI 聊天代理',
