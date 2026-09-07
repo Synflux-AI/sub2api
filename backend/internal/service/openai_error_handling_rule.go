@@ -159,7 +159,7 @@ func (s *OpenAIGatewayService) openAIErrorHandlingRuleOverride(
 	// 那里，等于把另一个管理台功能无声关掉。两个功能语义重叠（都能「原样返回上游错误」），
 	// 且透传规则是更专用、更早存在的那个，所以它匹配上时本引擎让路。
 	// 内置要换号的分支不受影响：那条分支上本来就问不到透传规则。
-	if !in.BuiltinWillFailover && openAIErrorPassthroughRuleMatches(c, account.Platform, statusCode, respBody) {
+	if !in.BuiltinWillFailover && errorPassthroughRuleMatches(c, account.Platform, statusCode, respBody) {
 		return nil, false
 	}
 
