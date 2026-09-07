@@ -8,7 +8,7 @@ import (
 )
 
 func TestModelRPMRulesMigrationCreatesRuleTable(t *testing.T) {
-	content, err := FS.ReadFile("235_model_rpm_rules.sql")
+	content, err := FS.ReadFile("236_model_rpm_rules.sql")
 	require.NoError(t, err)
 
 	sql := strings.Join(strings.Fields(string(content)), " ")
@@ -42,10 +42,10 @@ func TestModelRPMRulesMigrationNumberIsUnused(t *testing.T) {
 
 	var owners []string
 	for _, entry := range entries {
-		if strings.HasPrefix(entry.Name(), "235_") {
+		if strings.HasPrefix(entry.Name(), "236_") {
 			owners = append(owners, entry.Name())
 		}
 	}
-	require.Equal(t, []string{"235_model_rpm_rules.sql"}, owners,
-		"迁移号 235 应只属于本迁移；撞号会让 schema_migrations 记录彼此覆盖")
+	require.Equal(t, []string{"236_model_rpm_rules.sql"}, owners,
+		"迁移号 236 应只属于本迁移；撞号会让 schema_migrations 记录彼此覆盖")
 }

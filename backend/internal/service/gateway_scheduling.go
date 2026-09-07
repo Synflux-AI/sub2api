@@ -221,7 +221,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 		return nil, err
 	}
 	preferOAuth := platform == PlatformGemini
-	if s.debugModelRoutingEnabled() && platform == PlatformAnthropic && requestedModel != "" {
+	if s.debugModelRoutingEnabled() && requestedModel != "" && modelRoutingAppliesToTargetPlatform(platform) {
 		logger.CtxPrintf(ctx, "service.gateway", "[ModelRoutingDebug] load-aware enabled: group_id=%v model=%s session=%s platform=%s", derefGroupID(groupID), requestedModel, shortSessionHash(sessionHash), platform)
 	}
 
@@ -858,12 +858,39 @@ func (s *GatewayService) ResolveGroupByID(ctx context.Context, groupID int64) (*
 	return s.resolveGroupByID(ctx, groupID)
 }
 
+// modelRoutingAppliesToPlatform 判定模型路由规则是否适用于本次请求。
+//
+// 路由规则的存储与查表（Group.ModelRouting / GetRoutingAccountIDs）本身与平台无关，
+// 早期只有 Anthropic 目标平台会读取它。OpenAI 分组同样存在“同一个公开别名由不同账号
+// 映射到不同上游模型”的故障转移写法，需要显式路由来指定谁是主、谁是备，因此这里把
+// Anthropic 与 OpenAI 一并放行。
+//
+// targetPlatform 是请求解析后的目标平台；groupPlatform 是分组自身的平台。composite
+// 分组不限定自身平台，只要目标平台落在放行集合内即可复用其规则。
+func modelRoutingAppliesToPlatform(targetPlatform, groupPlatform string) bool {
+	if !modelRoutingAppliesToTargetPlatform(targetPlatform) {
+		return false
+	}
+	return groupPlatform == targetPlatform || groupPlatform == PlatformComposite
+}
+
+// modelRoutingAppliesToTargetPlatform 是放行平台集合的唯一定义处：新增平台只改这里。
+// 在只知道目标平台、还没取到分组的位置（调试日志、取分组前的短路）单独判定用。
+func modelRoutingAppliesToTargetPlatform(targetPlatform string) bool {
+	switch targetPlatform {
+	case PlatformAnthropic, PlatformOpenAI:
+		return true
+	default:
+		return false
+	}
+}
+
 // routingPlanForRequest 解析本次请求的路由计划：返回候选账号 ID 列表以及是否为硬路由（restrict）。
 //
 //	hardRestrict=true  : 命中 restrict 策略，候选账号都不可调度时直接失败（不回退全量）。
 //	hardRestrict=false : 命中 prefer 策略或旧版模型路由，候选账号优先；不可用时回退全量（保持原行为）。
 //
-// 评估顺序：智能路由策略（first-match-wins）优先，未命中再回退到旧版 Group.ModelRouting（仅 anthropic）。
+// 评估顺序：智能路由策略（first-match-wins）优先，未命中再回退到旧版 Group.ModelRouting（anthropic / openai）。
 // routingPlanForRequest 返回命中策略的目标账号 ID 列表、是否硬路由（restrict），以及账号优先级映射。
 // priorityByID 为智能路由策略指定的账号优先级（id -> 优先级，数值越小越优先；相同数值为同一优先级，
 // 再按负载 / LRU 选择）；命中策略时非空，旧版分组模型路由时为 nil（此时回退使用账号自身优先级）。
@@ -897,8 +924,9 @@ func (s *GatewayService) routingPlanForRequest(ctx context.Context, group *Group
 		}
 	}
 
-	// 2) 回退：旧版分组模型路由（仅 anthropic；composite 分组若模型解析到 anthropic 也可用，软优先语义）
-	if requestedModel == "" || platform != PlatformAnthropic {
+	// 2) 回退：旧版分组模型路由（放行平台集合见 modelRoutingAppliesToTargetPlatform，目前为 anthropic / openai；
+	//    composite 分组若模型解析到放行平台也可用，软优先语义）
+	if requestedModel == "" || !modelRoutingAppliesToTargetPlatform(platform) {
 		return nil, false, nil
 	}
 	g := group
@@ -907,7 +935,7 @@ func (s *GatewayService) routingPlanForRequest(ctx context.Context, group *Group
 			g = resolved
 		}
 	}
-	if g == nil || (g.Platform != PlatformAnthropic && g.Platform != PlatformComposite) {
+	if g == nil || !modelRoutingAppliesToPlatform(platform, g.Platform) {
 		return nil, false, nil
 	}
 	ids := g.GetRoutingAccountIDs(requestedModel)

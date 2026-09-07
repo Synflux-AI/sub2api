@@ -32,8 +32,10 @@ import (
 // 合并后快照同时含上游 free_openai_fast 与本仓库扩展字段,与任一方旧版本均不兼容,升 23 强制失效。
 // v24: 再次撞号——上游 v23(group codex_models_manifest_config)与本仓库 v23 字段集不同,
 // 合并后快照同时含上游 manifest 配置与本仓库扩展字段,与任一方旧版本均不兼容,升 24 强制失效。
+// v25: 再次撞号——上游 v24(group model_allowlist,由 models_list_config 改名并改为强制语义)与本仓库 v24
+// 字段集不同,合并后快照同时含上游 model_allowlist 与本仓库扩展字段,与任一方旧版本均不兼容,升 25 强制失效。
 // 注:本仓库与上游各自独立演进该版本号,每次 sync 合并若双方都动过快照结构,需继续递增。
-const apiKeyAuthSnapshotVersion = 24
+const apiKeyAuthSnapshotVersion = 25
 
 type apiKeyAuthCacheConfig struct {
 	l1Size        int
@@ -447,7 +449,7 @@ func (s *APIKeyService) snapshotFromAPIKey(ctx context.Context, apiKey *APIKey) 
 			FreeOpenAIFast:                  apiKey.Group.FreeOpenAIFast,
 			DefaultMappedModel:              apiKey.Group.DefaultMappedModel,
 			MessagesDispatchModelConfig:     apiKey.Group.MessagesDispatchModelConfig,
-			ModelsListConfig:                apiKey.Group.ModelsListConfig,
+			ModelAllowlist:                  apiKey.Group.ModelAllowlist,
 			CodexModelsManifestConfig:       apiKey.Group.CodexModelsManifestConfig,
 			RPMLimit:                        apiKey.Group.RPMLimit,
 			MaxReasoningEffort:              apiKey.Group.MaxReasoningEffort,
@@ -555,7 +557,7 @@ func (s *APIKeyService) snapshotToAPIKey(key string, snapshot *APIKeyAuthSnapsho
 			FreeOpenAIFast:                  snapshot.Group.FreeOpenAIFast,
 			DefaultMappedModel:              snapshot.Group.DefaultMappedModel,
 			MessagesDispatchModelConfig:     snapshot.Group.MessagesDispatchModelConfig,
-			ModelsListConfig:                snapshot.Group.ModelsListConfig,
+			ModelAllowlist:                  snapshot.Group.ModelAllowlist,
 			CodexModelsManifestConfig:       snapshot.Group.CodexModelsManifestConfig,
 			RPMLimit:                        snapshot.Group.RPMLimit,
 			MaxReasoningEffort:              snapshot.Group.MaxReasoningEffort,
