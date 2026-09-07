@@ -229,6 +229,26 @@ func (s *GeminiMessagesCompatService) forwardClaudeBodyAsChatCompletions(
 		}
 		evBody := unwrapIfNeeded(account.Type == AccountTypeOAuth, respBody)
 
+		// 错误处理规则：内置独占特例（错误策略里 handleGeminiUpstreamError 的记账）都已
+		// 在上面跑完，此处开始由管理员配置说话。放在 shouldFailoverGemini... 之前，
+		// 使规则既能覆盖内置会换号的错误，也能覆盖普通非 failover 4xx。
+		//
+		// 与 Forward/ForwardNative 不同：本链没有 CheckErrorPolicy 早退 switch，也没有
+		// isGoogleProjectConfigError 400 特判——Skipped/TempUnscheduled 两种策略只是
+		// 跳过 handleGeminiUpstreamError 记账（该记的账已经在 CheckErrorPolicy 内部记
+		// 完），随后仍会流到这里参与 shouldFailoverGemini... 判断，所以 AccountAccounting
+		// 同样传 nil：无论哪种策略，到这一行时该记的账都已经记完。
+		if failoverErr, handled := s.geminiErrorHandlingRuleOverride(ctx, c, geminiErrorHandlingRuleInput{
+			Account:             account,
+			StatusCode:          resp.StatusCode,
+			Header:              resp.Header,
+			Body:                evBody,
+			ReqModel:            mappedModel,
+			BuiltinWillFailover: s.shouldFailoverGeminiUpstreamError(resp.StatusCode),
+		}); handled {
+			return nil, failoverErr
+		}
+
 		if s.shouldFailoverGeminiUpstreamError(resp.StatusCode) {
 			upstreamMsg := sanitizeUpstreamErrorMessage(strings.TrimSpace(extractUpstreamErrorMessage(evBody)))
 			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
