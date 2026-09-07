@@ -203,6 +203,17 @@ func TestAntigravityBuiltinOwnsError_GoogleProjectConfig(t *testing.T) {
 			name: "400 但消息不匹配时规则可覆盖", statusCode: http.StatusBadRequest,
 			msg: "some other invalid argument", want: false,
 		},
+		{
+			// fix round 1（#228 评审）：401 凭据被拒无条件归内置独占，不看消息内容——
+			// 与 antigravityCredentialRejectedError 自己的分支条件（只看状态码）逐字一致。
+			name: "401 无条件归内置，不看消息内容", statusCode: http.StatusUnauthorized,
+			msg: "", want: true,
+		},
+		{
+			name:       "401 即便消息形如项目配置错误也仍归内置（走的是 401 分支，不是 400 分支）",
+			statusCode: http.StatusUnauthorized,
+			msg:        "invalid project resource name (project 123)", want: true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -252,6 +263,56 @@ func TestAntigravityErrorHandlingRule_CompatChainRefusesGoogleProjectConfigRule(
 	for _, ev := range events {
 		require.NotEqual(t, "error_handling_rule_failover", ev.Kind,
 			"不该出现规则接管的事件——这条确定性配置错误必须由内置兜底处理")
+	}
+}
+
+// ==================== 内置独占：401 凭据被拒（compat 链，承重，fix round 1） ====================
+
+// #228 评审 fix round 1：handleAntigravityCompatHTTPError 的 401 分支
+// （antigravityCredentialRejectedError）产出的是带 Stage/Scope/Reason/ClientMessage
+// 等类型字段的 UpstreamFailoverError，这些字段是下游归因（ops_service.go 的
+// Stage==AccountAuth 判断）与账号池耗尽时客户端文案（credentialFailoverClientResponse
+// 按 Reason 查表，查不到会落到另一个平台的 GrokCredentialUnavailableClientMessage）的
+// 唯一来源。规则版错误带不出这些字段——如果一条形如「401 → failover」的管理台规则能
+// 抢先接管，这些字段会被清零。这里驱动 ForwardAsChatCompletions 端到端证明：即便配了
+// 这样一条规则，返回的错误仍然是 antigravityCredentialRejectedError 产出的那个，类型
+// 字段原样保留，而不是规则引擎产出的裸 UpstreamFailoverError。
+func TestAntigravityErrorHandlingRule_CompatChainRefusesCredentialRejectionRule(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	respBody := []byte(`{"error":{"status":"UNAUTHENTICATED","message":"Request had invalid authentication credentials"}}`)
+	resp := &http.Response{
+		StatusCode: http.StatusUnauthorized,
+		Header:     http.Header{"X-Request-Id": []string{"req-3"}},
+		Body:       io.NopCloser(bytes.NewReader(respBody)),
+	}
+
+	svc := newAntigravityCompatService(config.GatewayConfig{}, &httpUpstreamStub{resp: resp})
+	svc.settingService = newAntigravityRuleSettingService(t, ErrorHandlingRule{
+		ID: "broad-401", StatusCodes: []int{401}, Action: ErrorHandlingActionFailover,
+		Platforms: []string{PlatformAntigravity},
+	})
+
+	account := newAntigravityCompatAccount(AccountTypeOAuth)
+	body := []byte(`{"model":"claude-sonnet-4-5","messages":[{"role":"user","content":"hi"}]}`)
+	c, _ := newAntigravityCompatContext(http.MethodPost, "/v1/chat/completions", body)
+
+	_, err := svc.ForwardAsChatCompletions(context.Background(), c, account, body, nil)
+
+	require.Error(t, err)
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr, "凭据被拒必须仍然产出带类型字段的 UpstreamFailoverError")
+	require.Empty(t, failoverErr.ErrorRuleID,
+		"ErrorRuleID 非空说明规则引擎抢走了这个错误——凭据被拒的类型字段会因此被清零")
+	require.Equal(t, GatewayFailureStageAccountAuth, failoverErr.Stage)
+	require.Equal(t, GatewayFailureScopeAccount, failoverErr.Scope)
+	require.Equal(t, AntigravityCredentialRejectedReason, failoverErr.Reason)
+	require.Equal(t, AntigravityCredentialRejectedClientMessage, failoverErr.ClientMessage)
+	require.Equal(t, http.StatusBadGateway, failoverErr.ClientStatusCode)
+
+	events := opsUpstreamErrorEvents(t, c)
+	for _, ev := range events {
+		require.NotEqual(t, "error_handling_rule_failover", ev.Kind,
+			"不该出现规则接管的事件——401 凭据被拒必须由内置的 antigravityCredentialRejectedError 处理")
 	}
 }
 

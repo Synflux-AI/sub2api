@@ -55,22 +55,30 @@ import (
 
 // antigravityBuiltinOwnsError 判断这条上游错误是否归内置逻辑独占，规则不得抢走。
 //
-// 四条转发链在这一点上的状况并不对称，逐条核对（#228 task-8）：
+// 覆盖两类错误，逐条核对（#228 task-8，第二类是 fix round 1 补的）：
+//
+// 【类 1】400 + Google 项目配置类消息（isGoogleProjectConfigError）。四条转发链在这一点
+// 上的状况并不对称：
 //   - Forward（claude 协议链）：isPromptTooLongError 与 isGoogleProjectConfigError 的
 //     400 特判，都已经在接线点之前物理 return，规则引擎压根碰不到这两类错误。这里
 //     对这条链而言是双重保险——就算判了 true，也不会改变已经在更早处 return 的结果。
+//     该链的 msg400 构造是 ToLower(TrimSpace(extractAntigravityErrorMessage(respBody)))，
+//     不经过 sanitizeUpstreamErrorMessage（antigravity_gateway_claude.go 里的 msg 变量）。
 //   - ForwardGemini（gemini 协议链）：isGoogleProjectConfigError 的 400 特判同样在
 //     接线点之前物理 return（模型不存在 fallback / signature 纠错重试成功后会
 //     goto handleSuccess 绕开整个错误分支，不影响这里的判断）。双重保险，同上。
+//     但**这条链的 msg400 构造与 Forward 不同**：ForwardGemini 先把 upstreamMsg 整个
+//     经过 sanitizeUpstreamErrorMessage，再 ToLower 传给 isGoogleProjectConfigError
+//     （antigravity_gateway_gemini.go：`upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)`
+//     在先，`isGoogleProjectConfigError(strings.ToLower(upstreamMsg))` 在后）——两条链的
+//     口径不是逐字一致的两份实现，只是碰巧都在接线点之前物理 return，这里的判断本身
+//     对这条链而言仍然只是双重保险，不受影响。
 //   - forwardAntigravityCompat（chat completions / responses 协议链，共用
 //     handleAntigravityCompatHTTPError）：**没有任何早退分支**，也没有
-//     isGoogleProjectConfigError 特判。account_auth 的 401 特殊处理
-//     （antigravityCredentialRejectedError）在 shouldFailoverUpstreamError 判断
-//     **之后**，早接线点之前，早接线点位于 shouldFailoverUpstreamError 判断之前。
-//     这里如果恒为 false，一条形如「400 → failover」的管理台规则就能抢下一个确定性
-//     的 Google 项目配置错误——这种错误换任何账号都复现，被规则接管意味着整个账号池
-//     会被无谓地打一遍换号，是纯粹的行为退化。所以这个判断在这条链上是**承重的**，
-//     不能省，也不能只留个恒 false 的占位。
+//     isGoogleProjectConfigError 特判。这里如果恒为 false，一条形如「400 → failover」
+//     的管理台规则就能抢下一个确定性的 Google 项目配置错误——这种错误换任何账号都
+//     复现，被规则接管意味着整个账号池会被无谓地打一遍换号，是纯粹的行为退化。所以
+//     这个判断在这条链上是**承重的**，不能省，也不能只留个恒 false 的占位。
 //   - antigravityRetryLoop 内部的早接线点（普通 429/5xx 首次失败）：能走到那两个
 //     调用点的状态码集合是 {429,503}（智能重试分支的 fallthrough）与
 //     {500,502,504,529}（shouldRetryAntigravityError），Google 项目配置类错误固定是
@@ -78,15 +86,50 @@ import (
 //     不承重，但同一个判断函数必须覆盖所有调用点，不能为早接线点单独做一份不同的
 //     判定，否则两处判定可能漂移。
 //
-// 检测口径必须与 Forward/ForwardGemini 里各自 msg400 的构造方式逐字一致：
-// ToLower + TrimSpace 作用于 extractAntigravityErrorMessage，不经过
-// sanitizeUpstreamErrorMessage。这是 isGoogleProjectConfigError 在
-// antigravity_gateway_claude.go / antigravity_gateway_gemini.go 里已经在用的口径
-// （extractAntigravityErrorMessage 是本文件族的原生消息提取函数，而不是 Gemini 侧
-// gjson 版本的 extractUpstreamErrorMessage），调用方已按这个口径准备好 upstreamMsg。
+// 检测口径：ToLower + TrimSpace 作用于 extractAntigravityErrorMessage 的结果（不经过
+// sanitizeUpstreamErrorMessage）——这是 antigravityErrorHandlingRuleOverride 里
+// lowerMsg 的构造口径（extractAntigravityErrorMessage 是本文件族的原生消息提取函数，
+// 而不是 Gemini 侧 gjson 版本的 extractUpstreamErrorMessage），调用方已按这个口径把
+// lowerMsg 准备好再传进来；跟 Forward/ForwardGemini 各自 msg400 是否逐字一致无关——
+// 那两条链上这个判断都是双重保险，判不判 true 都不改变已经在更早处 return 的结果。
 //
-// 保持窄：只处理这一种确定性配置错误，不要顺手加别的条件——新分支需要新的证据。
+// 【类 2】401 凭据被拒。compat 链的 handleAntigravityCompatHTTPError 在
+// shouldFailoverUpstreamError(401)==true 之后单独 if 出一支，调用
+// antigravityCredentialRejectedError(resp, body) 产出带类型字段的 UpstreamFailoverError：
+// Stage=GatewayFailureStageAccountAuth、Scope=GatewayFailureScopeAccount、
+// Reason=AntigravityCredentialRejectedReason、ClientStatusCode=502、
+// ClientMessage=AntigravityCredentialRejectedClientMessage。这些字段是下游归因与文案的
+// 唯一来源：ops_service.go 靠 Stage==AccountAuth 才会把这条记录归因为凭据失败而不是
+// 普通推理失败；账号池耗尽时 credentialFailoverClientResponse 靠 Reason 才能给出
+// Antigravity 自己的凭据失败文案，读不到 Reason 就会落到 GrokCredentialUnavailableClientMessage
+// ——另一个平台的兜底文案，把 Antigravity 的失败说成 Grok 的话。规则版错误是另起一个
+// UpstreamFailoverError，带不出这些字段：一条形如「401 → failover」的管理台规则会把
+// 这条归因和专属文案一起清零。与 openAIBuiltinOwnsError（openai_error_handling_rule.go）
+// 对 access-state/凭据类错误的先例是同一类判断：那里的注释点名"会把 413 的专用文案、
+// 凭据失败的归因、容量削峰的「不扣账号健康分」一起清零"，Antigravity 的 401 是同一种
+// 「带类型字段的错误不能被裸的规则版错误替换」的形状。
+//
+// 检测口径：只按状态码，不看响应体——antigravityCredentialRejectedError 本身的分支
+// 条件也只是 resp.StatusCode == http.StatusUnauthorized，不检查任何 body 字段，两处
+// 判定必须保持同一个口径，多加条件只会让两处判定漂移。
+//
+// 这条判断故意不按调用链限定范围，对 Forward/ForwardGemini/早接线点同样生效，尽管
+// 目前只有 compat 链会真正构造这些 typed 字段：claude.go/gemini.go 里搜不到
+// StatusUnauthorized，没有任何 401 专属分支；早接线点的两处调用点只处理
+// {429,503} 与 {500,502,504,529}，401 在 antigravityRetryLoop 里走的是"其他 4xx
+// 错误直接返回"，根本不会问到 ruleOverride，所以早接线点在这条判断上完全不受影响。
+// 在 claude/gemini 这两条链上把这条判断落成 true，代价是这两条链上不能再单独配一条
+// 「401 → retry/passthrough」的管理台规则——之前是可以的，现在也归内置独占了。这是
+// 刻意的取舍，不是疏忽：401 是凭据问题，同账号 retry 修不好，passthrough 把裸 401 还
+// 给客户端也比不上内置的换号语义；让同一个共享判断函数在不同调用方之间表现不同，正是
+// 两处判定漂移的起点，统一按状态码判断、不区分调用链，换来的是判定函数本身不需要关心
+// 调用方是谁。
+//
+// 保持窄：只处理这两种确定性错误，不要顺手加别的条件——新分支需要新的证据。
 func antigravityBuiltinOwnsError(statusCode int, upstreamMsg string, _ []byte) bool {
+	if statusCode == http.StatusUnauthorized {
+		return true
+	}
 	return statusCode == http.StatusBadRequest && isGoogleProjectConfigError(upstreamMsg)
 }
 
@@ -191,8 +234,12 @@ func (s *AntigravityGatewayService) antigravityErrorHandlingRuleOverride(
 		return nil, false
 	}
 
-	// 与 Forward/ForwardGemini 里 msg400 的构造方式逐字一致：ToLower + TrimSpace
-	// 作用于 extractAntigravityErrorMessage 的结果，不经过 sanitizeUpstreamErrorMessage。
+	// ToLower + TrimSpace 作用于 extractAntigravityErrorMessage 的结果，不经过
+	// sanitizeUpstreamErrorMessage。这与 Forward（claude 协议链）的 msg400 构造逐字
+	// 一致，但与 ForwardGemini 不同——ForwardGemini 会先经过 sanitizeUpstreamErrorMessage
+	// 再 ToLower（见 antigravity_gateway_gemini.go）。两条链在这一点上不是同一份实现，
+	// 但都在这里的判断生效之前已经物理 return 过，所以口径差异对 Forward/ForwardGemini
+	// 无影响；对没有早退分支的 compat 链，这里统一用的是本行的口径。
 	// antigravityBuiltinOwnsError 靠这个口径识别确定性的 Google 项目配置类 400
 	// （见该函数的文档注释）。
 	lowerMsg := strings.ToLower(strings.TrimSpace(extractAntigravityErrorMessage(respBody)))
