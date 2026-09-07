@@ -708,8 +708,9 @@ type UpstreamFailoverError struct {
 	ExhaustedAction          string // 账号池耗尽后的规则终态策略
 	// RuleRetryLimit 是错误处理规则给出的同账号重试上限，非 nil 时**覆盖**账号的
 	// pool-mode 预算（而不是像 SameAccountRetryMax 那样只能往下夹）。
-	// 必须能覆盖：effectiveSameAccountRetryLimit 的基数是 GetPoolModeRetryCount()，
-	// 非 pool-mode 账号是 0，只往下夹的话规则配的 retry 会静默退化成换号。
+	// 必须能覆盖：账号基数不管是非 pool-mode/未显式配置时的默认值 3，还是管理员把
+	// pool_mode_retry_count 显式设成 0，只往下夹都会让规则配的 retry 要么少重试、
+	// 要么静默退化成换号。
 	RuleRetryLimit   *int
 	SafeErrorType    string // 可安全返回给 Anthropic 客户端的错误类型
 	SafeErrorMessage string // 可安全返回给 Anthropic 客户端的错误消息

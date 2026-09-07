@@ -310,9 +310,11 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 					return
 				}
 				// 走 effectiveSameAccountRetryLimit 而不是裸的 GetPoolModeRetryCount()：
-				// 错误处理规则显式配的 RuleRetryLimit 必须覆盖账号默认值，包括账号
-				// 基数为 0（非 pool-mode）的情况。不然界面上给了「原地重试 N 次」，
-				// 行为却是换号。
+				// 裸调用会让账号基数顶掉规则显式配的 RuleRetryLimit，两种基数取值
+				// 都会错——账号非 pool-mode 或未显式配置时基数是默认值 3，规则配了
+				// 5 次也只会重试 3 次；管理员把 pool_mode_retry_count 显式设成 0 时，
+				// 规则重试会静默退化成换号。RuleRetryLimit 必须覆盖账号基数，不管
+				// 那个基数是 3 还是 0。
 				action := fs.HandleFailoverError(c.Request.Context(), h.gatewayService, account.ID, account.Platform, effectiveSameAccountRetryLimit(failoverErr, account), failoverErr)
 				switch action {
 				case FailoverContinue:

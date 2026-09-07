@@ -120,8 +120,10 @@ func executeErrorHandlingRule(c *gin.Context, in errorHandlingRuleExecInput) (*U
 	switch decision.ConfiguredAction {
 	case ErrorHandlingActionRetry:
 		// 同账号重试，预算按账号计。RuleRetryLimit 必须显式带出来：
-		// effectiveSameAccountRetryLimit 的基数是 account.GetPoolModeRetryCount()，
-		// 非 pool-mode 账号是 0，不带这个字段的话 retry 会静默退化成换号。
+		// effectiveSameAccountRetryLimit 裸调用 account.GetPoolModeRetryCount() 的话，
+		// 账号基数会顶掉这里配的重试预算——非 pool-mode 或未显式配置时基数是默认值 3，
+		// 配了 5 次也只会重试 3 次；管理员把 pool_mode_retry_count 显式设成 0 时，
+		// retry 会静默退化成换号。
 		limit := decision.RetryLimit
 		failoverErr.RetryableOnSameAccount = true
 		failoverErr.RuleRetryLimit = &limit
