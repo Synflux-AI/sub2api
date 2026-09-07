@@ -506,9 +506,31 @@ func (s *AntigravityGatewayService) writeMappedAntigravityCompatError(
 		Kind:               "http_error",
 		Message:            message,
 	})
-	c.JSON(mapUpstreamStatusCode(upstreamStatus), gin.H{
+
+	defaultStatus := mapUpstreamStatusCode(upstreamStatus)
+	defaultMessage := getPassthroughOrDefault(message, "Upstream request failed")
+
+	// 错误透传规则优先于内置映射，也优先于错误处理规则（后者在执行层检测到透传规则
+	// 命中时会让路）。让路之后必须真的执行这条规则，否则「让路」只是把请求丢回内置
+	// 映射，两个管理台功能都不生效（#228 评审修订 §五）。
+	if ptStatus, ptErrType, ptErrMsg, matched := applyErrorPassthroughRule(
+		c, account.Platform, upstreamStatus, body,
+		defaultStatus, "upstream_error", defaultMessage,
+	); matched {
+		c.JSON(ptStatus, gin.H{
+			"error": gin.H{
+				"message": ptErrMsg,
+				"type":    ptErrType,
+				"param":   nil,
+				"code":    nil,
+			},
+		})
+		return fmt.Errorf("upstream error: %d %s", upstreamStatus, message)
+	}
+
+	c.JSON(defaultStatus, gin.H{
 		"error": gin.H{
-			"message": getPassthroughOrDefault(message, "Upstream request failed"),
+			"message": defaultMessage,
 			"type":    "upstream_error",
 			"param":   nil,
 			"code":    nil,
