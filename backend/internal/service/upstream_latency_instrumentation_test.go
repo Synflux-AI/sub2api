@@ -55,21 +55,46 @@ func TestTimedUpstreamDoRecordsLatency(t *testing.T) {
 // 防漏回归：gemini / antigravity 的**请求转发**上游出口必须全部走 timedUpstreamDo。
 // 逐点插桩必漏，而漏掉的路径上「上游耗时上限」条件永远不生效。
 //
-// instrumentationExempt 是显式豁免名单：不在请求转发路径上、拿不到 gin.Context 的
-// 出口（如账号连通性测试）留在这里，附理由。名单只能因「确实拿不到 c」而增长，
-// 不能因为「改起来麻烦」。
+// 文件名单本身也是历史上漏过一个真实转发出口的地方（Task 5 fix round 1：
+// antigravity_gateway_gemini.go 里模型兜底重试的 httpUpstream.Do 不在最初手写的
+// 4 个文件名单里，测试扫不到它）。改成按目录枚举 antigravity_ / gemini_ 前缀文件，
+// 让"文件名单本身不全"这一类缺口不再需要靠人记全。
+//
+// instrumentationExempt 是显式豁免名单：出口留在这里必须满足以下两类之一，并附理由：
+//  1. 不在请求转发路径上、拿不到 gin.Context（如账号连通性测试）；
+//  2. 拿得到 gin.Context，但这次 Do 调用不是本次推理请求的上游出口 —— 例如探测/
+//     校验类的旁路请求。把它的耗时写进 OpsUpstreamLatencyMsKey 会覆盖真正上游调用
+//     的耗时；而该条件对"未知耗时"是 fail-closed（不满足任何阈值），对"耗时写错
+//     但是个不大的数字"却是 fail-open（会被判定满足阈值）—— 错误地更危险，非该字段
+//     没数据更誤導人。
+//
+// 名单只能因以上两条之一而增长，不能因为「改起来麻烦」。
 var instrumentationExempt = map[string]string{
-	// 形如 "gemini_messages_compat_service.go:2870": "账号测试路径，无 gin.Context",
 	"gemini_messages_compat_service.go:2870": "AI Studio GET 辅助路径，签名只有 context.Context，非请求转发路径",
 }
 
 func TestGeminiAndAntigravityUpstreamExitsAreInstrumented(t *testing.T) {
-	files := []string{
-		"gemini_messages_compat_service.go",
-		"gemini_chat_completions_compat_service.go",
-		"antigravity_gateway_upstream.go",
-		"antigravity_gateway_retry.go",
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatalf("read dir: %v", err)
 	}
+	var files []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if strings.HasSuffix(name, "_test.go") || !strings.HasSuffix(name, ".go") {
+			continue
+		}
+		if strings.HasPrefix(name, "antigravity_") || strings.HasPrefix(name, "gemini_") {
+			files = append(files, name)
+		}
+	}
+	if len(files) == 0 {
+		t.Fatal("no antigravity_/gemini_ files found — directory enumeration is broken")
+	}
+
 	bare := regexp.MustCompile(`\bhttpUpstream\.Do\(`)
 	for _, name := range files {
 		src, err := os.ReadFile(filepath.Join(".", name))
