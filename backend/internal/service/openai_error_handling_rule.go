@@ -203,13 +203,6 @@ func (s *OpenAIGatewayService) openAITransportErrorRuleOverride(
 	return failoverErr
 }
 
-// openAIErrorHandlingRuleEffectiveAction 保留为执行层同名逻辑的别名。
-// 口径提到 error_handling_rule_executor.go 共用：否则新平台的 outcome 会与 OpenAI 侧
-// 对不上，跨平台查 upstream_errors 就失效。
-func openAIErrorHandlingRuleEffectiveAction(decision errorHandlingRuleDecision) string {
-	return errorHandlingRuleExecEffectiveAction(decision)
-}
-
 // logOpenAIErrorHandlingRuleDecision 与 Anthropic 侧的 logErrorHandlingRuleDecision
 // 口径一致。Kind 必须是 "error_handling_rule_" + **生效**动作（不是配置动作）：排查时
 // 判断「引擎有没有被绕过」全靠 upstream_errors 里有没有这个前缀，而两个平台的

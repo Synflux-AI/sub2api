@@ -32,19 +32,27 @@ import (
 
 // geminiBuiltinOwnsError 判断这条上游错误是否归内置逻辑独占，规则不得抢走。
 //
-// 逐条核对 Forward / ForwardNative 里在接线点之前就 return 的分支（#228 task-7）：
-//   - CheckErrorPolicy 的 switch（ErrorPolicySkipped / ErrorPolicyMatched /
-//     ErrorPolicyTempUnscheduled）：自定义错误码与临时不可调度都带账号状态副作用，
-//     且已经在接线点之前 return，规则天然碰不到——不需要在这里重复判断。
-//   - isGoogleProjectConfigError：确定性的 Google 项目配置类 400，换任何账号都复现，
-//     同样已在接线点之前 return。
+// 三条转发链在这一点上的状况并不对称，逐条核对（#228 task-7 fix round 1）：
+//   - Forward / ForwardNative：CheckErrorPolicy 的 switch（ErrorPolicySkipped /
+//     ErrorPolicyMatched / ErrorPolicyTempUnscheduled）与 isGoogleProjectConfigError
+//     的 400 特判，都已经在接线点之前物理 return，规则引擎压根碰不到这两类错误。
+//     这里对这两条链而言是双重保险——就算判了 true，也不会改变已经在更早处 return
+//     的结果。
+//   - ForwardAsChatCompletions：没有上述任何一类早退分支。它唯一涉及的
+//     checkErrorPolicyInLoop 只决定同号重试循环要不要 break，从不短路错误处理路径，
+//     所以该链会带着未经拦截的 400 一路走到这个判断点。这里如果恒为 false，一条形如
+//     「400 → failover」的管理台规则就能抢下一个确定性的 Google 项目配置错误——这种
+//     错误换任何账号都复现，被规则接管意味着整个账号池会被无谓地打一遍换号，是纯粹的
+//     行为退化。所以这个判断在这条链上是**承重的**，不能省，也不能只留个恒 false 的
+//     占位。
 //
-// 这两类已经通过「在接线点之前 return」物理隔离，不会走到
-// geminiErrorHandlingRuleOverride，所以 geminiBuiltinOwnsError 本身可以恒为 false——
-// 保留函数是为了与 OpenAI 侧的调用形状一致，也为未来出现「接线点之后仍需内置独占」
-// 的新分支留一个扩展点。
-func geminiBuiltinOwnsError(_ int, _ string, _ []byte) bool {
-	return false
+// 检测口径必须与 Forward 里 msg400 的构造方式逐字一致（ToLower + TrimSpace 作用于
+// extractUpstreamErrorMessage，不经过 sanitizeUpstreamErrorMessage），否则两处判定
+// 可能在边界样本上不一致，调用方已按这个口径准备 upstreamMsg。
+//
+// 保持窄：只处理这一种确定性配置错误，不要顺手加别的条件——新分支需要新的证据。
+func geminiBuiltinOwnsError(statusCode int, upstreamMsg string, _ []byte) bool {
+	return statusCode == http.StatusBadRequest && isGoogleProjectConfigError(upstreamMsg)
 }
 
 // safeGeminiError 从上游错误体里取出可安全返回给客户端的类型与消息。
@@ -136,6 +144,12 @@ func (s *GeminiMessagesCompatService) geminiErrorHandlingRuleOverride(
 		return nil, false
 	}
 
+	// 与 Forward 里 msg400 的构造方式逐字一致：ToLower + TrimSpace 作用于
+	// extractUpstreamErrorMessage 的结果，不经过 sanitizeUpstreamErrorMessage。
+	// geminiBuiltinOwnsError 靠这个口径识别确定性的 Google 项目配置类 400
+	// （见该函数的文档注释）。
+	lowerMsg := strings.ToLower(strings.TrimSpace(extractUpstreamErrorMessage(respBody)))
+
 	return executeErrorHandlingRule(c, errorHandlingRuleExecInput{
 		Settings:            settings,
 		Account:             account,
@@ -143,7 +157,7 @@ func (s *GeminiMessagesCompatService) geminiErrorHandlingRuleOverride(
 		Header:              respHeader,
 		Body:                respBody,
 		ReqModel:            in.ReqModel,
-		BuiltinOwns:         geminiBuiltinOwnsError(statusCode, sanitizeUpstreamErrorMessage(strings.TrimSpace(extractUpstreamErrorMessage(respBody))), respBody),
+		BuiltinOwns:         geminiBuiltinOwnsError(statusCode, lowerMsg, respBody),
 		BuiltinWillFailover: in.BuiltinWillFailover,
 		SyntheticStatus:     in.SyntheticStatus,
 		SafeError:           safeGeminiError,

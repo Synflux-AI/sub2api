@@ -64,9 +64,9 @@ func TestTimedUpstreamDoRecordsLatency(t *testing.T) {
 //  1. 不在请求转发路径上、拿不到 gin.Context（如账号连通性测试）；
 //  2. 拿得到 gin.Context，但这次 Do 调用不是本次推理请求的上游出口 —— 例如探测/
 //     校验类的旁路请求。把它的耗时写进 OpsUpstreamLatencyMsKey 会覆盖真正上游调用
-//     的耗时；而该条件对"未知耗时"是 fail-closed（不满足任何阈值），对"耗时写错
-//     但是个不大的数字"却是 fail-open（会被判定满足阈值）—— 错误地更危险，非该字段
-//     没数据更誤導人。
+//     的耗时；而该条件对"没有耗时数据"是 fail-closed（不满足任何阈值），对"耗时
+//     数据存在但是错的"却是 fail-open（一个碰巧不大的错误数字会被判定满足阈值）——
+//     写错比不写更危险，所以宁可留空也不能瞎写。
 //
 // 名单只能因以上两条之一而增长，不能因为「改起来麻烦」。
 var instrumentationExempt = map[string]string{
