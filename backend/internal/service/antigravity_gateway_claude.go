@@ -116,8 +116,18 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 		isStickySession: isStickySession, // Forward 由上层判断粘性会话
 		groupID:         0,               // Forward 方法没有 groupID，由上层处理粘性会话清除
 		sessionHash:     "",              // Forward 方法没有 sessionHash，由上层处理粘性会话清除
+		// #228 task-8：普通 429/5xx 首次失败时先问一次错误处理规则引擎，短路内置的
+		// 3 次通用重试。只挂主调用：signature/budget 纠错子调用的请求体已经被改写，
+		// 属于内置独占的纠错重试，不接这个钩子。
+		ruleOverride: s.antigravityEarlyRuleOverrideHook(ctx, c, account, originalModel),
 	})
 	if err != nil {
+		// 规则引擎在 antigravityRetryLoop 内部提前命中：直接把规则版的 failover 错误
+		// 交给 Handler，不再走下面的账号切换信号判断（那是内置自己的换号信号，与规则
+		// 引擎产出的 *UpstreamFailoverError 是两种不同的错误类型）。
+		if failoverErr, ok := err.(*UpstreamFailoverError); ok {
+			return nil, failoverErr
+		}
 		// 检查是否是账号切换信号，转换为 UpstreamFailoverError 让 Handler 切换账号
 		if switchErr, ok := IsAntigravityAccountSwitchError(err); ok {
 			return nil, &UpstreamFailoverError{
@@ -408,6 +418,21 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 					})
 					return nil, &UpstreamFailoverError{StatusCode: resp.StatusCode, ResponseBody: respBody, RetryableOnSameAccount: true}
 				}
+			}
+
+			// #228 task-8：错误处理规则引擎接线点。isGoogleProjectConfigError 的 400
+			// 特判已经在上面 return 掉了确定性的配置错误，规则引擎压根碰不到那类错误；
+			// 这里问的是剩下的所有错误。BuiltinWillFailover 传真实分类结论，不硬编码
+			// true——否则会把「给错误透传规则让路」这件事也一并关掉。
+			if failoverErr, handled := s.antigravityErrorHandlingRuleOverride(ctx, c, antigravityErrorHandlingRuleInput{
+				Account:             account,
+				StatusCode:          resp.StatusCode,
+				Header:              resp.Header,
+				Body:                respBody,
+				ReqModel:            originalModel,
+				BuiltinWillFailover: s.shouldFailoverUpstreamError(resp.StatusCode),
+			}); handled {
+				return nil, failoverErr
 			}
 
 			if s.shouldFailoverUpstreamError(resp.StatusCode) {

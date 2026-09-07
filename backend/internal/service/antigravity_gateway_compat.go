@@ -193,8 +193,12 @@ func (s *AntigravityGatewayService) forwardAntigravityCompat(
 		isStickySession: false,
 		groupID:         0,
 		sessionHash:     "",
+		ruleOverride:    s.antigravityEarlyRuleOverrideHook(ctx, c, account, request.originalModel),
 	})
 	if err != nil {
+		if failoverErr, ok := err.(*UpstreamFailoverError); ok {
+			return nil, failoverErr
+		}
 		return nil, s.handleAntigravityCompatTransportError(c, err)
 	}
 
@@ -422,6 +426,21 @@ func (s *AntigravityGatewayService) handleAntigravityCompatHTTPError(
 		"",
 		false,
 	)
+
+	// #228 task-8：错误处理规则引擎接线点。这条链（chat completions / responses）
+	// 没有任何早退分支，也没有 isGoogleProjectConfigError 特判——antigravityBuiltinOwnsError
+	// 在这里是承重的，不是双重保险（见 antigravity_error_handling_rule.go 顶部注释）。
+	if failoverErr, handled := s.antigravityErrorHandlingRuleOverride(ctx, c, antigravityErrorHandlingRuleInput{
+		Account:             account,
+		StatusCode:          resp.StatusCode,
+		Header:              resp.Header,
+		Body:                body,
+		ReqModel:            call.request.originalModel,
+		BuiltinWillFailover: s.shouldFailoverUpstreamError(resp.StatusCode),
+	}); handled {
+		return failoverErr
+	}
+
 	if s.shouldFailoverUpstreamError(resp.StatusCode) {
 		message := sanitizeUpstreamErrorMessage(strings.TrimSpace(extractAntigravityErrorMessage(body)))
 		event := OpsUpstreamErrorEvent{

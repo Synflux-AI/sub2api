@@ -39,6 +39,15 @@ type antigravityRetryLoopParams struct {
 	isStickySession bool   // 是否为粘性会话（用于账号切换时的缓存计费判断）
 	groupID         int64  // 用于模型级限流时清除粘性会话
 	sessionHash     string // 用于模型级限流时清除粘性会话
+
+	// ruleOverride 是可选的错误处理规则早接线钩子（#228 task-8）。只在"纠错特例未
+	// 命中之后的普通 429/5xx"、且 attempt==1（首次失败）时被问一次：命中就直接短路
+	// 内置的 3 次通用重试，未命中就照旧走内置重试。为 nil 时行为完全不变（沿用内置
+	// 重试逻辑），用于三条转发链里请求体会被改写的纠错重试子调用（signature/
+	// thinking-budget 纠错、model fallback）——那些子调用不传这个字段，保持内置独占。
+	// 见 antigravity_error_handling_rule.go 里 antigravityEarlyRuleOverrideHook 的
+	// 文档注释。
+	ruleOverride antigravityRuleOverrideHook
 }
 
 // antigravityRetryLoopResult 重试循环的结果
@@ -637,6 +646,18 @@ urlFallbackLoop:
 					}
 					// smartRetryActionContinue: 继续默认重试逻辑
 
+					// #228 task-8：智能重试（OAuth 专用纠错特例）已经在 handleSmartRetry 里
+					// 判过、没触发才会落到这里——到这里的是"普通"429/503。规则引擎必须在
+					// 首次失败、内置 3 次通用重试耗尽之前被问到，否则"立即切换账号/原样
+					// 透传"这类规则动作会被内置多烧 2 次上游请求才生效，也不等价于 OpenAI
+					// 侧"一次失败就问"的行为（#228 评审修订 §三）。只在 attempt==1 问一次：
+					// 更靠后的 attempt 已经是内置重试预算的一部分，不应该被规则半路打断。
+					if attempt == 1 && p.ruleOverride != nil {
+						if failoverErr, handled := p.ruleOverride(resp.StatusCode, resp.Header, respBody); handled {
+							return nil, failoverErr
+						}
+					}
+
 					// 账户/模型配额限流，重试 3 次（指数退避）- 默认逻辑（非 OAuth 账号或解析失败）
 					if attempt < antigravityMaxRetries {
 						upstreamMsg := strings.TrimSpace(extractAntigravityErrorMessage(respBody))
@@ -675,6 +696,15 @@ urlFallbackLoop:
 
 				// 其他可重试错误（500/502/504/529，不包括 429 和 503）
 				if shouldRetryAntigravityError(resp.StatusCode) {
+					// #228 task-8：这条分支没有 OAuth 专用纠错特例，到这里的一律是"普通"
+					// 500/502/504/529 首次失败。理由同上一处 429/503 分支：规则引擎必须在
+					// 内置 3 次通用重试耗尽之前被问到，只在 attempt==1 问一次。
+					if attempt == 1 && p.ruleOverride != nil {
+						if failoverErr, handled := p.ruleOverride(resp.StatusCode, resp.Header, respBody); handled {
+							return nil, failoverErr
+						}
+					}
+
 					if attempt < antigravityMaxRetries {
 						upstreamMsg := strings.TrimSpace(extractAntigravityErrorMessage(respBody))
 						upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
