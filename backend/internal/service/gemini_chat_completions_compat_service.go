@@ -126,7 +126,7 @@ func (s *GeminiMessagesCompatService) forwardClaudeBodyAsChatCompletions(
 		// 全链路 trace：buildReq 是各账号类型的唯一构造出口，每次重试都重新注入
 		injectTraceHeader(ctx, upstreamReq, account)
 
-		resp, err = s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
+		resp, err = timedUpstreamDo(c, s.httpUpstream, upstreamReq, proxyURL, account.ID, account.Concurrency)
 		if err != nil {
 			safeErr := sanitizeUpstreamErrorMessage(err.Error())
 			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{

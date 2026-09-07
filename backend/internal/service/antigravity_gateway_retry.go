@@ -232,7 +232,7 @@ func (s *AntigravityGatewayService) handleSmartRetry(p antigravityRetryLoopParam
 
 			injectTraceHeader(p.ctx, retryReq, p.account)
 			p.account.ApplyCustomHeaders(retryReq)
-			retryResp, retryErr := p.httpUpstream.Do(retryReq, p.proxyURL, p.account.ID, p.account.Concurrency)
+			retryResp, retryErr := timedUpstreamDo(p.c, p.httpUpstream, retryReq, p.proxyURL, p.account.ID, p.account.Concurrency)
 			if retryErr == nil && retryResp != nil && retryResp.StatusCode != http.StatusTooManyRequests && retryResp.StatusCode != http.StatusServiceUnavailable {
 				log.Printf("%s status=%d smart_retry_success attempt=%d/%d", p.prefix, retryResp.StatusCode, attempt, maxAttempts)
 				// 重试成功，清除 MODEL_CAPACITY_EXHAUSTED cooldown
@@ -410,7 +410,7 @@ func (s *AntigravityGatewayService) handleSingleAccountRetryInPlace(
 		// 单账号原地重试同样每轮重建 req，注入必须放在循环内
 		injectTraceHeader(p.ctx, retryReq, p.account)
 		p.account.ApplyCustomHeaders(retryReq)
-		retryResp, retryErr := p.httpUpstream.Do(retryReq, p.proxyURL, p.account.ID, p.account.Concurrency)
+		retryResp, retryErr := timedUpstreamDo(p.c, p.httpUpstream, retryReq, p.proxyURL, p.account.ID, p.account.Concurrency)
 		if retryErr == nil && retryResp != nil && retryResp.StatusCode != http.StatusTooManyRequests && retryResp.StatusCode != http.StatusServiceUnavailable {
 			logger.LegacyPrintf("service.antigravity_gateway", "%s status=%d single_account_503_retry_success attempt=%d/%d total_waited=%v",
 				p.prefix, retryResp.StatusCode, attempt, antigravitySingleAccountSmartRetryMaxAttempts, totalWaited)
@@ -556,7 +556,7 @@ urlFallbackLoop:
 			// URL fallback + attempt 双层循环，每个 attempt 都重建 req，注入必须在此处
 			injectTraceHeader(p.ctx, upstreamReq, p.account)
 			p.account.ApplyCustomHeaders(upstreamReq)
-			resp, err = p.httpUpstream.Do(upstreamReq, p.proxyURL, p.account.ID, p.account.Concurrency)
+			resp, err = timedUpstreamDo(p.c, p.httpUpstream, upstreamReq, p.proxyURL, p.account.ID, p.account.Concurrency)
 			if err == nil && resp == nil {
 				err = errors.New("upstream returned nil response")
 			}

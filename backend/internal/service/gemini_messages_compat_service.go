@@ -791,7 +791,7 @@ func (s *GeminiMessagesCompatService) Forward(ctx context.Context, c *gin.Contex
 		// x-trace-id 在 headerOverrideBlockedNames 中，覆写无法保存，故此处注入即最终值
 		injectTraceHeader(ctx, upstreamReq, account)
 		account.ApplyCustomHeaders(upstreamReq)
-		resp, err = s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
+		resp, err = timedUpstreamDo(c, s.httpUpstream, upstreamReq, proxyURL, account.ID, account.Concurrency)
 		if err != nil {
 			safeErr := sanitizeUpstreamErrorMessage(err.Error())
 			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
@@ -1353,7 +1353,7 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 		// x-trace-id 在 headerOverrideBlockedNames 中，覆写无法保存，故此处注入即最终值
 		injectTraceHeader(ctx, upstreamReq, account)
 		account.ApplyCustomHeaders(upstreamReq)
-		resp, err = s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
+		resp, err = timedUpstreamDo(c, s.httpUpstream, upstreamReq, proxyURL, account.ID, account.Concurrency)
 		if err != nil {
 			safeErr := sanitizeUpstreamErrorMessage(err.Error())
 			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
