@@ -604,7 +604,11 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 		if err != nil {
 			var failoverErr *service.UpstreamFailoverError
 			if errors.As(err, &failoverErr) {
-				failoverAction := fs.HandleFailoverError(c.Request.Context(), h.gatewayService, account.ID, account.Platform, account.GetPoolModeRetryCount(), failoverErr)
+				// 走 effectiveSameAccountRetryLimit 而不是裸的 GetPoolModeRetryCount()：
+				// 错误处理规则显式配的 RuleRetryLimit 必须覆盖账号默认值，包括账号
+				// 基数为 0（非 pool-mode）的情况。不然界面上给了「原地重试 N 次」，
+				// 行为却是换号。
+				failoverAction := fs.HandleFailoverError(c.Request.Context(), h.gatewayService, account.ID, account.Platform, effectiveSameAccountRetryLimit(failoverErr, account), failoverErr)
 				switch failoverAction {
 				case FailoverContinue:
 					continue
