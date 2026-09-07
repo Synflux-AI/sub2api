@@ -744,6 +744,24 @@ func (h *GatewayHandler) handleGeminiFailoverExhausted(c *gin.Context, failoverE
 		}
 	}
 
+	// 错误处理规则的 exhausted_action=passthrough：原样交付上游状态码与脱敏后的
+	// 上游错误消息。SafeErrorType 不出现在 Gemini 线格式里 —— googleError 没有
+	// 错误类型参数，只能带 message；SafeErrorType 仍作为「规则引擎已填充」的
+	// 前置判据之一。SafeErrorType/Message 缺一不可，缺了就退回内置映射，不能
+	// 把可能含凭据片段的原始上游文案透出去。与 gateway_handler.go /
+	// gateway_handler_chat_completions.go / openai_gateway_handler.go 的
+	// 同名消费点口径一致。
+	if failoverErr.ExhaustedAction == service.ErrorHandlingExhaustedActionPassthrough &&
+		failoverErr.SafeErrorType != "" && failoverErr.SafeErrorMessage != "" {
+		passthroughStatus := http.StatusBadGateway
+		if statusCode > 0 {
+			passthroughStatus = statusCode
+		}
+		service.SetOpsUpstreamError(c, statusCode, failoverErr.SafeErrorMessage, "")
+		googleError(c, passthroughStatus, failoverErr.SafeErrorMessage)
+		return
+	}
+
 	// 记录原始上游状态码，以便 ops 错误日志捕获真实的上游错误
 	upstreamMsg := service.ExtractUpstreamErrorMessage(responseBody)
 	service.SetOpsUpstreamError(c, statusCode, upstreamMsg, "")

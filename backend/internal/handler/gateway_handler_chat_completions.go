@@ -197,7 +197,7 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 				return
 			default:
 				if fs.LastFailoverErr != nil {
-					h.handleCCFailoverExhausted(c, fs.LastFailoverErr, streamStarted)
+					h.handleCCFailoverExhausted(c, fs.LastFailoverErr, groupPlatform, streamStarted)
 				} else {
 					h.chatCompletionsErrorResponse(c, http.StatusBadGateway, "server_error", "All available accounts exhausted")
 				}
@@ -306,7 +306,7 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 			var failoverErr *service.UpstreamFailoverError
 			if errors.As(err, &failoverErr) {
 				if c.Writer.Size() != writerSizeBeforeForward {
-					h.handleCCFailoverExhausted(c, failoverErr, true)
+					h.handleCCFailoverExhausted(c, failoverErr, groupPlatform, true)
 					return
 				}
 				// 走 effectiveSameAccountRetryLimit 而不是裸的 GetPoolModeRetryCount()：
@@ -318,7 +318,7 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 				case FailoverContinue:
 					continue
 				case FailoverExhausted:
-					h.handleCCFailoverExhausted(c, fs.LastFailoverErr, streamStarted)
+					h.handleCCFailoverExhausted(c, fs.LastFailoverErr, groupPlatform, streamStarted)
 					return
 				case FailoverCanceled:
 					failoverClientGone(c)
@@ -390,13 +390,57 @@ func (h *GatewayHandler) chatCompletionsErrorResponse(c *gin.Context, status int
 }
 
 // handleCCFailoverExhausted writes a failover-exhausted error in CC format.
-func (h *GatewayHandler) handleCCFailoverExhausted(c *gin.Context, lastErr *service.UpstreamFailoverError, streamStarted bool) {
+//
+// platform 是本次请求的有效目标平台（由调用方按 groupPlatform 传入，composite
+// 分组已在 ChatCompletions 顶部解析为具体平台），用于错误透传规则匹配 ——
+// CC 端点可服务多个平台，不能像 Gemini 专用入口那样硬编码。
+func (h *GatewayHandler) handleCCFailoverExhausted(c *gin.Context, lastErr *service.UpstreamFailoverError, platform string, streamStarted bool) {
 	if streamStarted {
 		return
 	}
 	if lastErr != nil {
 		copyFailoverRetryAfter(c, lastErr.ResponseHeaders)
 	}
+
+	statusCode := http.StatusBadGateway
+	if lastErr != nil && lastErr.StatusCode > 0 {
+		statusCode = lastErr.StatusCode
+	}
+
+	// 错误透传规则优先于错误处理规则引擎的 exhausted_action=passthrough：
+	// 与 gateway_handler.go / gemini_v1beta_handler.go 的同名消费点口径一致，
+	// 管理员显式配的透传规则始终优先于规则引擎与内置映射。
+	if lastErr != nil && h.errorPassthroughService != nil && len(lastErr.ResponseBody) > 0 {
+		if rule := h.errorPassthroughService.MatchRule(platform, statusCode, lastErr.ResponseBody); rule != nil {
+			respCode := statusCode
+			if !rule.PassthroughCode && rule.ResponseCode != nil {
+				respCode = *rule.ResponseCode
+			}
+			msg := service.ExtractUpstreamErrorMessage(lastErr.ResponseBody)
+			if !rule.PassthroughBody && rule.CustomMessage != nil {
+				msg = *rule.CustomMessage
+			}
+			if rule.SkipMonitoring {
+				c.Set(service.OpsSkipPassthroughKey, true)
+			}
+			service.SetOpsUpstreamError(c, statusCode, msg, "")
+			h.chatCompletionsErrorResponse(c, respCode, "upstream_error", msg)
+			return
+		}
+	}
+
+	// 错误处理规则的 exhausted_action=passthrough：原样交付上游状态码与脱敏后的
+	// 上游错误。SafeErrorType/Message 缺一不可 —— 那是脱敏过的安全文本，缺了就
+	// 退回内置映射，不能把可能含凭据片段的原始上游文案透出去。
+	// 与 gateway_handler.go / openai_gateway_handler.go 的同名消费点口径一致。
+	if lastErr != nil &&
+		lastErr.ExhaustedAction == service.ErrorHandlingExhaustedActionPassthrough &&
+		lastErr.SafeErrorType != "" && lastErr.SafeErrorMessage != "" {
+		service.SetOpsUpstreamError(c, statusCode, lastErr.SafeErrorMessage, "")
+		h.chatCompletionsErrorResponse(c, statusCode, lastErr.SafeErrorType, lastErr.SafeErrorMessage)
+		return
+	}
+
 	if lastErr != nil && lastErr.IsCredentialFailure() {
 		status, message := credentialFailoverClientResponse(lastErr)
 		h.chatCompletionsErrorResponse(c, status, "server_error", message)
@@ -409,10 +453,6 @@ func (h *GatewayHandler) handleCCFailoverExhausted(c *gin.Context, lastErr *serv
 		}
 		h.chatCompletionsErrorResponse(c, status, "server_error", lastErr.ClientMessage)
 		return
-	}
-	statusCode := http.StatusBadGateway
-	if lastErr != nil && lastErr.StatusCode > 0 {
-		statusCode = lastErr.StatusCode
 	}
 	if lastErr != nil && service.IsOpenAISilentRefusalErrorBody(lastErr.ResponseBody) {
 		service.SetOpsUpstreamError(c, statusCode, service.OpenAISilentRefusalClientMessage(), "")

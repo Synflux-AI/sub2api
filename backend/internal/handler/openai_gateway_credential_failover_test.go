@@ -35,7 +35,7 @@ func TestGatewayChatCredentialStopDoesNotSelectAnotherAccountAndReturnsSafe503(t
 
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
-	(&GatewayHandler{}).handleCCFailoverExhausted(c, state.LastFailoverErr, false)
+	(&GatewayHandler{}).handleCCFailoverExhausted(c, state.LastFailoverErr, service.PlatformOpenAI, false)
 
 	require.Equal(t, http.StatusServiceUnavailable, recorder.Code)
 	require.Contains(t, recorder.Body.String(), service.GrokCredentialUnavailableClientMessage)
@@ -57,7 +57,7 @@ func TestGatewayChatAntigravityCredentialFailureReturnsActionableMessage(t *test
 		ClientStatusCode:  http.StatusBadGateway,
 		ClientMessage:     service.AntigravityCredentialRejectedClientMessage,
 		ResponseBody:      []byte(`{"error":{"message":"Invalid bearer token","refresh_token":"must-not-leak"}}`),
-	}, false)
+	}, service.PlatformOpenAI, false)
 
 	require.Equal(t, http.StatusBadGateway, recorder.Code)
 	require.Contains(t, recorder.Body.String(), service.AntigravityCredentialRejectedClientMessage)
@@ -218,7 +218,7 @@ func TestGatewayChatInferenceExhaustionRestoresRetryAfter(t *testing.T) {
 	(&GatewayHandler{}).handleCCFailoverExhausted(c, &service.UpstreamFailoverError{
 		StatusCode:      http.StatusTooManyRequests,
 		ResponseHeaders: http.Header{"Retry-After": []string{"45"}},
-	}, false)
+	}, service.PlatformOpenAI, false)
 
 	require.Equal(t, http.StatusTooManyRequests, recorder.Code)
 	require.Equal(t, "45", recorder.Header().Get("Retry-After"))
