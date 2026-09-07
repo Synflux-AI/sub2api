@@ -207,7 +207,7 @@ func (s *helperConcurrencyCacheStub) CleanupExpiredAccountSlotKeys(ctx context.C
 	return nil
 }
 
-func (s *helperConcurrencyCacheStub) CleanupStaleProcessSlots(ctx context.Context, activeRequestPrefix string) error {
+func (s *helperConcurrencyCacheStub) CleanupStaleProcessSlots(ctx context.Context) error {
 	return nil
 }
 

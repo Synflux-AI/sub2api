@@ -468,9 +468,9 @@ func (s *ConcurrencyCacheSuite) TestAccountWaitQueue_IncrementAndDecrement() {
 	require.Equal(s.T(), 1, val, "expected account wait count 1")
 }
 
-func (s *ConcurrencyCacheSuite) TestCleanupStaleProcessSlots() {
-	// 预置迁移 marker，隔离一次性清扫，只验证索引驱动的清理路径。
-	require.NoError(s.T(), s.rdb.Set(s.ctx, legacyWaitSweepMarkerKey, "1", 0).Err())
+// 启动清理只按槽位 member 的 score 判定过期：另一个副本写入的未过期槽位与
+// 跨副本共享的等待计数都必须原样保留，否则并发闸门会在滚动发布/多副本时失效。
+func (s *ConcurrencyCacheSuite) TestCleanupStaleProcessSlots_PreservesOtherProcessLiveState() {
 	accountID := int64(901)
 	userID := int64(902)
 	apiKeyID := int64(903)
@@ -512,32 +512,143 @@ func (s *ConcurrencyCacheSuite) TestCleanupStaleProcessSlots() {
 		Member: strconv.FormatInt(userID, 10),
 	}).Err())
 
-	require.NoError(s.T(), s.cache.CleanupStaleProcessSlots(s.ctx, "keep-"))
+	require.NoError(s.T(), s.cache.CleanupStaleProcessSlots(s.ctx))
 
 	accountMembers, err := s.rdb.ZRange(s.ctx, accountKey, 0, -1).Result()
 	require.NoError(s.T(), err)
-	require.Equal(s.T(), []string{"keep-1"}, accountMembers)
+	require.ElementsMatch(s.T(), []string{"keep-1", "oldproc-1"}, accountMembers,
+		"unexpired slots written by another process must survive startup cleanup")
 
 	userMembers, err := s.rdb.ZRange(s.ctx, userKey, 0, -1).Result()
 	require.NoError(s.T(), err)
-	require.Equal(s.T(), []string{"keep-2"}, userMembers)
+	require.ElementsMatch(s.T(), []string{"keep-2", "oldproc-2"}, userMembers)
 
 	// API Key 槽位（stats-only）不在启动清理范围内，靠分数裁剪与 key TTL 自愈。
 	apiKeyMembers, err := s.rdb.ZRange(s.ctx, apiKeyKey, 0, -1).Result()
 	require.NoError(s.T(), err)
 	require.ElementsMatch(s.T(), []string{"keep-3", "oldproc-3"}, apiKeyMembers)
 
-	_, err = s.rdb.Get(s.ctx, userWaitKey).Result()
-	require.True(s.T(), errors.Is(err, redis.Nil))
+	// 等待计数是跨副本共享的整数，启动路径只读不删。
+	waitVal, err := s.rdb.Get(s.ctx, userWaitKey).Int()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 3, waitVal)
 
-	_, err = s.rdb.Get(s.ctx, accountWaitKey).Result()
-	require.True(s.T(), errors.Is(err, redis.Nil))
+	waitVal, err = s.rdb.Get(s.ctx, accountWaitKey).Int()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 2, waitVal)
 
 	unindexedMembers, err := s.rdb.ZRange(s.ctx, unindexedAccountKey, 0, -1).Result()
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), []string{"oldproc-unindexed"}, unindexedMembers)
 	_, err = s.rdb.Get(s.ctx, unindexedAccountWaitKey).Result()
 	require.NoError(s.T(), err)
+}
+
+// 混合新旧成员、且 active index score 尚未过期时，仍必须逐 member 按 score 裁剪：
+// 只删除已过期成员，未过期成员一律保留，与写入它的进程前缀无关。
+func (s *ConcurrencyCacheSuite) TestCleanupStaleProcessSlots_RemovesOnlyExpiredMembers() {
+	accountID := int64(4901)
+	userID := int64(4902)
+	accountKey := fmt.Sprintf("%s%d", accountSlotKeyPrefix, accountID)
+	userKey := fmt.Sprintf("%s%d", userSlotKeyPrefix, userID)
+
+	now, err := s.rawCache.redisUnixSeconds(s.ctx)
+	require.NoError(s.T(), err)
+	expired := float64(now - int64(s.rawCache.slotTTLSeconds) - 1)
+	require.NoError(s.T(), s.rdb.ZAdd(s.ctx, accountKey,
+		redis.Z{Score: float64(now), Member: "otherproc-live"},
+		redis.Z{Score: expired, Member: "otherproc-expired"},
+		redis.Z{Score: expired, Member: "thisproc-expired"},
+		redis.Z{Score: float64(now), Member: "thisproc-live"},
+	).Err())
+	require.NoError(s.T(), s.rdb.ZAdd(s.ctx, userKey,
+		redis.Z{Score: float64(now), Member: "otherproc-live"},
+		redis.Z{Score: expired, Member: "otherproc-expired"},
+	).Err())
+	// index score 尚未过期，模拟“新槽位刷新了索引但槽位集合里仍有过期成员”。
+	require.NoError(s.T(), s.rdb.ZAdd(s.ctx, accountActiveIndexKey, redis.Z{
+		Score:  float64(now + 60),
+		Member: strconv.FormatInt(accountID, 10),
+	}).Err())
+	require.NoError(s.T(), s.rdb.ZAdd(s.ctx, userActiveIndexKey, redis.Z{
+		Score:  float64(now + 60),
+		Member: strconv.FormatInt(userID, 10),
+	}).Err())
+
+	require.NoError(s.T(), s.cache.CleanupStaleProcessSlots(s.ctx))
+
+	accountMembers, err := s.rdb.ZRange(s.ctx, accountKey, 0, -1).Result()
+	require.NoError(s.T(), err)
+	require.ElementsMatch(s.T(), []string{"otherproc-live", "thisproc-live"}, accountMembers)
+
+	userMembers, err := s.rdb.ZRange(s.ctx, userKey, 0, -1).Result()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), []string{"otherproc-live"}, userMembers)
+}
+
+// 副本 A 已占满上限时，副本 B 启动不得把闸门重置：B 的取槽必须继续被拒绝。
+func (s *ConcurrencyCacheSuite) TestCleanupStaleProcessSlots_KeepsLimitEnforcedForNewProcess() {
+	accountID := int64(5901)
+	userID := int64(5902)
+
+	ok, err := s.cache.AcquireAccountSlot(s.ctx, accountID, 1, "procA-1")
+	require.NoError(s.T(), err)
+	require.True(s.T(), ok)
+	ok, err = s.cache.AcquireUserSlot(s.ctx, userID, 1, "procA-2")
+	require.NoError(s.T(), err)
+	require.True(s.T(), ok)
+
+	require.NoError(s.T(), s.cache.CleanupStaleProcessSlots(s.ctx))
+
+	ok, err = s.cache.AcquireAccountSlot(s.ctx, accountID, 1, "procB-1")
+	require.NoError(s.T(), err)
+	require.False(s.T(), ok, "account limit held by another replica must stay enforced after startup cleanup")
+	ok, err = s.cache.AcquireUserSlot(s.ctx, userID, 1, "procB-2")
+	require.NoError(s.T(), err)
+	require.False(s.T(), ok, "user limit held by another replica must stay enforced after startup cleanup")
+
+	counts, err := s.cache.GetAccountConcurrencyBatch(s.ctx, []int64{accountID})
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 1, counts[accountID])
+}
+
+// 交错时序：A 入队 → B 启动 → B 入队 → A 退出 DECR，B 的计数不得被删除或错误扣减。
+func (s *ConcurrencyCacheSuite) TestCleanupStaleProcessSlots_WaitCountersSurviveInterleaving() {
+	accountID := int64(6901)
+	userID := int64(6902)
+
+	ok, err := s.cache.IncrementAccountWaitCount(s.ctx, accountID, 10)
+	require.NoError(s.T(), err)
+	require.True(s.T(), ok)
+	ok, err = s.cache.IncrementWaitCount(s.ctx, userID, 10)
+	require.NoError(s.T(), err)
+	require.True(s.T(), ok)
+
+	require.NoError(s.T(), s.cache.CleanupStaleProcessSlots(s.ctx))
+
+	accountWaiting, err := s.cache.GetAccountWaitingCount(s.ctx, accountID)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 1, accountWaiting, "startup cleanup must not drop an active waiter")
+	userWaitVal, err := s.rdb.Get(s.ctx, waitQueueKey(userID)).Int()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 1, userWaitVal)
+
+	ok, err = s.cache.IncrementAccountWaitCount(s.ctx, accountID, 10)
+	require.NoError(s.T(), err)
+	require.True(s.T(), ok)
+	ok, err = s.cache.IncrementWaitCount(s.ctx, userID, 10)
+	require.NoError(s.T(), err)
+	require.True(s.T(), ok)
+
+	require.NoError(s.T(), s.cache.DecrementAccountWaitCount(s.ctx, accountID))
+	require.NoError(s.T(), s.cache.DecrementWaitCount(s.ctx, userID))
+
+	accountWaiting, err = s.cache.GetAccountWaitingCount(s.ctx, accountID)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 1, accountWaiting, "the surviving waiter of the new replica must still be counted")
+	userWaitVal, err = s.rdb.Get(s.ctx, waitQueueKey(userID)).Int()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 1, userWaitVal)
 }
 
 func (s *ConcurrencyCacheSuite) TestGetAccountConcurrency_Missing() {
@@ -770,35 +881,29 @@ func (s *ConcurrencyCacheSuite) TestCleanupExpiredAccountSlotKeys_ReapsUserIndex
 	require.ErrorIs(s.T(), err, redis.Nil, "invalid member should be reaped")
 }
 
-func (s *ConcurrencyCacheSuite) TestCleanupStaleProcessSlots_LegacyWaitSweepRunsOnce() {
+// 一次性 legacy 等待键清扫已从启动路径移除：它会 SCAN + DEL 所有等待计数键，
+// 而等待计数无法区分归属，正常启动就会抹掉其他副本仍在排队的请求。
+// 未入索引的等待计数改由等待键自身 TTL 回收。
+func (s *ConcurrencyCacheSuite) TestCleanupStaleProcessSlots_PreservesUnindexedWaitCounters() {
 	unindexedAccountWaitKey := fmt.Sprintf("%s%d", accountWaitKeyPrefix, 2901)
 	unindexedUserWaitKey := fmt.Sprintf("%s%d", waitQueueKeyPrefix, 2902)
 	require.NoError(s.T(), s.rdb.Set(s.ctx, unindexedAccountWaitKey, 5, time.Minute).Err())
 	require.NoError(s.T(), s.rdb.Set(s.ctx, unindexedUserWaitKey, 3, time.Minute).Err())
 
-	// 首次运行：marker 不存在，一次性清扫删除所有遗留等待计数（含未入索引的）。
-	require.NoError(s.T(), s.cache.CleanupStaleProcessSlots(s.ctx, "keep-"))
+	// 反复启动都不得触碰等待计数（原实现只在首次启动清扫，这里覆盖两次）。
+	require.NoError(s.T(), s.cache.CleanupStaleProcessSlots(s.ctx))
+	require.NoError(s.T(), s.cache.CleanupStaleProcessSlots(s.ctx))
 
-	_, err := s.rdb.Get(s.ctx, unindexedAccountWaitKey).Result()
-	require.ErrorIs(s.T(), err, redis.Nil, "legacy account wait key should be swept on first startup")
-	_, err = s.rdb.Get(s.ctx, unindexedUserWaitKey).Result()
-	require.ErrorIs(s.T(), err, redis.Nil, "legacy user wait key should be swept on first startup")
-
-	exists, err := s.rdb.Exists(s.ctx, legacyWaitSweepMarkerKey).Result()
-	require.NoError(s.T(), err)
-	require.EqualValues(s.T(), 1, exists, "sweep marker should be set after first run")
-
-	// 再次运行：marker 已存在，未入索引的等待计数不再被触碰。
-	require.NoError(s.T(), s.rdb.Set(s.ctx, unindexedAccountWaitKey, 5, time.Minute).Err())
-	require.NoError(s.T(), s.cache.CleanupStaleProcessSlots(s.ctx, "keep-"))
 	val, err := s.rdb.Get(s.ctx, unindexedAccountWaitKey).Int()
-	require.NoError(s.T(), err, "sweep must not run twice")
+	require.NoError(s.T(), err, "startup must not sweep account wait counters")
 	require.Equal(s.T(), 5, val)
+	val, err = s.rdb.Get(s.ctx, unindexedUserWaitKey).Int()
+	require.NoError(s.T(), err, "startup must not sweep user wait counters")
+	require.Equal(s.T(), 3, val)
 }
 
 func (s *ConcurrencyCacheSuite) TestCleanupStaleProcessSlots_ProcessesExpiredIndexMembers() {
 	// score 已过期的索引成员往往正是崩溃进程留下的残留，启动清理必须覆盖它们。
-	require.NoError(s.T(), s.rdb.Set(s.ctx, legacyWaitSweepMarkerKey, "1", 0).Err())
 	accountID := int64(3901)
 	userID := int64(3902)
 	accountKey := fmt.Sprintf("%s%d", accountSlotKeyPrefix, accountID)
@@ -807,11 +912,12 @@ func (s *ConcurrencyCacheSuite) TestCleanupStaleProcessSlots_ProcessesExpiredInd
 
 	now, err := s.rawCache.redisUnixSeconds(s.ctx)
 	require.NoError(s.T(), err)
+	expired := float64(now - int64(s.rawCache.slotTTLSeconds) - 1)
 	require.NoError(s.T(), s.rdb.ZAdd(s.ctx, accountKey,
-		redis.Z{Score: float64(now), Member: "oldproc-1"},
+		redis.Z{Score: expired, Member: "oldproc-1"},
 	).Err())
 	require.NoError(s.T(), s.rdb.ZAdd(s.ctx, userKey,
-		redis.Z{Score: float64(now), Member: "oldproc-2"},
+		redis.Z{Score: expired, Member: "oldproc-2"},
 	).Err())
 	require.NoError(s.T(), s.rdb.Set(s.ctx, accountWaitKey, 4, time.Minute).Err())
 	// 索引 score 设为过去时刻，模拟长时间停机后索引已“过期”。
@@ -824,72 +930,27 @@ func (s *ConcurrencyCacheSuite) TestCleanupStaleProcessSlots_ProcessesExpiredInd
 		Member: strconv.FormatInt(userID, 10),
 	}).Err())
 
-	require.NoError(s.T(), s.cache.CleanupStaleProcessSlots(s.ctx, "keep-"))
+	require.NoError(s.T(), s.cache.CleanupStaleProcessSlots(s.ctx))
 
 	exists, err := s.rdb.Exists(s.ctx, accountKey).Result()
 	require.NoError(s.T(), err)
-	require.EqualValues(s.T(), 0, exists, "stale slot key of expired index member should be purged")
+	require.EqualValues(s.T(), 0, exists, "expired slot members must be reclaimed at startup")
 
 	exists, err = s.rdb.Exists(s.ctx, userKey).Result()
 	require.NoError(s.T(), err)
 	require.EqualValues(s.T(), 0, exists)
 
-	_, err = s.rdb.Get(s.ctx, accountWaitKey).Result()
-	require.ErrorIs(s.T(), err, redis.Nil, "wait counter of expired index member should be deleted")
+	// 槽位清空但仍有等待计数：index member 必须保留并按 wait TTL 刷新。
+	waitVal, err := s.rdb.Get(s.ctx, accountWaitKey).Int()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 4, waitVal)
+	score, err := s.rdb.ZScore(s.ctx, accountActiveIndexKey, strconv.FormatInt(accountID, 10)).Result()
+	require.NoError(s.T(), err, "a member that still has waiters must stay indexed")
+	require.GreaterOrEqual(s.T(), int64(score), now+int64(s.rawCache.waitQueueTTLSeconds)-5)
 
-	_, err = s.rdb.ZScore(s.ctx, accountActiveIndexKey, strconv.FormatInt(accountID, 10)).Result()
-	require.ErrorIs(s.T(), err, redis.Nil, "emptied member should be removed from index")
+	// 槽位与等待计数都为 0：index member 删除。
 	_, err = s.rdb.ZScore(s.ctx, userActiveIndexKey, strconv.FormatInt(userID, 10)).Result()
-	require.ErrorIs(s.T(), err, redis.Nil)
-}
-
-func (s *ConcurrencyCacheSuite) TestCleanupStaleProcessSlots_RemovesOldPrefixesAndWaitCounters() {
-	// 预置迁移 marker，确保等待计数删除来自索引驱动路径而非一次性清扫。
-	require.NoError(s.T(), s.rdb.Set(s.ctx, legacyWaitSweepMarkerKey, "1", 0).Err())
-	accountID := int64(901)
-	userID := int64(902)
-	accountSlotKey := fmt.Sprintf("%s%d", accountSlotKeyPrefix, accountID)
-	userSlotKey := fmt.Sprintf("%s%d", userSlotKeyPrefix, userID)
-	userWaitKey := fmt.Sprintf("%s%d", waitQueueKeyPrefix, userID)
-	accountWaitKey := fmt.Sprintf("%s%d", accountWaitKeyPrefix, accountID)
-
-	now, err := s.rawCache.redisUnixSeconds(s.ctx)
-	require.NoError(s.T(), err)
-	require.NoError(s.T(), s.rdb.ZAdd(s.ctx, accountSlotKey,
-		redis.Z{Score: float64(now), Member: "oldproc-1"},
-		redis.Z{Score: float64(now), Member: "activeproc-1"},
-	).Err())
-	require.NoError(s.T(), s.rdb.Expire(s.ctx, accountSlotKey, testSlotTTL).Err())
-	require.NoError(s.T(), s.rdb.ZAdd(s.ctx, userSlotKey,
-		redis.Z{Score: float64(now), Member: "oldproc-2"},
-		redis.Z{Score: float64(now), Member: "activeproc-2"},
-	).Err())
-	require.NoError(s.T(), s.rdb.Expire(s.ctx, userSlotKey, testSlotTTL).Err())
-	require.NoError(s.T(), s.rdb.Set(s.ctx, userWaitKey, 3, testSlotTTL).Err())
-	require.NoError(s.T(), s.rdb.Set(s.ctx, accountWaitKey, 2, testSlotTTL).Err())
-	require.NoError(s.T(), s.rdb.ZAdd(s.ctx, accountActiveIndexKey, redis.Z{
-		Score:  float64(now + 60),
-		Member: strconv.FormatInt(accountID, 10),
-	}).Err())
-	require.NoError(s.T(), s.rdb.ZAdd(s.ctx, userActiveIndexKey, redis.Z{
-		Score:  float64(now + 60),
-		Member: strconv.FormatInt(userID, 10),
-	}).Err())
-
-	require.NoError(s.T(), s.cache.CleanupStaleProcessSlots(s.ctx, "activeproc-"))
-
-	accountMembers, err := s.rdb.ZRange(s.ctx, accountSlotKey, 0, -1).Result()
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), []string{"activeproc-1"}, accountMembers)
-
-	userMembers, err := s.rdb.ZRange(s.ctx, userSlotKey, 0, -1).Result()
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), []string{"activeproc-2"}, userMembers)
-
-	_, err = s.rdb.Get(s.ctx, userWaitKey).Result()
-	require.ErrorIs(s.T(), err, redis.Nil)
-	_, err = s.rdb.Get(s.ctx, accountWaitKey).Result()
-	require.ErrorIs(s.T(), err, redis.Nil)
+	require.ErrorIs(s.T(), err, redis.Nil, "emptied member should be removed from index")
 }
 
 func (s *ConcurrencyCacheSuite) TestCleanupStaleProcessSlots_DeletesEmptySlotKeys() {
@@ -897,14 +958,17 @@ func (s *ConcurrencyCacheSuite) TestCleanupStaleProcessSlots_DeletesEmptySlotKey
 	accountSlotKey := fmt.Sprintf("%s%d", accountSlotKeyPrefix, accountID)
 	now, err := s.rawCache.redisUnixSeconds(s.ctx)
 	require.NoError(s.T(), err)
-	require.NoError(s.T(), s.rdb.ZAdd(s.ctx, accountSlotKey, redis.Z{Score: float64(now), Member: "oldproc-1"}).Err())
+	require.NoError(s.T(), s.rdb.ZAdd(s.ctx, accountSlotKey, redis.Z{
+		Score:  float64(now - int64(s.rawCache.slotTTLSeconds) - 1),
+		Member: "oldproc-1",
+	}).Err())
 	require.NoError(s.T(), s.rdb.Expire(s.ctx, accountSlotKey, testSlotTTL).Err())
 	require.NoError(s.T(), s.rdb.ZAdd(s.ctx, accountActiveIndexKey, redis.Z{
 		Score:  float64(now + 60),
 		Member: strconv.FormatInt(accountID, 10),
 	}).Err())
 
-	require.NoError(s.T(), s.cache.CleanupStaleProcessSlots(s.ctx, "activeproc-"))
+	require.NoError(s.T(), s.cache.CleanupStaleProcessSlots(s.ctx))
 
 	exists, err := s.rdb.Exists(s.ctx, accountSlotKey).Result()
 	require.NoError(s.T(), err)

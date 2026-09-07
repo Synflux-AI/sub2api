@@ -2208,7 +2208,7 @@ func (m *mockConcurrencyCache) CleanupExpiredAccountSlotKeys(ctx context.Context
 	return nil
 }
 
-func (m *mockConcurrencyCache) CleanupStaleProcessSlots(ctx context.Context, activeRequestPrefix string) error {
+func (m *mockConcurrencyCache) CleanupStaleProcessSlots(ctx context.Context) error {
 	return nil
 }
 
