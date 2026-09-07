@@ -199,17 +199,17 @@ func (c *stubConcurrencyCacheForTest) CleanupExpiredAccountSlotKeys(_ context.Co
 	return c.cleanupErr
 }
 
-func (c *stubConcurrencyCacheForTest) CleanupStaleProcessSlots(_ context.Context, _ string) error {
+func (c *stubConcurrencyCacheForTest) CleanupStaleProcessSlots(_ context.Context) error {
 	return c.cleanupErr
 }
 
 type trackingConcurrencyCache struct {
 	stubConcurrencyCacheForTest
-	cleanupPrefix string
+	cleanupCalls int
 }
 
-func (c *trackingConcurrencyCache) CleanupStaleProcessSlots(_ context.Context, prefix string) error {
-	c.cleanupPrefix = prefix
+func (c *trackingConcurrencyCache) CleanupStaleProcessSlots(_ context.Context) error {
+	c.cleanupCalls++
 	return c.cleanupErr
 }
 
@@ -218,11 +218,12 @@ func TestCleanupStaleProcessSlots_NilCache(t *testing.T) {
 	require.NoError(t, svc.CleanupStaleProcessSlots(context.Background()))
 }
 
-func TestCleanupStaleProcessSlots_DelegatesPrefix(t *testing.T) {
+// 启动清理不再携带进程身份：按进程前缀取反删除会抹掉其他副本的活跃槽位。
+func TestCleanupStaleProcessSlots_DelegatesWithoutProcessIdentity(t *testing.T) {
 	cache := &trackingConcurrencyCache{}
 	svc := NewConcurrencyService(cache)
 	require.NoError(t, svc.CleanupStaleProcessSlots(context.Background()))
-	require.Equal(t, RequestIDPrefix(), cache.cleanupPrefix)
+	require.Equal(t, 1, cache.cleanupCalls)
 }
 
 func TestAcquireAccountSlot_Success(t *testing.T) {

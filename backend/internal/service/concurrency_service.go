@@ -53,8 +53,8 @@ type ConcurrencyCache interface {
 	CleanupExpiredAccountSlots(ctx context.Context, accountID int64) error
 	CleanupExpiredAccountSlotKeys(ctx context.Context) error
 
-	// 启动时清理旧进程遗留槽位与等待计数
-	CleanupStaleProcessSlots(ctx context.Context, activeRequestPrefix string) error
+	// 启动时回收已过期的残留槽位（按槽位 score 判定，不区分写入进程）
+	CleanupStaleProcessSlots(ctx context.Context) error
 }
 
 type APIKeyConcurrencyCache interface {
@@ -197,6 +197,8 @@ func (l *OpenAIWSIngressLease) refresh(lastConfirmedAt time.Time) (time.Time, bo
 }
 
 var (
+	// requestIDPrefix 只保证 request ID 在多进程间唯一，不表示进程身份，
+	// 更不能被任何清理逻辑当成「谁的槽位」的判定依据。
 	requestIDPrefix  = initRequestIDPrefix()
 	requestIDCounter atomic.Uint64
 )
@@ -210,20 +212,19 @@ func initRequestIDPrefix() string {
 	return "r" + strconv.FormatUint(fallback, 36)
 }
 
-func RequestIDPrefix() string {
-	return requestIDPrefix
-}
-
 func generateRequestID() string {
 	seq := requestIDCounter.Add(1)
 	return requestIDPrefix + "-" + strconv.FormatUint(seq, 36)
 }
 
+// CleanupStaleProcessSlots 在启动时回收已过期的残留槽位。
+// 进程前缀只用于 request ID 唯一性，绝不能作为删除依据：多副本与 start-first 滚动发布
+// 时新旧进程会并存，按前缀取反删除会抹掉另一个进程的活跃槽位。
 func (s *ConcurrencyService) CleanupStaleProcessSlots(ctx context.Context) error {
 	if s == nil || s.cache == nil {
 		return nil
 	}
-	return s.cache.CleanupStaleProcessSlots(ctx, RequestIDPrefix())
+	return s.cache.CleanupStaleProcessSlots(ctx)
 }
 
 const (
