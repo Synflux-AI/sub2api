@@ -154,74 +154,24 @@ func (s *OpenAIGatewayService) openAIErrorHandlingRuleOverride(
 		return nil, false
 	}
 
-	// 「错误透传规则」优先。内置判定不换号时，本来是由 handleErrorResponse 一类的链
-	// 去问 applyErrorPassthroughRule 并直接写响应的；错误处理规则一旦接管就再也走不到
-	// 那里，等于把另一个管理台功能无声关掉。两个功能语义重叠（都能「原样返回上游错误」），
-	// 且透传规则是更专用、更早存在的那个，所以它匹配上时本引擎让路。
-	// 内置要换号的分支不受影响：那条分支上本来就问不到透传规则。
-	if !in.BuiltinWillFailover && errorPassthroughRuleMatches(c, account.Platform, statusCode, respBody) {
-		return nil, false
-	}
-
-	upstreamMsg := sanitizeUpstreamErrorMessage(strings.TrimSpace(extractUpstreamErrorMessage(respBody)))
-	decision := decideErrorHandlingRuleFrom(errorHandlingRuleDeciderInput{
-		Settings:   settings,
-		StatusCode: statusCode,
-		Body:       respBody,
-		Platform:   account.Platform,
-		Opts: errorHandlingRuleDecisionOptions{
-			UpstreamLatencyMs: opsUpstreamLatencyMs(c),
+	return executeErrorHandlingRule(c, errorHandlingRuleExecInput{
+		Settings:            settings,
+		Account:             account,
+		StatusCode:          statusCode,
+		Header:              respHeader,
+		Body:                respBody,
+		ReqModel:            in.ReqModel,
+		BuiltinOwns:         openAIBuiltinOwnsError(statusCode, sanitizeUpstreamErrorMessage(strings.TrimSpace(extractUpstreamErrorMessage(respBody))), respBody, account),
+		BuiltinWillFailover: in.BuiltinWillFailover,
+		SyntheticStatus:     in.SyntheticStatus,
+		SafeError:           safeOpenAIError,
+		AccountAccounting: func() {
+			s.handleOpenAIAccountUpstreamError(ctx, account, statusCode, respHeader, respBody, in.ReqModel)
 		},
-		BuiltinOwns: openAIBuiltinOwnsError(statusCode, upstreamMsg, respBody, account),
-		// Tracker 为 nil：OpenAI 侧的重试预算按账号计，由 handler 的
-		// sameAccountRetryCount 消耗，不走 request-scoped tracker。决策层看到 nil
-		// tracker 会把 retry 降级成 failover，所以 retry 分支在下面单独落地，
-		// 用 ConfiguredAction 而不是 EffectiveAction 判断。
-		Tracker: nil,
+		LogDecision: func(decision errorHandlingRuleDecision, effectiveAction string) {
+			s.logOpenAIErrorHandlingRuleDecision(ctx, c, account, in, decision, effectiveAction)
+		},
 	})
-	if !decision.Matched {
-		return nil, false
-	}
-
-	// 账号侧记账：内置要换号时由调用方在规则之前跑完（handleFailoverSideEffects /
-	// handleOpenAIAccountUpstreamError），规则只接管动作；内置不换号时那条记账在
-	// 被跳过的 handleErrorResponse 链里，必须在这里补，否则一个稳定报错的账号
-	// 永远不会进入冷却，会被一直调度。
-	if !in.BuiltinWillFailover {
-		s.handleOpenAIAccountUpstreamError(ctx, account, statusCode, respHeader, respBody, in.ReqModel)
-	}
-
-	failoverErr := &UpstreamFailoverError{
-		StatusCode:      statusCode,
-		ResponseBody:    respBody,
-		ResponseHeaders: respHeader.Clone(),
-		ErrorRuleID:     decision.RuleID,
-		ExhaustedAction: decision.ExhaustedAction,
-	}
-	// SafeErrorType/Message 三个动作都要填，不能只填 passthrough：
-	// exhausted_action=passthrough 的消费点（两个 handleFailoverExhausted）要求这两个
-	// 字段非空才认，只在 passthrough 动作上填的话，「换号 + 耗尽后原样返回」这条配置
-	// 会静默退化成通用 502。Anthropic 侧的 errorHandlingRuleFailover 本来就是无条件填的。
-	failoverErr.SafeErrorType, failoverErr.SafeErrorMessage = safeOpenAIError(respBody)
-	switch decision.ConfiguredAction {
-	case ErrorHandlingActionRetry:
-		// 同账号重试，预算按账号计。RuleRetryLimit 必须显式带出来：
-		// effectiveSameAccountRetryLimit 的基数是 account.GetPoolModeRetryCount()，
-		// 非 pool-mode 账号是 0，不带这个字段的话 retry 会静默退化成换号。
-		limit := decision.RetryLimit
-		failoverErr.RetryableOnSameAccount = true
-		failoverErr.RuleRetryLimit = &limit
-		failoverErr.NextAccountAction = NextAccountRetry
-	case ErrorHandlingActionPassthrough:
-		// 立刻把上游错误返回客户端：不重试、不换号。
-		failoverErr.NextAccountAction = NextAccountStop
-		failoverErr.ExhaustedAction = ErrorHandlingExhaustedActionPassthrough
-	default: // ErrorHandlingActionFailover
-		failoverErr.NextAccountAction = NextAccountRetry
-	}
-
-	s.logOpenAIErrorHandlingRuleDecision(ctx, c, account, in, decision)
-	return failoverErr, true
 }
 
 // openAITransportErrorRuleOverride 把没有完整可用 HTTP 响应的传输层错误合成成
@@ -232,13 +182,8 @@ func (s *OpenAIGatewayService) openAITransportErrorRuleOverride(
 	account *Account,
 	safeErr string,
 ) *UpstreamFailoverError {
-	body, err := json.Marshal(map[string]any{
-		"error": map[string]any{
-			"type":    "upstream_error",
-			"message": "upstream request failed: " + safeErr,
-		},
-	})
-	if err != nil {
+	body := syntheticTransportRuleBody(safeErr)
+	if body == nil {
 		return nil
 	}
 	failoverErr, handled := s.openAIErrorHandlingRuleOverride(ctx, c, openAIErrorHandlingRuleInput{
@@ -258,21 +203,11 @@ func (s *OpenAIGatewayService) openAITransportErrorRuleOverride(
 	return failoverErr
 }
 
-// openAIErrorHandlingRuleEffectiveAction 是 OpenAI 执行层**实际执行**的动作。
-//
-// 不能直接用 decision.EffectiveAction：OpenAI 侧传 Tracker=nil（重试预算按账号计，
-// 由 handler 的 sameAccountRetryCount 消耗），决策层看到 nil tracker 会把 retry 恒
-// 降级成 failover 并打上 retry_tracker_missing。那个降级对 Anthropic 才成立，在这里
-// 是假的 —— 直接拿来当 outcome 会让 OpenObserve 里查不到任何 OpenAI 的规则重试。
-//
-// 于是这里按执行层真正落下的动作重算：三个动作原样执行，没有降级。
+// openAIErrorHandlingRuleEffectiveAction 保留为执行层同名逻辑的别名。
+// 口径提到 error_handling_rule_executor.go 共用：否则新平台的 outcome 会与 OpenAI 侧
+// 对不上，跨平台查 upstream_errors 就失效。
 func openAIErrorHandlingRuleEffectiveAction(decision errorHandlingRuleDecision) string {
-	switch decision.ConfiguredAction {
-	case ErrorHandlingActionRetry, ErrorHandlingActionPassthrough:
-		return decision.ConfiguredAction
-	default:
-		return ErrorHandlingActionFailover
-	}
+	return errorHandlingRuleExecEffectiveAction(decision)
 }
 
 // logOpenAIErrorHandlingRuleDecision 与 Anthropic 侧的 logErrorHandlingRuleDecision
@@ -285,6 +220,7 @@ func (s *OpenAIGatewayService) logOpenAIErrorHandlingRuleDecision(
 	account *Account,
 	in openAIErrorHandlingRuleInput,
 	decision errorHandlingRuleDecision,
+	effectiveAction string,
 ) {
 	statusCode := in.StatusCode
 	respBody := in.Body
@@ -292,7 +228,6 @@ func (s *OpenAIGatewayService) logOpenAIErrorHandlingRuleDecision(
 	if respHeader == nil {
 		respHeader = http.Header{}
 	}
-	effectiveAction := openAIErrorHandlingRuleEffectiveAction(decision)
 	upstreamMsg := extractUpstreamErrorMessage(respBody)
 	upstreamDetail := ""
 	if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
