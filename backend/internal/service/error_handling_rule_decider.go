@@ -18,6 +18,16 @@ import (
 //   - 「内置逻辑独占这条错误」（Anthropic 是 Thinking 签名，OpenAI 是 cyber_policy /
 //     context-window / OAuth 429 状态机）：调用方算好，用 BuiltinOwns 传进来。
 
+// errorHandlingRuleDowngradeReasonSemanticOutputStarted 标记「已向客户端写出语义
+// 内容后，retry/failover 被降级成 passthrough」这一种降级原因，与其余四种（tracker
+// 缺失/预算耗尽/时间窗耗尽/次数耗尽）不同：那四种只在执行层重算的
+// errorHandlingRuleExecEffectiveAction 里被有意忽略（执行层用账号级预算，不认
+// decider 的 tracker 结论），而这一种必须原样落地——已提交的流上拼第二条流，安全
+// 后果和「引擎认为该重试」的结论互斥，任何调用方都不能假装没看见。字符串值与
+// error_handling_rule_decider.go 里 :157 附近的赋值一致，取常量只是避免两处字面量
+// 漂移。
+const errorHandlingRuleDowngradeReasonSemanticOutputStarted = "semantic_output_started"
+
 type errorHandlingRuleTracker struct {
 	ruleID  string
 	retries int
@@ -157,7 +167,7 @@ func decideErrorHandlingRuleFrom(in errorHandlingRuleDeciderInput) errorHandling
 	if opts.SemanticEventForwarded &&
 		(rule.Action == ErrorHandlingActionRetry || rule.Action == ErrorHandlingActionFailover) {
 		decision.EffectiveAction = ErrorHandlingActionPassthrough
-		decision.DowngradeReason = "semantic_output_started"
+		decision.DowngradeReason = errorHandlingRuleDowngradeReasonSemanticOutputStarted
 		return decision
 	}
 	if rule.Action != ErrorHandlingActionRetry {

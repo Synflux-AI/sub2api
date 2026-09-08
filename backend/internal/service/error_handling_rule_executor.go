@@ -46,6 +46,13 @@ type errorHandlingRuleExecInput struct {
 	// 那一列为 NULL 正是「这是传输层失败」的判定依据。由 LogDecision 的实现负责落实。
 	SyntheticStatus bool
 
+	// SemanticEventForwarded 表示本次流已向客户端写出语义内容（keepalive 心跳不算）。
+	// 决策层据此把 retry / failover 降级成 passthrough：已提交的流上拼第二条流会产出
+	// 重复的 message_start / 重复 error 帧。零值 false 对所有非流式接线点（HTTP 响应
+	// 级/传输层级，写响应前就已问过规则）都是正确值——OpenAI 侧的薄包装不传该字段，
+	// 行为不变。
+	SemanticEventForwarded bool
+
 	// SafeError 从上游错误体里取出可安全返回给客户端的类型与消息（平台特有格式）。
 	SafeError func(body []byte) (errType string, message string)
 
@@ -84,7 +91,8 @@ func executeErrorHandlingRule(c *gin.Context, in errorHandlingRuleExecInput) (*U
 		Body:       in.Body,
 		Platform:   account.Platform,
 		Opts: errorHandlingRuleDecisionOptions{
-			UpstreamLatencyMs: opsUpstreamLatencyMs(c),
+			UpstreamLatencyMs:      opsUpstreamLatencyMs(c),
+			SemanticEventForwarded: in.SemanticEventForwarded,
 		},
 		BuiltinOwns: in.BuiltinOwns,
 		// Tracker 为 nil：重试预算按账号计，由 handler 的 sameAccountRetryCount 消耗，
@@ -104,6 +112,18 @@ func executeErrorHandlingRule(c *gin.Context, in errorHandlingRuleExecInput) (*U
 		in.AccountAccounting()
 	}
 
+	// execAction 是这一层实际要落地的动作。默认跟 ConfiguredAction 走（Tracker=nil
+	// 时决策层会把 retry 恒降级成 failover 并打上 retry_tracker_missing，那个降级对
+	// 这一层是假的，见 errorHandlingRuleExecEffectiveAction 的文档），但
+	// semantic_output_started 这一种降级必须原样尊重：它是「已经把语义内容写给
+	// 客户端」这一不可逆事实的直接推论，跟 tracker 缺不缺失无关，任何调用方（包括
+	// 未来接的流式接线点）传了 SemanticEventForwarded=true 却被这里悄悄按
+	// ConfiguredAction 走成 retry/failover，就会在已提交的流上拼第二条流。
+	execAction := decision.ConfiguredAction
+	if decision.DowngradeReason == errorHandlingRuleDowngradeReasonSemanticOutputStarted {
+		execAction = decision.EffectiveAction
+	}
+
 	failoverErr := &UpstreamFailoverError{
 		StatusCode:      in.StatusCode,
 		ResponseBody:    in.Body,
@@ -117,7 +137,7 @@ func executeErrorHandlingRule(c *gin.Context, in errorHandlingRuleExecInput) (*U
 	if in.SafeError != nil {
 		failoverErr.SafeErrorType, failoverErr.SafeErrorMessage = in.SafeError(in.Body)
 	}
-	switch decision.ConfiguredAction {
+	switch execAction {
 	case ErrorHandlingActionRetry:
 		// 同账号重试，预算按账号计。RuleRetryLimit 必须显式带出来：
 		// effectiveSameAccountRetryLimit 裸调用 account.GetPoolModeRetryCount() 的话，
@@ -149,8 +169,17 @@ func executeErrorHandlingRule(c *gin.Context, in errorHandlingRuleExecInput) (*U
 // failover 并打上 retry_tracker_missing。那个降级对 Anthropic 的 tracker 路径才成立，
 // 在这里是假的 —— 直接拿来当 outcome 会让 OpenObserve 里查不到任何规则重试。
 //
-// 于是这里按执行层真正落下的动作重算：三个动作原样执行，没有降级。
+// 但 semantic_output_started 这一种降级例外：它不是「tracker 用错」，是「已经把语义
+// 内容写给客户端，retry/failover 不安全」，必须如实落地成 passthrough，否则
+// ops_error_logs 里的 Kind 会跟上面 execAction 分支实际执行的动作对不上（这里如果
+// 还报 retry/failover，跟真正写的 passthrough 帧自相矛盾）。
+//
+// 于是这里按执行层真正落下的动作重算：三个动作原样执行，只有 tracker 缺失那一种
+// 降级被有意忽略。
 func errorHandlingRuleExecEffectiveAction(decision errorHandlingRuleDecision) string {
+	if decision.DowngradeReason == errorHandlingRuleDowngradeReasonSemanticOutputStarted {
+		return decision.EffectiveAction
+	}
 	switch decision.ConfiguredAction {
 	case ErrorHandlingActionRetry, ErrorHandlingActionPassthrough:
 		return decision.ConfiguredAction
