@@ -88,6 +88,7 @@ func TestErrorHandlingRuleMatrix_AnthropicMessages(t *testing.T) {
 			"TestHandleFailoverExhaustedUsesRuleSafePassthroughSSEAfterPing",
 			"TestStreamRuleSingleAccountExhaustionUsesSafeError",
 			"TestStreamRuleFailoverSwitchesAccountsWithoutPoolModeRetryAndUsesLastSafeError",
+			"TestHandleAnthropicFailoverExhaustedWithoutRuleKeepsGenericError", // miss：#228 task-12 修复轮1 补
 		)
 	})
 }
@@ -99,7 +100,10 @@ func TestErrorHandlingRuleMatrix_GeminiMessages(t *testing.T) {
 		retryBudgetSharedRefs(t)
 	})
 	t.Run("exhausted_passthrough", func(t *testing.T) {
-		matrixAssertTestExists(t, ".", "TestHandleGeminiFailoverExhaustedHonorsRulePassthrough")
+		matrixAssertTestExists(t, ".",
+			"TestHandleGeminiFailoverExhaustedHonorsRulePassthrough",
+			"TestHandleGeminiFailoverExhaustedWithoutRuleKeepsGenericError", // miss：#228 task-12 修复轮1 补
+		)
 	})
 }
 
@@ -113,7 +117,10 @@ func TestErrorHandlingRuleMatrix_GeminiNative(t *testing.T) {
 		// handleGeminiFailoverExhausted 是 Gemini Messages / Gemini Native 共用的同一个
 		// handler 层兜底函数（两个入口最终都调用它），没有找到 Native 专属的另一份
 		// exhausted 兜底实现，这里引用同一个测试并明确记录这个共享假设。
-		matrixAssertTestExists(t, ".", "TestHandleGeminiFailoverExhaustedHonorsRulePassthrough")
+		matrixAssertTestExists(t, ".",
+			"TestHandleGeminiFailoverExhaustedHonorsRulePassthrough",
+			"TestHandleGeminiFailoverExhaustedWithoutRuleKeepsGenericError", // miss：#228 task-12 修复轮1 补，与上面同一个共享假设
+		)
 	})
 }
 
@@ -147,6 +154,7 @@ func TestErrorHandlingRuleMatrix_Responses(t *testing.T) {
 			"TestOpenAIFailoverExhausted_RulePassthroughWithoutSafeErrorFallsBack",
 			"TestHandleFailoverExhaustedUsesResponsesFailedEventForResponsesRequest",
 			"TestHandleResponsesFailoverExhaustedUsesRuleSafeResponseFailedAfterStreamStart",
+			"TestHandleResponsesFailoverExhaustedWithoutRuleKeepsGenericError", // miss：#228 task-12 修复轮1 补
 		)
 	})
 }

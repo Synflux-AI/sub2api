@@ -92,6 +92,64 @@ func TestHandleCCFailoverExhaustedWithoutRuleKeepsGenericError(t *testing.T) {
 	}
 }
 
+// #228 task-12 修复轮 1（Finding 2）：exhausted_passthrough 维度 6 行里有 4 行
+// （Anthropic Messages / Gemini Messages / Gemini Native / Responses）此前只引用了
+// 命中分支的测试，没有「完全未配规则」的未命中分支——TestXxxWithoutSafeErrorFallsBack
+// 系列断的是「规则命中但缺 SafeErrorType/Message 时的安全阀回退」，跟「压根没配规则」
+// 不是同一件事。下面三个补齐真正的未命中分支，模式与
+// TestHandleCCFailoverExhaustedWithoutRuleKeepsGenericError 一致：喂一个不带
+// ExhaustedAction 的 UpstreamFailoverError，断言存量通用文案原样不变。
+// Gemini Messages 与 Gemini Native 共用同一个 handleGeminiFailoverExhausted，
+// 与命中分支的既有共享假设保持一致，这里只写一份。
+
+func TestHandleAnthropicFailoverExhaustedWithoutRuleKeepsGenericError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+
+	(&OpenAIGatewayHandler{}).handleAnthropicFailoverExhausted(c, &service.UpstreamFailoverError{
+		StatusCode: http.StatusInternalServerError,
+	}, false)
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("expected the built-in mapUpstreamError mapping to be kept, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Upstream service temporarily unavailable") {
+		t.Fatalf("expected the generic exhausted message, got %s", rec.Body.String())
+	}
+}
+
+func TestHandleGeminiFailoverExhaustedWithoutRuleKeepsGenericError(t *testing.T) {
+	c, rec := newExhaustedTestContext()
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1beta/models/gemini-2.5-pro:generateContent", nil)
+	h := &GatewayHandler{}
+
+	h.handleGeminiFailoverExhausted(c, &service.UpstreamFailoverError{StatusCode: http.StatusInternalServerError})
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("expected the built-in mapGeminiUpstreamError mapping to be kept, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Upstream service temporarily unavailable") {
+		t.Fatalf("expected the generic exhausted message, got %s", rec.Body.String())
+	}
+}
+
+func TestHandleResponsesFailoverExhaustedWithoutRuleKeepsGenericError(t *testing.T) {
+	c, rec := newExhaustedTestContext()
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	h := &GatewayHandler{}
+
+	h.handleResponsesFailoverExhausted(c, &service.UpstreamFailoverError{StatusCode: http.StatusInternalServerError}, false)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected upstream status to be kept, got %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "All available accounts exhausted") {
+		t.Fatalf("expected the generic exhausted message, got %s", rec.Body.String())
+	}
+}
+
 // fakeErrorPassthroughRepo 是 service.ErrorPassthroughRepository 的最小实现，
 // 只用来把固定规则集喂给 service.NewErrorPassthroughService 的启动加载。
 // handler 包测试里没有现成的 mock（那个 mock 在 internal/service 包内且未导出），

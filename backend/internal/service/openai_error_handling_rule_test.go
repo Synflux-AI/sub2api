@@ -3,9 +3,11 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"testing"
 
@@ -322,6 +324,11 @@ func newMatchAllErrorPassthroughService(t *testing.T) *ErrorPassthroughService {
 		MatchMode:    model.MatchModeAll,
 		Platforms:    []string{PlatformOpenAI},
 		ResponseCode: &respCode, CustomMessage: &customMessage,
+		// SkipMonitoring: true 与 Gemini/Antigravity/Grok media 侧的同名 helper
+		// （newGeminiMatchAllErrorPassthroughService 等）保持一致：#228 task-12
+		// 复核发现本测试此前没设这个字段，导致 OpsSkipPassthroughKey 这条断言在
+		// OpenAI 侧从来没被真正驱动过——加上才能让下面新增的end-to-end断言成立。
+		SkipMonitoring: true,
 	}})
 	return svc
 }
@@ -436,12 +443,38 @@ func TestOpenAIErrorHandlingRule_YieldsToErrorPassthroughRule(t *testing.T) {
 	})
 	body := []byte(`{"error":{"message":"invalid request"}}`)
 
-	c, _ := newOpenAITransportErrTestContext()
+	c, rec := newOpenAITransportErrTestContext()
 	BindErrorPassthroughService(c, newMatchAllErrorPassthroughService(t))
 	_, handled := svc.openAIErrorHandlingRuleOverride(context.Background(), c, openAIErrorHandlingRuleInput{
 		Account: openAIRuleAccount(), StatusCode: http.StatusBadRequest, Body: body, ReqModel: "gpt-4o",
 	})
 	require.False(t, handled, "内置不换号 + 透传规则命中 ⇒ 错误处理规则让路")
+
+	// 让路之后，调用方会继续走 handleErrorResponse（openai_gateway_upstream_errors.go），
+	// 那里才真正应用透传规则、写出最终响应。#228 task-12 复核指出：只断言 handled=false
+	// 达不到 Step 3 的验收标准（必须断言最终 HTTP 状态码、响应消息、
+	// OpsSkipPassthroughKey），这里直接调用它来补齐这三个断言，而不只是内部布尔值。
+	resp := &http.Response{
+		StatusCode: http.StatusBadRequest,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(bytes.NewReader(body)),
+	}
+	_, err := svc.handleErrorResponse(context.Background(), resp, c, openAIRuleAccount(), nil)
+	require.Error(t, err)
+
+	require.Equal(t, http.StatusTeapot, rec.Code)
+	var payload struct {
+		Error struct {
+			Message string `json:"message"`
+			Type    string `json:"type"`
+		} `json:"error"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &payload))
+	require.Equal(t, "上游请求失败", payload.Error.Message)
+
+	skip, ok := c.Get(OpsSkipPassthroughKey)
+	require.True(t, ok, "OpsSkipPassthroughKey 必须被置位，避免下游重复应用透传规则")
+	require.Equal(t, true, skip)
 
 	// 内置要换号的分支不受影响：那条分支上本来就问不到透传规则。
 	c2, _ := newOpenAITransportErrTestContext()
