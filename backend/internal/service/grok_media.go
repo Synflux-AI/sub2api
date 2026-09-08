@@ -699,7 +699,7 @@ func (s *OpenAIGatewayService) ForwardGrokMedia(
 	requestIDHeader := firstNonEmpty(resp.Header.Get("x-request-id"), resp.Header.Get("xai-request-id"))
 	requestModel := requestInfo.Model
 	if resp.StatusCode >= 400 {
-		return s.handleGrokMediaErrorResponse(ctx, resp, c, account, requestIDHeader, requestModel)
+		return s.handleGrokMediaErrorResponse(ctx, resp, c, account, endpoint, requestIDHeader, requestModel)
 	}
 
 	s.updateGrokUsageFromResponse(withGrokTeamRateLimitModel(ctx, requestModel), account, resp.Header, resp.StatusCode)
@@ -804,7 +804,7 @@ func (s *OpenAIGatewayService) forwardGrokMediaVideoContent(
 		if statusResp.StatusCode < 400 {
 			return nil, fmt.Errorf("grok media status redirect is not allowed")
 		}
-		return s.handleGrokMediaErrorResponse(ctx, statusResp, c, account, statusRequestID, "")
+		return s.handleGrokMediaErrorResponse(ctx, statusResp, c, account, GrokMediaEndpointVideoContent, statusRequestID, "")
 	}
 	statusBody, err := ReadUpstreamResponseBody(statusResp.Body, s.cfg, c, openAITooLargeError)
 	_ = statusResp.Body.Close()
@@ -862,7 +862,7 @@ func (s *OpenAIGatewayService) forwardGrokMediaVideoContent(
 		return nil, fmt.Errorf("grok media signed content redirect is not allowed")
 	}
 	if contentResp.StatusCode >= 400 && contentResp.StatusCode != http.StatusRequestedRangeNotSatisfiable {
-		return s.handleGrokMediaErrorResponse(ctx, contentResp, c, account, contentRequestID, "")
+		return s.handleGrokMediaErrorResponse(ctx, contentResp, c, account, GrokMediaEndpointVideoContent, contentRequestID, "")
 	}
 
 	s.updateGrokUsageFromResponse(withGrokTeamRateLimitModel(ctx, ""), account, contentResp.Header, contentResp.StatusCode)
@@ -1217,6 +1217,7 @@ func (s *OpenAIGatewayService) handleGrokMediaErrorResponse(
 	resp *http.Response,
 	c *gin.Context,
 	account *Account,
+	endpoint GrokMediaEndpoint,
 	requestIDHeader string,
 	requestedModel string,
 ) (*OpenAIForwardResult, error) {
@@ -1269,6 +1270,34 @@ func (s *OpenAIGatewayService) handleGrokMediaErrorResponse(
 		MarkResponseCommitted(c)
 		writeGrokMediaErrorResponse(c, status, errType, errMsg)
 		return nil, fmt.Errorf("upstream error: %d (passthrough rule matched) message=%s", resp.StatusCode, upstreamMsg)
+	}
+
+	// #228 §六：video_status / video_content 查询绑定到创建任务时选中的原账号
+	// （owner binding，见 internal/handler/grok_media.go 里 ResolveGrokMediaVideoRequestAccount
+	// 的强制校验），任何情况下都不能切换账号。如果这里对这两类查询也接错误处理规则，
+	// 一条配了 failover 的规则会让 ops_error_logs 记下"规则已接管换号"，而 owner binding
+	// 实际上仍然会阻止真正换号（handler 层对 endpoint.IsVideoLookupRequest() 有独立的
+	// 立即终止分支）——规则看起来生效了，实际什么都没做，这正是 #228 评审修订 §六要
+	// 消灭的"假生效"。只有生成端点（images/videos 的 generations/edits/extensions，
+	// 即 endpoint.IsGenerationRequest()==true）不绑定原账号、可以正常换号，才允许接线；
+	// 新增的 GrokMediaEndpoint 常量默认不进这个允许清单，除非显式加进
+	// IsGenerationRequest()。
+	//
+	// 这个函数还有第四个调用方：ForwardGrokVoice（grok_audio.go，tts/stt/custom-voices）
+	// 把它自己的原始 endpoint 字符串转成 GrokMediaEndpoint 传进来——那些字符串不匹配
+	// IsGenerationRequest() 的任何分支，天然落在允许清单外，本任务不接线 Grok Voice
+	// （#228 task-9 范围只是图片/视频生成）。
+	if endpoint.IsGenerationRequest() {
+		if failoverErr, handled := s.grokMediaErrorHandlingRuleOverride(ctx, c, grokMediaErrorHandlingRuleInput{
+			Account:             account,
+			StatusCode:          resp.StatusCode,
+			Header:              resp.Header,
+			Body:                body,
+			ReqModel:            requestedModel,
+			BuiltinWillFailover: s.shouldFailoverGrokUpstreamError(resp.StatusCode, body),
+		}); handled {
+			return nil, failoverErr
+		}
 	}
 
 	if !account.ShouldHandleErrorCode(resp.StatusCode) {

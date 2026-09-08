@@ -1897,7 +1897,7 @@ func TestGrokMedia429FailoverPreservesRetryAfter(t *testing.T) {
 		Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"rate limited"}}`)),
 	}
 
-	result, err := svc.handleGrokMediaErrorResponse(context.Background(), resp, c, account, "request-id", "grok-imagine")
+	result, err := svc.handleGrokMediaErrorResponse(context.Background(), resp, c, account, GrokMediaEndpointImagesGenerations, "request-id", "grok-imagine")
 
 	require.Nil(t, result)
 	var failoverErr *UpstreamFailoverError

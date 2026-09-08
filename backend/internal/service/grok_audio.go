@@ -100,7 +100,13 @@ func (s *OpenAIGatewayService) ForwardGrokVoice(ctx context.Context, c *gin.Cont
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
-		return s.handleGrokMediaErrorResponse(ctx, resp, c, account, resp.Header.Get("x-request-id"), endpoint)
+		// Grok Voice (tts/stt/custom-voices) is not a GrokMediaEndpoint value and is
+		// out of scope for #228 task-9 (images/videos generation only). Casting the
+		// raw endpoint string preserves exact existing behavior: none of "tts",
+		// "stt", or "custom-voices..." match any case in IsGenerationRequest(), so
+		// the error-handling-rule engine is never consulted here, with zero new
+		// constants needed to keep it that way.
+		return s.handleGrokMediaErrorResponse(ctx, resp, c, account, GrokMediaEndpoint(endpoint), resp.Header.Get("x-request-id"), endpoint)
 	}
 	data, err := ReadUpstreamResponseBody(resp.Body, s.cfg, c, openAITooLargeError)
 	if err != nil {
