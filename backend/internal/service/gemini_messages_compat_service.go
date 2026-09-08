@@ -1060,13 +1060,11 @@ func (s *GeminiMessagesCompatService) Forward(ctx context.Context, c *gin.Contex
 		// 上面 return，此处开始由管理员配置说话。放在 shouldFailoverGemini... 之前，
 		// 使规则既能覆盖内置会换号的错误，也能覆盖普通非 failover 4xx。
 		//
-		// BuiltinWillFailover 必须传**真实的内置分类**，不能硬传 true：该字段在执行层
-		// 同时管两件事 —— (1) 要不要给错误透传规则让路，(2) 要不要替内置补跑账号记账。
-		// gemini 侧两者并不一致：记账（handleGeminiUpstreamError）在接线点之前就已跑完，
-		// 但非 failover 分支仍会走到 writeGeminiMappedError，而那里是要问透传规则的。
-		// 硬传 true 会把透传规则的让路一起关掉，让本引擎在 400/404 这类状态上抢走
-		// 透传规则该处理的错误。记账已跑完这一点，改用 AccountAccounting: nil 表达
-		// （执行层对该字段有 nil 保护）。
+		// BuiltinWillFailover 必须传**真实的内置分类**，不能硬传 true：执行层只用该
+		// 字段决定「规则接管时要不要替内置补跑账号记账」（AccountAccounting）。gemini
+		// 侧记账（handleGeminiUpstreamError）在接线点之前就已跑完，改用
+		// AccountAccounting: nil 表达（执行层对该字段有 nil 保护）——与错误透传规则
+		// 的优先级无关：2026-09-08 起规则引擎全链优先，不再有"让路"。
 		if failoverErr, handled := s.geminiErrorHandlingRuleOverride(ctx, c, geminiErrorHandlingRuleInput{
 			Account:             account,
 			StatusCode:          resp.StatusCode,
@@ -1626,15 +1624,13 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 		// 上面 return，此处开始由管理员配置说话。放在 shouldFailoverGemini... 之前，
 		// 使规则既能覆盖内置会换号的错误，也能覆盖普通非 failover 4xx。
 		//
-		// BuiltinWillFailover 必须传**真实的内置分类**，不能硬传 true：该字段在执行层
-		// 同时管两件事 —— (1) 要不要给错误透传规则让路，(2) 要不要替内置补跑账号记账。
-		// gemini 侧两者并不一致：记账（handleGeminiUpstreamError）在接线点之前就已跑完，
-		// 但非 failover 分支仍会走到 writeGeminiNativeUpstreamError，那里是要问透传规则的。
-		// 硬传 true 会把透传规则的让路一起关掉，让本引擎在 400/404 这类状态上抢走
-		// 透传规则该处理的错误。记账已跑完这一点，改用 AccountAccounting: nil 表达
-		// （执行层对该字段有 nil 保护）。Body 用 unwrapIfNeeded 之后的 evBody，
-		// 与本函数其余分支（isGoogleProjectConfigError / shouldFailoverGemini...）保持
-		// 一致的匹配口径。
+		// BuiltinWillFailover 必须传**真实的内置分类**，不能硬传 true：执行层只用该
+		// 字段决定「规则接管时要不要替内置补跑账号记账」（AccountAccounting）。gemini
+		// 侧记账（handleGeminiUpstreamError）在接线点之前就已跑完，改用
+		// AccountAccounting: nil 表达（执行层对该字段有 nil 保护）——与错误透传规则
+		// 的优先级无关：2026-09-08 起规则引擎全链优先，不再有"让路"。Body 用
+		// unwrapIfNeeded 之后的 evBody，与本函数其余分支
+		// （isGoogleProjectConfigError / shouldFailoverGemini...）保持一致的匹配口径。
 		if failoverErr, handled := s.geminiErrorHandlingRuleOverride(ctx, c, geminiErrorHandlingRuleInput{
 			Account:             account,
 			StatusCode:          resp.StatusCode,

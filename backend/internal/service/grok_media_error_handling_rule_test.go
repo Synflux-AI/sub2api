@@ -221,37 +221,44 @@ func newGrokMediaMatchAllErrorPassthroughService(t *testing.T) *ErrorPassthrough
 	return svc
 }
 
-// 与 Gemini/Antigravity 不同：handleGrokMediaErrorResponse 里 applyErrorPassthroughRule
-// 的查询排在错误处理规则接线点**之前**（brief 明确要求接线点在"透传规则查询"与
-// "ShouldHandleErrorCode"之间），所以透传规则一旦匹配，函数在到达规则引擎接线点之前
-// 就已经物理写完响应并 return——规则引擎在这条路径上连被问到的机会都没有，这是比
-// Gemini 那种"规则引擎主动检测到透传规则命中后让路"更强的保证（结构上不可能被规则
-// 抢走，而不是靠一次运行期判断）。
+// 2026-09-08 起 handleGrokMediaErrorResponse 里错误处理规则引擎接线点排在
+// applyErrorPassthroughRule 之前（Task 12.5 纠正，见 grok_media.go 头部注释）：
+// 项目所有者决定规则引擎全链优先于错误透传规则（反转 #228 非目标），与
+// Gemini/Antigravity/OpenAI 的接线次序保持一致。旧版这里是反过来（透传规则先
+// 物理 return，规则引擎连被问到的机会都没有）——这是三个平台里唯一一处
+// passthrough 在结构上抢在规则引擎之前的实现，Task 12.5 一并纠正掉了。
 //
-// 直接驱动 handleGrokMediaErrorResponse（真实端到端路径）来证明：即便配了一条会命中
-// 的 failover 规则，最终状态码/消息体/OpsSkipPassthroughKey 三者都是透传规则产出的，
-// 而不是规则引擎产出的。同时保留一次对 grokMediaErrorHandlingRuleOverride 的直接调用，
-// 验证执行层自身的让路判断（executeErrorHandlingRule 内部的 errorPassthroughRuleMatches
-// 检查）在被单独问到时也是正确的——这一段在当前 grok media 的调用顺序下是多一层保险，
-// 但与其它平台的实现保持同一契约，避免以后接线顺序变化时才发现这里从来没测过。
-func TestGrokMediaErrorHandlingRuleYieldsToPassthroughRule(t *testing.T) {
+// 直接驱动 handleGrokMediaErrorResponse（真实端到端路径）来证明：即便有一条会
+// 命中的透传规则，最终返回的 *UpstreamFailoverError 的状态码/安全消息都是规则
+// 引擎产出的，OpsSkipPassthroughKey 未被置位——证明 applyErrorPassthroughRule
+// 在这条路径上从未被调用到。
+func TestGrokMediaErrorHandlingRuleWinsOverPassthroughRule(t *testing.T) {
 	account := grokMediaRuleAccount()
 	body := []byte(`{"error":{"code":"internal","message":"boom"}}`)
 
-	// 阶段一：直接调用 grokMediaErrorHandlingRuleOverride，验证执行层自身的让路判断。
+	// 阶段一：直接调用 grokMediaErrorHandlingRuleOverride，验证执行层自身的
+	// "两者同时命中，规则引擎胜出"判断。
 	c1, _ := newGrokMediaRuleTestContext()
 	svc := newGrokMediaRuleService(t, nil, ErrorHandlingRule{
 		ID: "broad-500", StatusCodes: []int{500}, Action: ErrorHandlingActionPassthrough,
 		Platforms: []string{PlatformGrok},
 	})
 	BindErrorPassthroughService(c1, newGrokMediaMatchAllErrorPassthroughService(t))
-	_, handled := svc.grokMediaErrorHandlingRuleOverride(context.Background(), c1, grokMediaErrorHandlingRuleInput{
+	failoverErr, handled := svc.grokMediaErrorHandlingRuleOverride(context.Background(), c1, grokMediaErrorHandlingRuleInput{
 		Account: account, StatusCode: http.StatusInternalServerError, Body: body, ReqModel: "grok-imagine",
 		BuiltinWillFailover: false,
 	})
-	require.False(t, handled, "内置不换号 + 透传规则命中 ⇒ 错误处理规则让路")
+	require.True(t, handled, "两个机制同时命中时错误处理规则引擎胜出（2026-09-08 反转 #228 非目标）")
+	require.NotNil(t, failoverErr)
+	require.Equal(t, "broad-500", failoverErr.ErrorRuleID)
+	require.Equal(t, ErrorHandlingExhaustedActionPassthrough, failoverErr.ExhaustedAction)
+	require.Equal(t, NextAccountStop, failoverErr.NextAccountAction)
+	// SafeErrorType/Message 来自规则引擎自己的 safeGrokMediaError，不是透传规则
+	// 改写后的 CustomMessage："上游请求失败"。
+	require.Equal(t, "internal", failoverErr.SafeErrorType)
+	require.Equal(t, "boom", failoverErr.SafeErrorMessage)
 
-	// 内置要换号的分支不受影响：那条分支上本来就问不到透传规则。
+	// 内置要换号的分支不受影响：不管透传规则命不命中，规则引擎该赢还是赢。
 	c1b, _ := newGrokMediaRuleTestContext()
 	BindErrorPassthroughService(c1b, newGrokMediaMatchAllErrorPassthroughService(t))
 	_, handled2 := svc.grokMediaErrorHandlingRuleOverride(context.Background(), c1b, grokMediaErrorHandlingRuleInput{
@@ -260,8 +267,9 @@ func TestGrokMediaErrorHandlingRuleYieldsToPassthroughRule(t *testing.T) {
 	})
 	require.True(t, handled2)
 
-	// 阶段二：驱动真实的 handleGrokMediaErrorResponse 端到端路径，断言最终状态码 /
-	// 消息体 / OpsSkipPassthroughKey 三者都来自透传规则，规则引擎接线点从未被问到。
+	// 阶段二：驱动真实的 handleGrokMediaErrorResponse 端到端路径（生成端点），
+	// 断言最终返回的 *UpstreamFailoverError 来自规则引擎，透传规则接线点从未被
+	// 问到（OpsSkipPassthroughKey 只在 applyErrorPassthroughRule 命中时才置位）。
 	c2, rec := newGrokMediaRuleTestContext()
 	BindErrorPassthroughService(c2, newGrokMediaMatchAllErrorPassthroughService(t))
 	resp := &http.Response{
@@ -270,6 +278,55 @@ func TestGrokMediaErrorHandlingRuleYieldsToPassthroughRule(t *testing.T) {
 		Body:       io.NopCloser(strings.NewReader(string(body))),
 	}
 	_, err := svc.handleGrokMediaErrorResponse(context.Background(), resp, c2, account, GrokMediaEndpointImagesGenerations, "req-2", "grok-imagine")
+	require.Error(t, err)
+
+	var endErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &endErr, "规则引擎胜出后应直接返回 *UpstreamFailoverError，而不是透传规则写完的 HTTP 响应")
+	require.Equal(t, "broad-500", endErr.ErrorRuleID)
+	require.Equal(t, ErrorHandlingExhaustedActionPassthrough, endErr.ExhaustedAction)
+	require.Equal(t, "internal", endErr.SafeErrorType)
+	require.Equal(t, "boom", endErr.SafeErrorMessage)
+
+	// 规则引擎在函数里直接 return，走不到 MarkResponseCommitted/writeGrokMediaErrorResponse，
+	// 所以 rec 上不会有透传规则写出的 418/自定义消息。
+	require.NotEqual(t, http.StatusTeapot, rec.Code)
+
+	skip, ok := c2.Get(OpsSkipPassthroughKey)
+	require.False(t, ok, "规则引擎胜出时不应该经过 applyErrorPassthroughRule")
+	require.Nil(t, skip)
+
+	events := opsUpstreamErrorEvents(t, c2)
+	found := false
+	for _, ev := range events {
+		if ev.Kind == "error_handling_rule_passthrough" {
+			found = true
+		}
+	}
+	require.True(t, found, "规则引擎接管的 passthrough 动作必须留下 error_handling_rule_passthrough 事件")
+}
+
+// TestHandleGrokMediaErrorResponse_PassthroughRuleAloneStillApplies 是"透传规则
+// 单独命中仍然生效"的守护测试：svc 没有绑定 settingService，规则引擎结构性不可能
+// 命中（openAIErrorHandlingRulesActive 早退出——grokMediaErrorHandlingRuleOverride
+// 内部复用的正是这个早退出，见 grok_media_error_handling_rule.go），只有错误透传
+// 规则命中。这条覆盖率此前从未独立存在过（旧版 Yields 测试里两个机制永远同时配置），
+// Task 12.5 改动了 handleGrokMediaErrorResponse 的接线顺序，必须补一个只有透传规则
+// 单独生效的端到端用例，证明"没有任何错误处理规则匹配时，透传规则原样生效"没有被
+// 这次顺序反转带坏。
+func TestHandleGrokMediaErrorResponse_PassthroughRuleAloneStillApplies(t *testing.T) {
+	svc := &OpenAIGatewayService{accountRepo: &grokQuotaAccountRepo{}, cfg: &config.Config{}}
+	account := grokMediaRuleAccount()
+	body := []byte(`{"error":{"code":"internal","message":"boom"}}`)
+
+	c, rec := newGrokMediaRuleTestContext()
+	BindErrorPassthroughService(c, newGrokMediaMatchAllErrorPassthroughService(t))
+	resp := &http.Response{
+		StatusCode: http.StatusInternalServerError,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(string(body))),
+	}
+
+	_, err := svc.handleGrokMediaErrorResponse(context.Background(), resp, c, account, GrokMediaEndpointImagesGenerations, "req-3", "grok-imagine")
 	require.Error(t, err)
 
 	require.Equal(t, http.StatusTeapot, rec.Code)
@@ -282,15 +339,9 @@ func TestGrokMediaErrorHandlingRuleYieldsToPassthroughRule(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &payload))
 	require.Equal(t, "上游请求失败", payload.Error.Message)
 
-	skip, ok := c2.Get(OpsSkipPassthroughKey)
+	skip, ok := c.Get(OpsSkipPassthroughKey)
 	require.True(t, ok, "OpsSkipPassthroughKey 必须被置位，避免下游重复应用透传规则")
 	require.Equal(t, true, skip)
-
-	events := opsUpstreamErrorEvents(t, c2)
-	for _, ev := range events {
-		require.NotEqual(t, "error_handling_rule_failover", ev.Kind,
-			"透传规则先于规则引擎接线点物理 return，规则引擎必须从未被问到")
-	}
 }
 
 // ==================== 平台过滤 ====================

@@ -46,8 +46,10 @@ import (
 //
 // 所以 Antigravity 侧接线必须传：
 //   - BuiltinWillFailover: s.shouldFailoverUpstreamError(statusCode) 的真实结论
-//     （不能硬编码 true）——理由同 Gemini：否则会把"给错误透传规则让路"这一件事也
-//     一并关掉。早接线点上这个值可证明恒为 true（shouldFailoverUpstreamError 覆盖
+//     （不能硬编码 true）——它只决定「规则接管时要不要替内置补跑账号记账」
+//     （AccountAccounting），跟错误透传规则的优先级无关：2026-09-08 起规则引擎
+//     全链优先于透传规则，不再有"让路"（见 error_handling_rule_executor.go）。
+//     早接线点上这个值可证明恒为 true（shouldFailoverUpstreamError 覆盖
 //     的状态码集合正好等于能走到早接线点的状态码集合），但仍然按真实分类传，不写
 //     死常量，避免未来任一侧的状态码集合变化后悄悄产生分歧。
 //   - AccountAccounting: nil ——三个标准接线点上记账已经跑完；早接线点上记账还没跑，
@@ -193,12 +195,11 @@ type antigravityErrorHandlingRuleInput struct {
 	ReqModel   string
 
 	// BuiltinWillFailover 必须传真实的内置分类结论
-	// （s.shouldFailoverUpstreamError(StatusCode)），不能硬编码 true：该字段在执行层
-	// 同时管两件事——(1) 要不要给错误透传规则让路，(2) 要不要替内置补跑账号记账。
-	// 三个标准接线点上记账（handleUpstreamError）已经在接线点之前跑完，但非 failover
-	// 分支仍会走到各链自己的 writeMapped*Error，那里会问错误透传规则。早接线点上记账
-	// 还没跑，但这个值在那个位置可证明恒为 true，执行层的补记账逻辑天然不触发。硬传
-	// true 会在标准接线点上把让路逻辑一起关掉。
+	// （s.shouldFailoverUpstreamError(StatusCode)），不能硬编码 true：执行层只用它
+	// 决定「规则接管时要不要替内置补跑账号记账」（AccountAccounting）。三个标准
+	// 接线点上记账（handleUpstreamError）已经在接线点之前跑完；早接线点上记账
+	// 还没跑，但这个值在那个位置可证明恒为 true，执行层的补记账逻辑天然不触发。
+	// 与错误透传规则的优先级无关：2026-09-08 起规则引擎全链优先，不再有"让路"。
 	BuiltinWillFailover bool
 
 	// SyntheticStatus 表示 StatusCode 是合成的（传输层错误没有 HTTP 响应）。只用于
@@ -291,8 +292,10 @@ const antigravityTransportRuleSyntheticStatus = http.StatusBadGateway
 // antigravityRetryLoop 里的调用点。
 //
 // 照搬 openAITransportErrorRuleOverride 的取舍：BuiltinWillFailover 恒传 true——传输层
-// 失败上内置只有"一律 failover"一种意见，没有"本地写响应"那条链，不必替内置补记账，
-// 也不该给透传规则让路（透传规则匹配的是真实上游响应，这里的 502 是合成的）。
+// 失败上内置只有"一律 failover"一种意见，没有"本地写响应"那条链，不必替内置补记账。
+// 错误透传规则在这条路径上也问不到：透传规则匹配的是真实上游响应，这里的 502 是合成的，
+// 这与"规则引擎优先于透传规则"的口径无关（本函数走的是合成状态码，透传规则匹配条件
+// 天然不成立，而不是被谁"让路"）。
 func (s *AntigravityGatewayService) antigravityTransportErrorRuleOverride(
 	ctx context.Context,
 	c *gin.Context,

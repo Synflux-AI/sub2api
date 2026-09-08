@@ -18,7 +18,9 @@ import (
 // 为多个 service 类型各写一份——一个方法三处复用即可，避免逻辑漂移。
 //
 // 与 OpenAI 侧一处关键的语义差异（#228 接线时必须留意）：
-//   - OpenAI：BuiltinWillFailover 与「内置要不要补记账/该不该问透传规则」天然一致；
+//   - OpenAI：账号记账在接线点**之后**才跑（内置不换号时才补），所以
+//     BuiltinWillFailover 必须传真实结论，执行层才能正确决定要不要替内置补跑
+//     AccountAccounting；
 //   - Gemini：账号记账（handleGeminiUpstreamError）在接线点**之前**就已经跑完（无论
 //     内置最终判不判定 failover），但内置判定不 failover 的分支仍会继续走到
 //     writeGeminiMappedError/writeGeminiChatCompletionsMappedError，那里会问
@@ -26,8 +28,9 @@ import (
 //
 // 所以 Gemini 侧接线必须传：
 //   - BuiltinWillFailover: shouldFailoverGeminiUpstreamError(statusCode) 的真实结论
-//     （不能硬编码 true）——否则会把「给错误透传规则让路」这一件事也一并关掉，让
-//     本引擎在 400/404 这类非 failover 状态码上抢走透传规则该处理的错误；
+//     （不能硬编码 true）——它只决定「规则接管时要不要替内置补跑账号记账」
+//     （AccountAccounting），跟错误透传规则的优先级无关：2026-09-08 起规则引擎
+//     全链优先于透传规则，不再有"让路"（见 error_handling_rule_executor.go）；
 //   - AccountAccounting: nil ——记账已经跑完，执行层的 nil 保护会跳过重复扣分。
 
 // geminiBuiltinOwnsError 判断这条上游错误是否归内置逻辑独占，规则不得抢走。
@@ -109,11 +112,10 @@ type geminiErrorHandlingRuleInput struct {
 	ReqModel   string
 
 	// BuiltinWillFailover 必须传真实的内置分类结论
-	// （shouldFailoverGeminiUpstreamError(StatusCode)），不能硬编码 true：该字段在
-	// 执行层同时管两件事——(1) 要不要给错误透传规则让路，(2) 要不要替内置补跑账号
-	// 记账。Gemini 侧记账（handleGeminiUpstreamError）已经在接线点之前跑完，但非
-	// failover 分支仍会走到 writeGeminiMappedError / writeGeminiChatCompletionsMappedError，
-	// 那里会问错误透传规则。硬传 true 会把让路逻辑一起关掉。
+	// （shouldFailoverGeminiUpstreamError(StatusCode)），不能硬编码 true：执行层只用
+	// 它决定「规则接管时要不要替内置补跑账号记账」（AccountAccounting）。Gemini 侧
+	// 记账（handleGeminiUpstreamError）已经在接线点之前跑完。与错误透传规则的优先级
+	// 无关：2026-09-08 起规则引擎全链优先，不再有"让路"。
 	BuiltinWillFailover bool
 
 	// SyntheticStatus 表示 StatusCode 是合成的（传输层错误没有 HTTP 响应）。只用于
@@ -184,8 +186,10 @@ const geminiTransportRuleSyntheticStatus = http.StatusBadGateway
 // 换号是纯粹空耗还可能误伤账号，具体排除逻辑见各调用点。
 //
 // 照搬 openAITransportErrorRuleOverride 的取舍：BuiltinWillFailover 恒传 true——传输层
-// 失败上内置只有"一律 failover"一种意见，没有"本地写响应"那条链，不必替内置补记账，
-// 也不该给透传规则让路（透传规则匹配的是真实上游响应，这里的 502 是合成的）。
+// 失败上内置只有"一律 failover"一种意见，没有"本地写响应"那条链，不必替内置补记账。
+// 错误透传规则在这条路径上也问不到：透传规则匹配的是真实上游响应，这里的 502 是合成的，
+// 这与"规则引擎优先于透传规则"的口径无关（本函数走的是合成状态码，透传规则匹配条件
+// 天然不成立，而不是被谁"让路"）。
 func (s *GeminiMessagesCompatService) geminiTransportErrorRuleOverride(
 	ctx context.Context,
 	c *gin.Context,

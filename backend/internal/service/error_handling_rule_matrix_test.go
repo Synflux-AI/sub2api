@@ -48,16 +48,25 @@ import (
 //     当作"旗舰/预先存在的基线"直接抄了全部 ✓，但 transport 错误这一格实际上
 //     不成立。见 TestAnthropicMessagesTransportErrorBypassesErrorHandlingRule_KnownGap。
 //
-//  2. Anthropic Messages 的 "错误透传让路" 维度同样没有接线，而且现有调用顺序
-//     与 §五要求的优先级相反。errorPassthroughRuleMatches 在全仓库唯一的非测试
-//     调用点是 error_handling_rule_executor.go:84（executeErrorHandlingRule 内部），
-//     而 Anthropic 自己这条更老、独立的引擎实现（gateway_error_handling_rule.go
-//     的 applyErrorHandlingRule / writeErrorHandlingRulePassthrough）从未调用
-//     executeErrorHandlingRule，也从未直接调用 errorPassthroughRuleMatches。更
-//     进一步，gateway_forward.go 里错误处理规则的 5 个调用点都排在 handleErrorResponse
-//     （管理端错误透传规则的落地点）之前，意味着即便两者都配置成会匹配同一个
-//     错误，错误处理规则引擎会先赢——这是 §五"错误透传规则永远优先"的反面。
-//     见 TestAnthropicMessagesErrorHandlingRuleNeverConsultsPassthroughRule_KnownGap。
+//  2. Anthropic Messages 的 "错误透传让路" 维度没有接到本文件其它平台共用的
+//     executor（error_handling_rule_executor.go）：Anthropic 自己这条更老、独立
+//     的引擎实现（gateway_error_handling_rule.go 的 applyErrorHandlingRule /
+//     writeErrorHandlingRulePassthrough）从未调用 executeErrorHandlingRule。
+//     gateway_forward.go 里错误处理规则的 5 个调用点都排在 handleErrorResponse
+//     （管理端错误透传规则的落地点）之前——错误处理规则引擎先赢。
+//
+//     历史记录（口径已变，不再是缺口）：这条最初是按 issue #228 §五"错误透传
+//     规则永远优先"的旧口径记的一个反向优先级缺口。2026-09-08 项目所有者反转了
+//     这条非目标：#228 task-12.5 已经把 error_handling_rule_executor.go /
+//     Gemini / Antigravity / OpenAI / Grok media 的接线次序全部改成"规则引擎全链
+//     优先于错误透传规则"。按新口径看，Anthropic Messages 这里"错误处理规则先
+//     赢"反而是**唯一一行天生就与新决定一致**的实现——不是因为它被专门修过，
+//     纯粹是因为它从来没有 errorPassthroughRuleMatches 那个已删除的让路分支可
+//     以删。这里不需要代码改动，只更新记录：见
+//     TestAnthropicMessagesErrorHandlingRuleNeverConsultsPassthroughRule_KnownGap
+//     （测试名与断言原样保留——它证明的行为没有变，只是这行为现在符合新口径而不是
+//     违反旧口径，所以不再算作"缺口"，注释保留 _KnownGap 后缀是历史命名，留给下一次
+//     touch 这个文件的人重新考虑是否要改名）。
 //
 //  3. Grok Media generation 的 "transport 错误" 维度同样没有真正接线：虽然
 //     ForwardGrokMedia 请求发送失败时确实调用了 handleOpenAIUpstreamTransportError
@@ -186,14 +195,18 @@ func TestAnthropicMessagesTransportErrorBypassesErrorHandlingRule_KnownGap(t *te
 	}
 }
 
-// TestAnthropicMessagesErrorHandlingRuleNeverConsultsPassthroughRule_KnownGap 是矩阵
-// 引用的第二个缺口钉住测试：证明当前行为——错误处理规则引擎的 passthrough 动作会
-// 直接把自己的响应体写给客户端，完全不问一句"有没有一条管理端错误透传规则本来应该
-// 优先生效"。用一个非 400 状态码（500）让 writeErrorHandlingRulePassthrough 保留原始
-// 上游响应体（见 TestForwardErrorHandlingRulePassthroughPreservesNon400RawResponse 建立
-// 的先例），同时绑定一条会匹配同一状态码、但产出完全不同响应体/状态码的管理端错误
-// 透传规则；如果两者的优先级如 §五要求的那样（错误透传规则优先），最终应该看到
-// 透传规则的自定义响应；实际观察到的是错误处理规则自己的 passthrough 输出赢了。
+// TestAnthropicMessagesErrorHandlingRuleNeverConsultsPassthroughRule_KnownGap 证明当前
+// 行为——错误处理规则引擎的 passthrough 动作会直接把自己的响应体写给客户端，完全不问
+// 一句"有没有一条管理端错误透传规则本来也会匹配同一个错误"。用一个非 400 状态码（500）
+// 让 writeErrorHandlingRulePassthrough 保留原始上游响应体（见
+// TestForwardErrorHandlingRulePassthroughPreservesNon400RawResponse 建立的先例），同时
+// 绑定一条会匹配同一状态码、但产出完全不同响应体/状态码的管理端错误透传规则；
+// 实际观察到的是错误处理规则自己的 passthrough 输出赢了。
+//
+// 2026-09-08 起这正是项目所有者要的结果（规则引擎全链优先于错误透传规则，见
+// error_handling_rule_executor.go 头部注释与 #228 task-12.5）——测试名与断言保留
+// _KnownGap 后缀只是历史命名，含义已从"违反 §五"变成"符合新决定"，见本文件头部
+// Known Gap #2 的更新记录。
 func TestAnthropicMessagesErrorHandlingRuleNeverConsultsPassthroughRule_KnownGap(t *testing.T) {
 	rawBody := `{"error":{"type":"upstream_custom","message":"raw proxy failure"}}`
 	upstream := &sequencedHTTPUpstream{responses: []sequencedUpstreamResponse{{status: 500, body: rawBody}}}
@@ -220,9 +233,10 @@ func TestAnthropicMessagesErrorHandlingRuleNeverConsultsPassthroughRule_KnownGap
 	require.False(t, errors.As(err, &failoverErr), "passthrough 动作不换号，Forward 不应该返回 *UpstreamFailoverError")
 	require.Equal(t, 1, upstream.calls)
 	require.NotEqual(t, http.StatusTeapot, rec.Code,
-		"当前行为：管理端错误透传规则配置的状态码从未生效——错误处理规则先赢，优先级与 §五 相反")
+		"当前行为：管理端错误透传规则配置的状态码不生效——错误处理规则先赢，"+
+			"2026-09-08 起这正是项目所有者要的次序（规则引擎全链优先）")
 	require.NotContains(t, rec.Body.String(), customMessage,
-		"当前行为：管理端错误透传规则配置的自定义消息从未出现在响应里")
+		"当前行为：管理端错误透传规则配置的自定义消息不会出现在响应里")
 	require.Contains(t, rec.Body.String(), "raw proxy failure",
 		"当前行为：客户端看到的是错误处理规则 passthrough 保留的原始上游响应体")
 }
@@ -261,8 +275,14 @@ func TestErrorHandlingRuleMatrix_GeminiMessages(t *testing.T) {
 			"TestExecuteErrorHandlingRuleWithoutSemanticEventForwardedStillFailoversCleanly",
 		)
 	})
-	t.Run("passthrough_yield", func(t *testing.T) {
-		matrixAssertTestExists(t, ".", "TestGeminiErrorHandlingRuleYieldsToPassthroughRule")
+	t.Run("passthrough_wins_over_error_passthrough_rule", func(t *testing.T) {
+		// 2026-09-08 起项目所有者反转 #228 非目标：两个机制同时命中时错误处理规则
+		// 引擎胜出（旧维度名 passthrough_yield，旧语义正相反——那时是透传规则赢）。
+		matrixAssertTestExists(t, ".",
+			"TestGeminiErrorHandlingRuleWinsOverPassthroughRule",
+			// 同时命中之外，"只有透传规则命中"这条独立分支必须继续被覆盖。
+			"TestWriteGeminiMappedError_PassthroughRuleAloneStillApplies",
+		)
 	})
 }
 
@@ -291,10 +311,13 @@ func TestErrorHandlingRuleMatrix_GeminiNative(t *testing.T) {
 			"TestExecuteErrorHandlingRuleWithoutSemanticEventForwardedStillFailoversCleanly",
 		)
 	})
-	t.Run("passthrough_yield_shared_override", func(t *testing.T) {
-		// TestGeminiErrorHandlingRuleYieldsToPassthroughRule 直接驱动
+	t.Run("passthrough_wins_over_error_passthrough_rule_shared_override", func(t *testing.T) {
+		// TestGeminiErrorHandlingRuleWinsOverPassthroughRule 直接驱动
 		// geminiErrorHandlingRuleOverride（端点无关），因此对 Native 行同样成立。
-		matrixAssertTestExists(t, ".", "TestGeminiErrorHandlingRuleYieldsToPassthroughRule")
+		matrixAssertTestExists(t, ".",
+			"TestGeminiErrorHandlingRuleWinsOverPassthroughRule",
+			"TestWriteGeminiMappedError_PassthroughRuleAloneStillApplies",
+		)
 	})
 }
 
@@ -340,8 +363,13 @@ func TestErrorHandlingRuleMatrix_ChatCompletions(t *testing.T) {
 			"TestExecuteErrorHandlingRuleWithoutSemanticEventForwardedStillFailoversCleanly",
 		)
 	})
-	t.Run("passthrough_yield_shared_override", func(t *testing.T) {
-		matrixAssertTestExists(t, ".", "TestOpenAIErrorHandlingRule_YieldsToErrorPassthroughRule")
+	t.Run("passthrough_wins_over_error_passthrough_rule_shared_override", func(t *testing.T) {
+		// 2026-09-08 起项目所有者反转 #228 非目标：两个机制同时命中时错误处理规则
+		// 引擎胜出（旧维度名 passthrough_yield，旧语义正相反）。
+		matrixAssertTestExists(t, ".",
+			"TestOpenAIErrorHandlingRule_WinsOverErrorPassthroughRule",
+			"TestOpenAIHandleErrorResponse_PassthroughRuleAloneStillApplies",
+		)
 	})
 }
 
@@ -371,8 +399,13 @@ func TestErrorHandlingRuleMatrix_Responses(t *testing.T) {
 			"TestExecuteErrorHandlingRuleWithoutSemanticEventForwardedStillFailoversCleanly",
 		)
 	})
-	t.Run("passthrough_yield_shared_override", func(t *testing.T) {
-		matrixAssertTestExists(t, ".", "TestOpenAIErrorHandlingRule_YieldsToErrorPassthroughRule")
+	t.Run("passthrough_wins_over_error_passthrough_rule_shared_override", func(t *testing.T) {
+		// 2026-09-08 起项目所有者反转 #228 非目标：两个机制同时命中时错误处理规则
+		// 引擎胜出（旧维度名 passthrough_yield，旧语义正相反）。
+		matrixAssertTestExists(t, ".",
+			"TestOpenAIErrorHandlingRule_WinsOverErrorPassthroughRule",
+			"TestOpenAIHandleErrorResponse_PassthroughRuleAloneStillApplies",
+		)
 	})
 }
 
@@ -403,8 +436,15 @@ func TestErrorHandlingRuleMatrix_GrokMediaGeneration(t *testing.T) {
 		t.Log("not applicable: issue #228 §七原表本身把 Grok Media generation 的流内错误列标为" +
 			"「不适用」——媒体生成（图片/视频）请求本身是非流式的，没有 SSE 循环可言")
 	})
-	t.Run("passthrough_yield", func(t *testing.T) {
-		matrixAssertTestExists(t, ".", "TestGrokMediaErrorHandlingRuleYieldsToPassthroughRule")
+	t.Run("passthrough_wins_over_error_passthrough_rule", func(t *testing.T) {
+		// 2026-09-08 起项目所有者反转 #228 非目标：两个机制同时命中时错误处理规则
+		// 引擎胜出（旧维度名 passthrough_yield，旧语义正相反——那时透传规则在
+		// handleGrokMediaErrorResponse 里结构性抢在规则引擎之前物理 return，
+		// Task 12.5 把这个唯一的反向次序也纠正过来了）。
+		matrixAssertTestExists(t, ".",
+			"TestGrokMediaErrorHandlingRuleWinsOverPassthroughRule",
+			"TestHandleGrokMediaErrorResponse_PassthroughRuleAloneStillApplies",
+		)
 	})
 }
 

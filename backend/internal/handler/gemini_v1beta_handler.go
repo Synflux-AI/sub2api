@@ -722,7 +722,27 @@ func (h *GatewayHandler) handleGeminiFailoverExhausted(c *gin.Context, failoverE
 	statusCode := failoverErr.StatusCode
 	responseBody := failoverErr.ResponseBody
 
-	// 先检查透传规则
+	// 错误处理规则引擎的 exhausted_action=passthrough 优先于下面的错误透传规则：
+	// 2026-09-08 项目所有者决定规则引擎全链优先于透传规则（反转 #228 非目标），
+	// 与 gateway_handler.go:1924→:1943 / gateway_handler_chat_completions.go /
+	// openai_gateway_handler.go 的既有次序一致 —— 不要把这两块顺序再"修"回去。
+	// SafeErrorType 不出现在 Gemini 线格式里——googleError 没有错误类型参数，
+	// 只能带 message；SafeErrorType 仍作为「规则引擎已填充」的前置判据之一。
+	// SafeErrorType/Message 缺一不可，缺了就退回内置映射，不能把可能含凭据
+	// 片段的原始上游文案透出去。
+	if failoverErr.ExhaustedAction == service.ErrorHandlingExhaustedActionPassthrough &&
+		failoverErr.SafeErrorType != "" && failoverErr.SafeErrorMessage != "" {
+		passthroughStatus := http.StatusBadGateway
+		if statusCode > 0 {
+			passthroughStatus = statusCode
+		}
+		service.SetOpsUpstreamError(c, statusCode, failoverErr.SafeErrorMessage, "")
+		googleError(c, passthroughStatus, failoverErr.SafeErrorMessage)
+		return
+	}
+
+	// 错误透传规则：只在上面的规则引擎未命中 exhausted_action=passthrough 时才
+	// 轮到这里生效（没有任何错误处理规则命中，或命中的动作不是 passthrough）。
 	if h.errorPassthroughService != nil && len(responseBody) > 0 {
 		if rule := h.errorPassthroughService.MatchRule(service.PlatformGemini, statusCode, responseBody); rule != nil {
 			// 确定响应状态码
@@ -744,24 +764,6 @@ func (h *GatewayHandler) handleGeminiFailoverExhausted(c *gin.Context, failoverE
 			googleError(c, respCode, msg)
 			return
 		}
-	}
-
-	// 错误处理规则的 exhausted_action=passthrough：原样交付上游状态码与脱敏后的
-	// 上游错误消息。SafeErrorType 不出现在 Gemini 线格式里 —— googleError 没有
-	// 错误类型参数，只能带 message；SafeErrorType 仍作为「规则引擎已填充」的
-	// 前置判据之一。SafeErrorType/Message 缺一不可，缺了就退回内置映射，不能
-	// 把可能含凭据片段的原始上游文案透出去。与 gateway_handler.go /
-	// gateway_handler_chat_completions.go / openai_gateway_handler.go 的
-	// 同名消费点口径一致。
-	if failoverErr.ExhaustedAction == service.ErrorHandlingExhaustedActionPassthrough &&
-		failoverErr.SafeErrorType != "" && failoverErr.SafeErrorMessage != "" {
-		passthroughStatus := http.StatusBadGateway
-		if statusCode > 0 {
-			passthroughStatus = statusCode
-		}
-		service.SetOpsUpstreamError(c, statusCode, failoverErr.SafeErrorMessage, "")
-		googleError(c, passthroughStatus, failoverErr.SafeErrorMessage)
-		return
 	}
 
 	// 记录原始上游状态码，以便 ops 错误日志捕获真实的上游错误

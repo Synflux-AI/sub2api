@@ -409,9 +409,22 @@ func (h *GatewayHandler) handleCCFailoverExhausted(c *gin.Context, lastErr *serv
 		statusCode = lastErr.StatusCode
 	}
 
-	// 错误透传规则优先于错误处理规则引擎的 exhausted_action=passthrough：
-	// 与 gateway_handler.go / gemini_v1beta_handler.go 的同名消费点口径一致，
-	// 管理员显式配的透传规则始终优先于规则引擎与内置映射。
+	// 错误处理规则引擎的 exhausted_action=passthrough 优先于下面的错误透传规则：
+	// 2026-09-08 项目所有者决定规则引擎全链优先于透传规则（反转 #228 非目标），
+	// 与 gateway_handler.go:1924→:1943 / openai_gateway_handler.go 的既有次序
+	// 一致 —— 不要把这两块顺序再"修"回去。SafeErrorType/Message 缺一不可：
+	// 那是脱敏过的安全文本，缺了就退回内置映射，不能把可能含凭据片段的原始
+	// 上游文案透出去。
+	if lastErr != nil &&
+		lastErr.ExhaustedAction == service.ErrorHandlingExhaustedActionPassthrough &&
+		lastErr.SafeErrorType != "" && lastErr.SafeErrorMessage != "" {
+		service.SetOpsUpstreamError(c, statusCode, lastErr.SafeErrorMessage, "")
+		h.chatCompletionsErrorResponse(c, statusCode, lastErr.SafeErrorType, lastErr.SafeErrorMessage)
+		return
+	}
+
+	// 错误透传规则：只在上面的规则引擎未命中 exhausted_action=passthrough 时才
+	// 轮到这里生效（没有任何错误处理规则命中，或命中的动作不是 passthrough）。
 	if lastErr != nil && h.errorPassthroughService != nil && len(lastErr.ResponseBody) > 0 {
 		if rule := h.errorPassthroughService.MatchRule(platform, statusCode, lastErr.ResponseBody); rule != nil {
 			respCode := statusCode
@@ -429,18 +442,6 @@ func (h *GatewayHandler) handleCCFailoverExhausted(c *gin.Context, lastErr *serv
 			h.chatCompletionsErrorResponse(c, respCode, "upstream_error", msg)
 			return
 		}
-	}
-
-	// 错误处理规则的 exhausted_action=passthrough：原样交付上游状态码与脱敏后的
-	// 上游错误。SafeErrorType/Message 缺一不可 —— 那是脱敏过的安全文本，缺了就
-	// 退回内置映射，不能把可能含凭据片段的原始上游文案透出去。
-	// 与 gateway_handler.go / openai_gateway_handler.go 的同名消费点口径一致。
-	if lastErr != nil &&
-		lastErr.ExhaustedAction == service.ErrorHandlingExhaustedActionPassthrough &&
-		lastErr.SafeErrorType != "" && lastErr.SafeErrorMessage != "" {
-		service.SetOpsUpstreamError(c, statusCode, lastErr.SafeErrorMessage, "")
-		h.chatCompletionsErrorResponse(c, statusCode, lastErr.SafeErrorType, lastErr.SafeErrorMessage)
-		return
 	}
 
 	if lastErr != nil && lastErr.IsCredentialFailure() {

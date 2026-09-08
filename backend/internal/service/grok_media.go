@@ -1258,20 +1258,6 @@ func (s *OpenAIGatewayService) handleGrokMediaErrorResponse(
 		return nil, fmt.Errorf("grok content policy rejection: %s", clientMsg)
 	}
 
-	if status, errType, errMsg, matched := applyErrorPassthroughRule(
-		c,
-		account.Platform,
-		resp.StatusCode,
-		body,
-		http.StatusBadGateway,
-		"upstream_error",
-		"Upstream request failed",
-	); matched {
-		MarkResponseCommitted(c)
-		writeGrokMediaErrorResponse(c, status, errType, errMsg)
-		return nil, fmt.Errorf("upstream error: %d (passthrough rule matched) message=%s", resp.StatusCode, upstreamMsg)
-	}
-
 	// #228 §六：video_status / video_content 查询绑定到创建任务时选中的原账号
 	// （owner binding，见 internal/handler/grok_media.go 里 ResolveGrokMediaVideoRequestAccount
 	// 的强制校验），任何情况下都不能切换账号。如果这里对这两类查询也接错误处理规则，
@@ -1287,6 +1273,13 @@ func (s *OpenAIGatewayService) handleGrokMediaErrorResponse(
 	// 把它自己的原始 endpoint 字符串转成 GrokMediaEndpoint 传进来——那些字符串不匹配
 	// IsGenerationRequest() 的任何分支，天然落在允许清单外，本任务不接线 Grok Voice
 	// （#228 task-9 范围只是图片/视频生成）。
+	//
+	// 2026-09-08 起本块排在下面的 applyErrorPassthroughRule 之前：项目所有者决定
+	// 错误处理规则引擎全链优先于错误透传规则（反转 #228 非目标），与
+	// Gemini/Antigravity/OpenAI 各自"先问规则引擎、未命中才落到共享的错误透传规则
+	// 写出点"的次序保持一致。之前是反过来（先查透传规则、命中就物理 return，规则
+	// 引擎连被问到的机会都没有）——那是唯一一处passthrough 在结构上抢在规则引擎
+	// 之前的平台，Task 12.5 一并纠正。
 	if endpoint.IsGenerationRequest() {
 		if failoverErr, handled := s.grokMediaErrorHandlingRuleOverride(ctx, c, grokMediaErrorHandlingRuleInput{
 			Account:             account,
@@ -1298,6 +1291,22 @@ func (s *OpenAIGatewayService) handleGrokMediaErrorResponse(
 		}); handled {
 			return nil, failoverErr
 		}
+	}
+
+	// 错误透传规则：只在上面的规则引擎未命中（未开启/未配置匹配规则/命中的是
+	// video_status/video_content 这类不允许接线的查询端点）时才轮到这里生效。
+	if status, errType, errMsg, matched := applyErrorPassthroughRule(
+		c,
+		account.Platform,
+		resp.StatusCode,
+		body,
+		http.StatusBadGateway,
+		"upstream_error",
+		"Upstream request failed",
+	); matched {
+		MarkResponseCommitted(c)
+		writeGrokMediaErrorResponse(c, status, errType, errMsg)
+		return nil, fmt.Errorf("upstream error: %d (passthrough rule matched) message=%s", resp.StatusCode, upstreamMsg)
 	}
 
 	if !account.ShouldHandleErrorCode(resp.StatusCode) {

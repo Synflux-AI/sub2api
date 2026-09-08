@@ -36,20 +36,26 @@ import (
 // 与 Gemini/Antigravity 侧一处共同的语义约束：
 //   - Grok media：账号记账（handleGrokAccountUpstreamError）在接线点**之前**就已经
 //     跑完（handleGrokMediaErrorResponse 函数体第一行就调用），无论内置最终判不判定
-//     failover。内置判定不 failover 的分支仍会继续走到 applyErrorPassthroughRule +
-//     writeGrokMediaErrorResponse，那里会问错误透传规则。
+//     failover。
 //
 // 所以 Grok media 侧接线必须传：
 //   - BuiltinWillFailover: s.shouldFailoverGrokUpstreamError(StatusCode, Body) 的真实
-//     结论（不能硬编码 true）——否则会把"给错误透传规则让路"这一件事也一并关掉，让
-//     本引擎在非 failover 状态码上抢走透传规则该处理的错误；
+//     结论（不能硬编码 true）——它只决定规则接管时要不要替内置补跑账号记账
+//     （AccountAccounting），跟错误透传规则无关（见下）；
 //   - AccountAccounting: nil ——记账已经跑完，执行层的 nil 保护会跳过重复扣分。
+//
+// 错误处理规则与错误透传规则的次序：2026-09-08 起规则引擎全链优先——
+// handleGrokMediaErrorResponse 里先问本函数（endpoint.IsGenerationRequest() 为真时），
+// 命中就直接返回；未命中（含未开启/未配置匹配规则/video_status·video_content 这类
+// 不允许接线的查询端点）才轮到 applyErrorPassthroughRule。历史：#228 早期这里反过来
+// （先查透传规则、命中就物理 return，规则引擎连被问到的机会都没有），已按项目所有者
+// 决定纠正。
 
 // grokMediaBuiltinOwnsError 判断这条上游错误是否归内置逻辑独占，规则不得抢走。
 //
 // 只覆盖一类：isGrokContentPolicyRejection（内容策略拒绝，通常是 403 + 特定错误码/
 // 消息）。handleGrokMediaErrorResponse 在接线点**之前**就已经对这类错误物理 return
-// （见该函数体，先问 isGrokContentPolicyRejection 再问 applyErrorPassthroughRule），
+// （见该函数体，先问 isGrokContentPolicyRejection 再问规则引擎/透传规则），
 // 规则引擎压根碰不到——这里判 true 只是双重保险，不改变已经在更早处 return 的结果。
 //
 // 审计过 grok_media.go 与 Grok failover 路径上所有会在 UpstreamFailoverError 上
@@ -130,12 +136,12 @@ type grokMediaErrorHandlingRuleInput struct {
 	ReqModel   string
 
 	// BuiltinWillFailover 必须传真实的内置分类结论
-	// （s.shouldFailoverGrokUpstreamError(StatusCode, Body)），不能硬编码 true：该字段
-	// 在执行层同时管两件事——(1) 要不要给错误透传规则让路，(2) 要不要替内置补跑账号
-	// 记账。handleGrokMediaErrorResponse 里账号记账（handleGrokAccountUpstreamError）
-	// 已经在接线点之前跑完，但内置判定不 failover 的分支仍会继续走到
-	// applyErrorPassthroughRule + writeGrokMediaErrorResponse，那里会问错误透传规则。
-	// 硬传 true 会把让路逻辑一起关掉。
+	// （s.shouldFailoverGrokUpstreamError(StatusCode, Body)），不能硬编码 true：执行层
+	// 只用它决定「规则接管时要不要替内置补跑账号记账」（AccountAccounting）——
+	// handleGrokMediaErrorResponse 里账号记账（handleGrokAccountUpstreamError）已经在
+	// 接线点之前跑完，硬传 true 只影响这一项，与错误透传规则的优先级无关（见
+	// grok_media_error_handling_rule.go 头部注释：2026-09-08 起规则引擎全链优先于
+	// 透传规则，不再有"让路"）。
 	BuiltinWillFailover bool
 
 	// SyntheticStatus 表示 StatusCode 是合成的（传输层错误没有 HTTP 响应）。只用于

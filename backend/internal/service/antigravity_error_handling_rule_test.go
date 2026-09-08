@@ -335,7 +335,10 @@ func newAntigravityMatchAllErrorPassthroughService(t *testing.T) *ErrorPassthrou
 	return svc
 }
 
-func TestAntigravityErrorHandlingRuleYieldsToPassthroughRule(t *testing.T) {
+// TestAntigravityErrorHandlingRuleWinsOverPassthroughRule 验证 2026-09-08 项目
+// 所有者的反转决定：两个机制同时命中同一个错误时，错误处理规则引擎胜出，不再像
+// 旧语义那样让路给错误透传规则（旧名 TestAntigravityErrorHandlingRuleYieldsToPassthroughRule）。
+func TestAntigravityErrorHandlingRuleWinsOverPassthroughRule(t *testing.T) {
 	svc := &AntigravityGatewayService{settingService: newAntigravityRuleSettingService(t, ErrorHandlingRule{
 		ID: "broad-400", StatusCodes: []int{400}, Action: ErrorHandlingActionPassthrough,
 		Platforms: []string{PlatformAntigravity},
@@ -343,17 +346,53 @@ func TestAntigravityErrorHandlingRuleYieldsToPassthroughRule(t *testing.T) {
 	account := antigravityRuleAccount()
 	body := []byte(`{"error":{"status":"INVALID_ARGUMENT","message":"invalid request"}}`)
 
-	c, rec := newAntigravityRuleTestContext()
+	c, _ := newAntigravityRuleTestContext()
+	// 错误透传规则也命中同一个 400——证明两者同时命中时规则引擎胜出，而不是像
+	// 旧语义那样在这个分支上让路。
 	BindErrorPassthroughService(c, newAntigravityMatchAllErrorPassthroughService(t))
-	_, handled := svc.antigravityErrorHandlingRuleOverride(context.Background(), c, antigravityErrorHandlingRuleInput{
+	failoverErr, handled := svc.antigravityErrorHandlingRuleOverride(context.Background(), c, antigravityErrorHandlingRuleInput{
 		Account: account, StatusCode: http.StatusBadRequest, Body: body, ReqModel: "claude-sonnet-4-5",
 		BuiltinWillFailover: false,
 	})
-	require.False(t, handled, "内置不换号 + 透传规则命中 ⇒ 错误处理规则让路")
+	require.True(t, handled, "两个机制同时命中时错误处理规则引擎胜出（2026-09-08 反转 #228 非目标）")
+	require.NotNil(t, failoverErr)
+	require.Equal(t, "broad-400", failoverErr.ErrorRuleID)
+	require.Equal(t, ErrorHandlingExhaustedActionPassthrough, failoverErr.ExhaustedAction)
+	require.Equal(t, NextAccountStop, failoverErr.NextAccountAction)
+	// SafeErrorType/Message 来自规则引擎自己的 safeAntigravityError（从原始上游
+	// body 里取），不是透传规则改写后的 CustomMessage："上游请求失败"——用来证明
+	// 命中的确实是规则引擎的结果，透传规则连改写的机会都没有。
+	require.Equal(t, "INVALID_ARGUMENT", failoverErr.SafeErrorType)
+	require.Equal(t, "invalid request", failoverErr.SafeErrorMessage)
 
-	// 让路之后，调用方会继续走 writeMappedClaudeError，那里才真正应用透传规则、
-	// 写出最终响应。这里直接调用它来验证最终 HTTP 状态、消息体、OpsSkipPassthroughKey
-	// 三者，而不只是 handled=false。
+	// OpsSkipPassthroughKey 只由 applyErrorPassthroughRule 置位；规则引擎胜出这条
+	// 路径从未调用它，这里必须是未置位——否则说明透传规则偷偷跑过了。
+	_, skipSet := c.Get(OpsSkipPassthroughKey)
+	require.False(t, skipSet, "规则引擎胜出时不应该经过 applyErrorPassthroughRule")
+
+	// 内置要换号的分支不受影响：不管透传规则命不命中，规则引擎该赢还是赢。
+	c2, _ := newAntigravityRuleTestContext()
+	BindErrorPassthroughService(c2, newAntigravityMatchAllErrorPassthroughService(t))
+	_, handled2 := svc.antigravityErrorHandlingRuleOverride(context.Background(), c2, antigravityErrorHandlingRuleInput{
+		Account: account, StatusCode: http.StatusBadRequest, Body: body, ReqModel: "claude-sonnet-4-5",
+		BuiltinWillFailover: true,
+	})
+	require.True(t, handled2)
+}
+
+// TestWriteMappedClaudeError_PassthroughRuleAloneStillApplies 是"透传规则单独命中
+// 仍然生效"的守护测试：svc 没有绑定 settingService，错误处理规则引擎结构性不可能
+// 命中，只有错误透传规则命中。上面的反转只改变"两者同时命中"这一种碰撞，这里必须
+// 保持原样——这条测试原本隐含在 TestAntigravityErrorHandlingRuleYieldsToPassthroughRule
+// 的第二段里，反转后单独补一个，避免把"透传规则单独生效"这条覆盖率一并反转丢了。
+func TestWriteMappedClaudeError_PassthroughRuleAloneStillApplies(t *testing.T) {
+	svc := &AntigravityGatewayService{}
+	account := antigravityRuleAccount()
+	body := []byte(`{"error":{"status":"INVALID_ARGUMENT","message":"invalid request"}}`)
+
+	c, rec := newAntigravityRuleTestContext()
+	BindErrorPassthroughService(c, newAntigravityMatchAllErrorPassthroughService(t))
+
 	_ = svc.writeMappedClaudeError(c, account, http.StatusBadRequest, "req-1", body)
 
 	require.Equal(t, http.StatusTeapot, rec.Code)
@@ -369,15 +408,6 @@ func TestAntigravityErrorHandlingRuleYieldsToPassthroughRule(t *testing.T) {
 	skip, ok := c.Get(OpsSkipPassthroughKey)
 	require.True(t, ok, "OpsSkipPassthroughKey 必须被置位，避免下游重复应用透传规则")
 	require.Equal(t, true, skip)
-
-	// 内置要换号的分支不受影响：那条分支上本来就问不到透传规则。
-	c2, _ := newAntigravityRuleTestContext()
-	BindErrorPassthroughService(c2, newAntigravityMatchAllErrorPassthroughService(t))
-	_, handled2 := svc.antigravityErrorHandlingRuleOverride(context.Background(), c2, antigravityErrorHandlingRuleInput{
-		Account: account, StatusCode: http.StatusBadRequest, Body: body, ReqModel: "claude-sonnet-4-5",
-		BuiltinWillFailover: true,
-	})
-	require.True(t, handled2)
 }
 
 // ==================== 平台过滤 ====================

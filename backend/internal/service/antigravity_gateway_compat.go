@@ -529,9 +529,10 @@ func (s *AntigravityGatewayService) writeMappedAntigravityCompatError(
 	defaultStatus := mapUpstreamStatusCode(upstreamStatus)
 	defaultMessage := getPassthroughOrDefault(message, "Upstream request failed")
 
-	// 错误透传规则优先于内置映射，也优先于错误处理规则（后者在执行层检测到透传规则
-	// 命中时会让路）。让路之后必须真的执行这条规则，否则「让路」只是把请求丢回内置
-	// 映射，两个管理台功能都不生效（#228 评审修订 §五）。
+	// 错误处理规则在标准接线点已经问过一次（forwardAntigravityCompat 等调用方，
+	// 命中就直接返回，走不到这里）。这里只在规则未命中时执行——错误透传规则优先于
+	// 内置映射，2026-09-08 起规则引擎全链优先于透传规则（反转 #228 §五），不再有
+	// "让路"这个中间态：两者同时命中时规则引擎在上面的标准接线点就已经赢了。
 	if ptStatus, ptErrType, ptErrMsg, matched := applyErrorPassthroughRule(
 		c, account.Platform, upstreamStatus, body,
 		defaultStatus, "upstream_error", defaultMessage,

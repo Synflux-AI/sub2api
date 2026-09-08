@@ -433,27 +433,68 @@ func TestOpenAIErrorHandlingRule_SyntheticStatusNotRecordedAsUpstreamStatus(t *t
 	require.Zero(t, last.UpstreamStatusCode)
 }
 
-// 「错误透传规则」优先。内置判定不换号时，原本是由 handleErrorResponse 一类的链去问
-// applyErrorPassthroughRule 并直接写响应；错误处理规则一旦接管就再也走不到那里，
-// 等于把另一个管理台功能无声关掉。
-func TestOpenAIErrorHandlingRule_YieldsToErrorPassthroughRule(t *testing.T) {
+// 「错误处理规则」优先（2026-09-08 项目所有者反转 #228 非目标，旧名
+// TestOpenAIErrorHandlingRule_YieldsToErrorPassthroughRule）。两个机制同时命中
+// 同一个错误时规则引擎胜出：openai_gateway_forward.go 里 ruleHandled=true 会
+// 直接 return ruleErr，生产路径上根本不会再调用 handleErrorResponse——所以这里
+// 不能再像旧版那样直接调用 handleErrorResponse 来模拟"真实写路径"，那条调用在
+// 规则命中后已经是生产不可达路径了。改为断言 openAIErrorHandlingRuleOverride
+// 返回的 *UpstreamFailoverError 本身：ExhaustedAction/SafeErrorType/
+// SafeErrorMessage/NextAccountAction 都是规则引擎自己算出来的，而不是透传规则
+// 改写过的 CustomMessage；并确认 OpsSkipPassthroughKey 未被置位，证明
+// applyErrorPassthroughRule 从未被调用到。
+func TestOpenAIErrorHandlingRule_WinsOverErrorPassthroughRule(t *testing.T) {
 	svc := newOpenAIRuleService(t, nil, ErrorHandlingRule{
 		ID: "broad-400", StatusCodes: []int{400}, Action: ErrorHandlingActionPassthrough,
 		Platforms: []string{PlatformOpenAI},
 	})
 	body := []byte(`{"error":{"message":"invalid request"}}`)
 
-	c, rec := newOpenAITransportErrTestContext()
+	c, _ := newOpenAITransportErrTestContext()
+	// 错误透传规则也命中同一个 400——用来证明两者同时命中时规则引擎胜出。
 	BindErrorPassthroughService(c, newMatchAllErrorPassthroughService(t))
-	_, handled := svc.openAIErrorHandlingRuleOverride(context.Background(), c, openAIErrorHandlingRuleInput{
+	failoverErr, handled := svc.openAIErrorHandlingRuleOverride(context.Background(), c, openAIErrorHandlingRuleInput{
 		Account: openAIRuleAccount(), StatusCode: http.StatusBadRequest, Body: body, ReqModel: "gpt-4o",
 	})
-	require.False(t, handled, "内置不换号 + 透传规则命中 ⇒ 错误处理规则让路")
+	require.True(t, handled, "两个机制同时命中时错误处理规则引擎胜出（2026-09-08 反转 #228 非目标）")
+	require.NotNil(t, failoverErr)
+	require.Equal(t, "broad-400", failoverErr.ErrorRuleID)
+	require.Equal(t, ErrorHandlingExhaustedActionPassthrough, failoverErr.ExhaustedAction)
+	require.Equal(t, NextAccountStop, failoverErr.NextAccountAction)
+	// SafeErrorType/Message 来自规则引擎自己的 safeOpenAIError（从原始上游 body 里
+	// 取），不是透传规则改写后的 CustomMessage："上游请求失败"——证明命中的确实是
+	// 规则引擎的结果，透传规则连改写的机会都没有。
+	require.Equal(t, "upstream_error", failoverErr.SafeErrorType)
+	require.Equal(t, "invalid request", failoverErr.SafeErrorMessage)
 
-	// 让路之后，调用方会继续走 handleErrorResponse（openai_gateway_upstream_errors.go），
-	// 那里才真正应用透传规则、写出最终响应。#228 task-12 复核指出：只断言 handled=false
-	// 达不到 Step 3 的验收标准（必须断言最终 HTTP 状态码、响应消息、
-	// OpsSkipPassthroughKey），这里直接调用它来补齐这三个断言，而不只是内部布尔值。
+	// OpsSkipPassthroughKey 只由 applyErrorPassthroughRule 置位；规则引擎胜出这条
+	// 路径从未调用它，这里必须是未置位——否则说明透传规则偷偷跑过了。
+	_, skipSet := c.Get(OpsSkipPassthroughKey)
+	require.False(t, skipSet, "规则引擎胜出时不应该经过 applyErrorPassthroughRule")
+
+	// 内置要换号的分支不受影响：不管透传规则命不命中，规则引擎该赢还是赢。
+	c2, _ := newOpenAITransportErrTestContext()
+	BindErrorPassthroughService(c2, newMatchAllErrorPassthroughService(t))
+	_, handled2 := svc.openAIErrorHandlingRuleOverride(context.Background(), c2, openAIErrorHandlingRuleInput{
+		Account: openAIRuleAccount(), StatusCode: http.StatusBadRequest, Body: body, ReqModel: "gpt-4o",
+		BuiltinWillFailover: true,
+	})
+	require.True(t, handled2)
+}
+
+// TestOpenAIHandleErrorResponse_PassthroughRuleAloneStillApplies 是"透传规则单独
+// 命中仍然生效"的守护测试：svc 没有绑定 settingService，错误处理规则引擎结构性
+// 不可能命中（openAIErrorHandlingRulesActive 早退出），handleErrorResponse 的
+// applyErrorPassthroughRule 调用是唯一活跃的机制。上面的反转只改变"两者同时命中"
+// 这一种碰撞，这条覆盖率原本隐含在旧版 Yields 测试的 end-to-end 部分里，反转后
+// 单独补一个，避免连带丢掉。
+func TestOpenAIHandleErrorResponse_PassthroughRuleAloneStillApplies(t *testing.T) {
+	svc := &OpenAIGatewayService{}
+	body := []byte(`{"error":{"message":"invalid request"}}`)
+
+	c, rec := newOpenAITransportErrTestContext()
+	BindErrorPassthroughService(c, newMatchAllErrorPassthroughService(t))
+
 	resp := &http.Response{
 		StatusCode: http.StatusBadRequest,
 		Header:     http.Header{"Content-Type": []string{"application/json"}},
@@ -475,13 +516,4 @@ func TestOpenAIErrorHandlingRule_YieldsToErrorPassthroughRule(t *testing.T) {
 	skip, ok := c.Get(OpsSkipPassthroughKey)
 	require.True(t, ok, "OpsSkipPassthroughKey 必须被置位，避免下游重复应用透传规则")
 	require.Equal(t, true, skip)
-
-	// 内置要换号的分支不受影响：那条分支上本来就问不到透传规则。
-	c2, _ := newOpenAITransportErrTestContext()
-	BindErrorPassthroughService(c2, newMatchAllErrorPassthroughService(t))
-	_, handled2 := svc.openAIErrorHandlingRuleOverride(context.Background(), c2, openAIErrorHandlingRuleInput{
-		Account: openAIRuleAccount(), StatusCode: http.StatusBadRequest, Body: body, ReqModel: "gpt-4o",
-		BuiltinWillFailover: true,
-	})
-	require.True(t, handled2)
 }

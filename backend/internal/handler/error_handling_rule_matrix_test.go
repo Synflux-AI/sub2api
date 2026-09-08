@@ -134,10 +134,14 @@ func TestErrorHandlingRuleMatrix_ChatCompletions(t *testing.T) {
 		matrixAssertTestExists(t, ".",
 			"TestHandleCCFailoverExhaustedHonorsRulePassthrough",
 			"TestHandleCCFailoverExhaustedWithoutRuleKeepsGenericError", // miss
-			// 这条顺带证明了 CC 这一行的 exhausted passthrough 与管理端错误透传规则
-			// 的优先级是**正确**的（透传规则赢）——与 service 层发现的 Anthropic
-			// Messages 那个反向优先级缺口形成对照，值得在矩阵里显式点出这个差异。
-			"TestHandleCCFailoverExhaustedErrorPassthroughRuleWinsOverRuleEngine",
+			// 2026-09-08 项目所有者反转 #228 非目标：两个机制同时命中时错误处理
+			// 规则引擎胜出（旧名 …ErrorPassthroughRuleWinsOverRuleEngine，旧语义
+			// 正相反——那时是透传规则赢）。CC 这一行现在与其它平台的接线次序
+			// 一致，不再是唯一的反向优先级实现。
+			"TestHandleCCFailoverExhaustedRuleEngineWinsOverErrorPassthroughRule",
+			// 同时命中之外，"只有透传规则命中"这条独立分支必须继续被覆盖，
+			// 否则上面的反转会连带丢掉"透传规则单独生效"的回归保护。
+			"TestHandleCCFailoverExhaustedErrorPassthroughRuleAloneStillApplies",
 		)
 	})
 }

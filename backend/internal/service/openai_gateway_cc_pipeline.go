@@ -105,7 +105,8 @@ func (s *OpenAIGatewayService) failoverOpenAIUpstreamHTTPError(
 	// 接一次就够。未命中时 ruleHandled=false，下面一行行为不变。
 	//
 	// 位置在 shouldFailover 定稿之后：规则要知道内置的最终结论，才能在「内置不换号」
-	// 的分支上替内置补跑账号记账、并给「错误透传规则」让路。
+	// 的分支上替内置补跑账号记账。与错误透传规则的优先级无关：2026-09-08 起规则引擎
+	// 全链优先于透传规则，不再有"让路"（见 error_handling_rule_executor.go）。
 	ruleErr, ruleHandled := s.openAIErrorHandlingRuleOverride(ctx, c, openAIErrorHandlingRuleInput{
 		Account: account, StatusCode: resp.StatusCode, Header: resp.Header, Body: respBody,
 		ReqModel: upstreamModel, BuiltinWillFailover: shouldFailover,

@@ -123,7 +123,10 @@ type openAIErrorHandlingRuleInput struct {
 	// BuiltinWillFailover 是内置分类的结论（shouldFailoverOpenAIUpstreamResponse 的
 	// 最终值）。不参与匹配，只决定「规则接管时要替内置补跑什么」：内置判定不换号时，
 	// 调用方拿到非 nil 错误就会早退，从而跳过 handleErrorResponse /
-	// handleOpenAIImagesErrorResponse 这条链 —— 那条链里有两件不能丢的事，见下。
+	// handleOpenAIImagesErrorResponse 这条链 —— 那条链里唯一必须补的是账号侧记账
+	// （executor 层 AccountAccounting 消费点）。2026-09-08 起规则引擎全链优先于错误
+	// 透传规则，这条链里的透传规则查询不再需要补——规则引擎胜出时它本来就不该被
+	// 问到。
 	BuiltinWillFailover bool
 
 	// SyntheticStatus 表示 StatusCode 是合成的（传输层错误没有 HTTP 响应，喂给引擎
@@ -192,8 +195,9 @@ func (s *OpenAIGatewayService) openAITransportErrorRuleOverride(
 		Header:     http.Header{},
 		Body:       body,
 		// 传输层失败上，内置只有「一律 failover」一种意见，没有「本地写响应」那条链，
-		// 所以按 BuiltinWillFailover=true 传：不必替内置补记账，也不该给透传规则让路
-		// （透传规则匹配的是真实的上游响应，这里的 502 是合成的）。
+		// 所以按 BuiltinWillFailover=true 传：不必替内置补记账。错误透传规则在这条
+		// 路径上也问不到：透传规则匹配的是真实的上游响应，这里的 502 是合成的（与
+		// "规则引擎优先于透传规则"的口径无关）。
 		BuiltinWillFailover: true,
 		SyntheticStatus:     true,
 	})

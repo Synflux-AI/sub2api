@@ -185,7 +185,12 @@ func (f *fakeErrorPassthroughRepo) Delete(ctx context.Context, id int64) error {
 
 // 错误处理规则的 exhausted_action=passthrough 不能越过管理员显式配置的错误透传规则。
 // 两者都命中时，错误透传规则（老机制）必须赢，且 skip_monitoring 要落地。
-func TestHandleCCFailoverExhaustedErrorPassthroughRuleWinsOverRuleEngine(t *testing.T) {
+// TestHandleCCFailoverExhaustedRuleEngineWinsOverErrorPassthroughRule 验证
+// 2026-09-08 项目所有者的反转决定：两个机制同时命中同一个错误时，错误处理规则
+// 引擎的 exhausted_action=passthrough 优先于错误透传规则（旧名
+// TestHandleCCFailoverExhaustedErrorPassthroughRuleWinsOverRuleEngine，旧语义
+// 正相反）。
+func TestHandleCCFailoverExhaustedRuleEngineWinsOverErrorPassthroughRule(t *testing.T) {
 	customMessage := "passthrough rule wins"
 	responseCode := http.StatusConflict
 	rule := &model.ErrorPassthroughRule{
@@ -217,8 +222,70 @@ func TestHandleCCFailoverExhaustedErrorPassthroughRuleWinsOverRuleEngine(t *test
 
 	h.handleCCFailoverExhausted(c, failoverErr, service.PlatformOpenAI, false)
 
+	// 规则引擎胜出：状态码与消息来自 failoverErr 自身（规则引擎算出来的
+	// StatusCode/SafeErrorType/SafeErrorMessage），不是错误透传规则的
+	// response_code/custom_message。
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected rule engine's upstream status %d to win, got %d body=%s", http.StatusTooManyRequests, rec.Code, rec.Body.String())
+	}
+	var payload struct {
+		Error struct {
+			Type    string `json:"type"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("response is not CC-shaped JSON: %v body=%s", err, rec.Body.String())
+	}
+	if payload.Error.Type != "rate_limit_error" || payload.Error.Message != "upstream rate limited" {
+		t.Fatalf("expected SafeErrorType/SafeErrorMessage to win over the error-passthrough rule's custom_message, got %+v", payload.Error)
+	}
+	if payload.Error.Message == customMessage {
+		t.Fatal("error-passthrough rule's custom_message leaked through — rule engine should have won")
+	}
+	if _, exists := c.Get(service.OpsSkipPassthroughKey); exists {
+		t.Fatal("OpsSkipPassthroughKey must not be set — the error-passthrough rule should never be consulted when the rule engine wins")
+	}
+}
+
+// TestHandleCCFailoverExhaustedErrorPassthroughRuleAloneStillApplies 是"透传规则
+// 单独命中仍然生效"的守护测试：failoverErr 没有 ExhaustedAction=passthrough
+// （规则引擎结构性不可能在这条分支命中），只有 errorPassthroughService 命中。
+// 上面的反转只改变"两者同时命中"这一种碰撞，这条覆盖率此前从未独立存在过（旧版
+// WinsOverRuleEngine 测试里两个机制永远同时配置），必须补一个只有透传规则单独
+// 生效的用例，证明顺序反转没有连带破坏它。
+func TestHandleCCFailoverExhaustedErrorPassthroughRuleAloneStillApplies(t *testing.T) {
+	customMessage := "passthrough rule wins"
+	responseCode := http.StatusConflict
+	rule := &model.ErrorPassthroughRule{
+		ID:              1,
+		Name:            "test-priority-rule",
+		Enabled:         true,
+		Priority:        1,
+		ErrorCodes:      []int{http.StatusTooManyRequests},
+		Platforms:       []string{model.PlatformOpenAI},
+		MatchMode:       model.MatchModeAny,
+		PassthroughCode: false,
+		ResponseCode:    &responseCode,
+		PassthroughBody: false,
+		CustomMessage:   &customMessage,
+		SkipMonitoring:  true,
+	}
+	svc := service.NewErrorPassthroughService(&fakeErrorPassthroughRepo{rules: []*model.ErrorPassthroughRule{rule}}, nil)
+
+	c, rec := newExhaustedTestContext()
+	h := &GatewayHandler{errorPassthroughService: svc}
+
+	// 没有任何错误处理规则命中（ExhaustedAction 为空），只有错误透传规则命中。
+	failoverErr := &service.UpstreamFailoverError{
+		StatusCode:   http.StatusTooManyRequests,
+		ResponseBody: []byte(`{"error":"rate limited upstream, do not leak this"}`),
+	}
+
+	h.handleCCFailoverExhausted(c, failoverErr, service.PlatformOpenAI, false)
+
 	if rec.Code != responseCode {
-		t.Fatalf("expected error-passthrough rule's response_code %d to win, got %d body=%s", responseCode, rec.Code, rec.Body.String())
+		t.Fatalf("expected error-passthrough rule's response_code %d to apply, got %d body=%s", responseCode, rec.Code, rec.Body.String())
 	}
 	var payload struct {
 		Error struct {
@@ -230,7 +297,7 @@ func TestHandleCCFailoverExhaustedErrorPassthroughRuleWinsOverRuleEngine(t *test
 		t.Fatalf("response is not CC-shaped JSON: %v body=%s", err, rec.Body.String())
 	}
 	if payload.Error.Message != customMessage {
-		t.Fatalf("expected error-passthrough rule's custom_message to win over SafeErrorMessage, got %+v", payload.Error)
+		t.Fatalf("expected error-passthrough rule's custom_message to apply, got %+v", payload.Error)
 	}
 	if _, exists := c.Get(service.OpsSkipPassthroughKey); !exists {
 		t.Fatal("expected skip_monitoring=true rule to set OpsSkipPassthroughKey")

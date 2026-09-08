@@ -423,7 +423,8 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 			// #228 task-8：错误处理规则引擎接线点。isGoogleProjectConfigError 的 400
 			// 特判已经在上面 return 掉了确定性的配置错误，规则引擎压根碰不到那类错误；
 			// 这里问的是剩下的所有错误。BuiltinWillFailover 传真实分类结论，不硬编码
-			// true——否则会把「给错误透传规则让路」这件事也一并关掉。
+			// true——它只决定「规则接管时要不要替内置补跑账号记账」，与错误透传规则的
+			// 优先级无关（2026-09-08 起规则引擎全链优先，不再有"让路"）。
 			if failoverErr, handled := s.antigravityErrorHandlingRuleOverride(ctx, c, antigravityErrorHandlingRuleInput{
 				Account:             account,
 				StatusCode:          resp.StatusCode,

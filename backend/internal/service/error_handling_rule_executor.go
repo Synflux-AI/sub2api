@@ -38,7 +38,10 @@ type errorHandlingRuleExecInput struct {
 
 	// BuiltinWillFailover 是内置分类的结论。不参与匹配，只决定「规则接管时要替内置
 	// 补跑什么」：内置判定不换号时，调用方拿到非 nil 错误就会早退，从而跳过内置的
-	// 错误处理链 —— 那条链里的账号记账与透传规则查询必须在这里补。
+	// 错误处理链 —— 那条链里唯一必须在这里补的是账号侧记账（见下面的
+	// AccountAccounting 消费点）。2026-09-08 起规则引擎全链优先于错误透传规则
+	// （反转 #228 非目标），透传规则查询不再是「需要补」的东西——规则引擎胜出时
+	// 透传规则本来就不该被问到，这里不补它，是有意为之。
 	BuiltinWillFailover bool
 
 	// SyntheticStatus 表示 StatusCode 是合成的（传输层错误没有 HTTP 响应）。
@@ -76,14 +79,15 @@ func executeErrorHandlingRule(c *gin.Context, in errorHandlingRuleExecInput) (*U
 		respHeader = http.Header{}
 	}
 
-	// 「错误透传规则」优先。内置判定不换号时，本来是由内置错误处理链去问
-	// applyErrorPassthroughRule 并直接写响应的；错误处理规则一旦接管就再也走不到
-	// 那里，等于把另一个管理台功能无声关掉。两个功能语义重叠（都能「原样返回上游
-	// 错误」），且透传规则是更专用、更早存在的那个，所以它匹配上时本引擎让路。
-	// 内置要换号的分支不受影响：那条分支上本来就问不到透传规则。
-	if !in.BuiltinWillFailover && errorPassthroughRuleMatches(c, account.Platform, in.StatusCode, in.Body) {
-		return nil, false
-	}
+	// 「错误处理规则」优先于「错误透传规则」。两个功能语义重叠（都能「原样返回上游
+	// 错误」），而错误处理规则是挂在具体命中规则上的显式动作（含 exhausted_action），
+	// 比透传规则那层更具体，所以两者同时命中时本引擎胜出。
+	//
+	// 没有任何规则命中时（handled=false），调用方原路走到平台自己的
+	// applyErrorPassthroughRule 落点，透传规则照旧生效 —— 变的只是「同时命中」这一种碰撞。
+	//
+	// 历史：#189/#228 早期口径相反（透传规则优先，本处曾有一个让路分支）。2026-09-08 按
+	// 项目所有者决定改为规则引擎优先，issue #228 里「透传规则仍优先」的非目标随之作废。
 
 	decision := decideErrorHandlingRuleFrom(errorHandlingRuleDeciderInput{
 		Settings:   in.Settings,

@@ -253,7 +253,10 @@ func newGeminiMatchAllErrorPassthroughService(t *testing.T) *ErrorPassthroughSer
 	return svc
 }
 
-func TestGeminiErrorHandlingRuleYieldsToPassthroughRule(t *testing.T) {
+// TestGeminiErrorHandlingRuleWinsOverPassthroughRule 验证 2026-09-08 项目所有者
+// 的反转决定：两个机制同时命中同一个错误时错误处理规则引擎胜出（旧名
+// TestGeminiErrorHandlingRuleYieldsToPassthroughRule）。
+func TestGeminiErrorHandlingRuleWinsOverPassthroughRule(t *testing.T) {
 	svc := newGeminiRuleService(t, nil, ErrorHandlingRule{
 		ID: "broad-400", StatusCodes: []int{400}, Action: ErrorHandlingActionPassthrough,
 		Platforms: []string{PlatformGemini},
@@ -261,17 +264,50 @@ func TestGeminiErrorHandlingRuleYieldsToPassthroughRule(t *testing.T) {
 	account := geminiRuleAccount()
 	body := []byte(`{"error":{"status":"INVALID_ARGUMENT","message":"invalid request"}}`)
 
-	c, rec := newGeminiRuleTestContext()
+	c, _ := newGeminiRuleTestContext()
+	// 错误透传规则也命中同一个 400——证明两者同时命中时规则引擎胜出。
 	BindErrorPassthroughService(c, newGeminiMatchAllErrorPassthroughService(t))
-	_, handled := svc.geminiErrorHandlingRuleOverride(context.Background(), c, geminiErrorHandlingRuleInput{
+	failoverErr, handled := svc.geminiErrorHandlingRuleOverride(context.Background(), c, geminiErrorHandlingRuleInput{
 		Account: account, StatusCode: http.StatusBadRequest, Body: body, ReqModel: "gemini-2.5-pro",
 		BuiltinWillFailover: false,
 	})
-	require.False(t, handled, "内置不换号 + 透传规则命中 ⇒ 错误处理规则让路")
+	require.True(t, handled, "两个机制同时命中时错误处理规则引擎胜出（2026-09-08 反转 #228 非目标）")
+	require.NotNil(t, failoverErr)
+	require.Equal(t, "broad-400", failoverErr.ErrorRuleID)
+	require.Equal(t, ErrorHandlingExhaustedActionPassthrough, failoverErr.ExhaustedAction)
+	require.Equal(t, NextAccountStop, failoverErr.NextAccountAction)
+	// SafeErrorType/Message 来自规则引擎自己的 safeGeminiError（从原始上游 body
+	// 里取），不是透传规则改写后的 CustomMessage："上游请求失败"。
+	require.Equal(t, "INVALID_ARGUMENT", failoverErr.SafeErrorType)
+	require.Equal(t, "invalid request", failoverErr.SafeErrorMessage)
 
-	// 让路之后，调用方会继续走 writeGeminiMappedError，那里才真正应用透传规则、
-	// 写出最终响应。这里直接调用它来验证最终 HTTP 状态、消息体、OpsSkipPassthroughKey
-	// 三者，而不只是 handled=false。
+	// OpsSkipPassthroughKey 只由 applyErrorPassthroughRule 置位；规则引擎胜出这条
+	// 路径从未调用它。
+	_, skipSet := c.Get(OpsSkipPassthroughKey)
+	require.False(t, skipSet, "规则引擎胜出时不应该经过 applyErrorPassthroughRule")
+
+	// 内置要换号的分支不受影响：不管透传规则命不命中，规则引擎该赢还是赢。
+	c2, _ := newGeminiRuleTestContext()
+	BindErrorPassthroughService(c2, newGeminiMatchAllErrorPassthroughService(t))
+	_, handled2 := svc.geminiErrorHandlingRuleOverride(context.Background(), c2, geminiErrorHandlingRuleInput{
+		Account: account, StatusCode: http.StatusBadRequest, Body: body, ReqModel: "gemini-2.5-pro",
+		BuiltinWillFailover: true,
+	})
+	require.True(t, handled2)
+}
+
+// TestWriteGeminiMappedError_PassthroughRuleAloneStillApplies 是"透传规则单独命中
+// 仍然生效"的守护测试：svc 没有绑定 settingService，规则引擎结构性不可能命中，
+// 只有错误透传规则命中。这条覆盖率原本隐含在旧版 Yields 测试的 end-to-end 部分
+// 里，反转后单独补一个，避免连带丢掉。
+func TestWriteGeminiMappedError_PassthroughRuleAloneStillApplies(t *testing.T) {
+	svc := &GeminiMessagesCompatService{}
+	account := geminiRuleAccount()
+	body := []byte(`{"error":{"status":"INVALID_ARGUMENT","message":"invalid request"}}`)
+
+	c, rec := newGeminiRuleTestContext()
+	BindErrorPassthroughService(c, newGeminiMatchAllErrorPassthroughService(t))
+
 	_ = svc.writeGeminiMappedError(c, account, http.StatusBadRequest, "req-1", body)
 
 	require.Equal(t, http.StatusTeapot, rec.Code)
@@ -287,15 +323,6 @@ func TestGeminiErrorHandlingRuleYieldsToPassthroughRule(t *testing.T) {
 	skip, ok := c.Get(OpsSkipPassthroughKey)
 	require.True(t, ok, "OpsSkipPassthroughKey 必须被置位，避免下游重复应用透传规则")
 	require.Equal(t, true, skip)
-
-	// 内置要换号的分支不受影响：那条分支上本来就问不到透传规则。
-	c2, _ := newGeminiRuleTestContext()
-	BindErrorPassthroughService(c2, newGeminiMatchAllErrorPassthroughService(t))
-	_, handled2 := svc.geminiErrorHandlingRuleOverride(context.Background(), c2, geminiErrorHandlingRuleInput{
-		Account: account, StatusCode: http.StatusBadRequest, Body: body, ReqModel: "gemini-2.5-pro",
-		BuiltinWillFailover: true,
-	})
-	require.True(t, handled2)
 }
 
 // ==================== #228 task-10：传输层错误合成 502 ====================
