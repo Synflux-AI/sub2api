@@ -77,10 +77,15 @@ import (
 //     没有调用 TempUnscheduleRetryableError，也不会调 ShouldReportAccountScheduleFailure
 //     以外的字段消费点，所以规则接管后失去这个字段只影响重试节奏，不影响归因/文案/
 //     健康分——不是 openAIBuiltinOwnsError 文档里点名的那一类"typed 字段被顶掉造成
-//     误判"的伤害。SameAccountRetryMax 同理：effectiveSameAccountRetryLimit 已经把
-//     RuleRetryLimit（规则显式配的）设计成优先于 SameAccountRetryMax（错误自带的硬
-//     上限）——一条管理台规则显式配了重试预算，本来就该覆盖 Grok 容量类错误的默认
-//     上限，这是既有设计，不是本任务需要防的漂移。
+//     误判"的伤害。SameAccountRetryMax 同理，但原因不是"effectiveSameAccountRetryLimit
+//     把 RuleRetryLimit 设计成优先于 SameAccountRetryMax"这种一般性优先级论证——
+//     真正的原因是 executeErrorHandlingRule（error_handling_rule_executor.go）在
+//     execAction==Retry 时构造的是一个全新的 UpstreamFailoverError，只填
+//     RuleRetryLimit，从来不填 SameAccountRetryMax（该字段在执行层里始终是零值）。
+//     所以在 Grok media 这条路径上根本不存在"两个字段谁压过谁"的竞争：
+//     effectiveSameAccountRetryLimit（internal/handler/failover_loop.go:135-147）
+//     先查 RuleRetryLimit 非 nil 就直接返回，走不到下面比较 SameAccountRetryMax 的
+//     分支时，SameAccountRetryMax 本来就是 0，比不比较结果都一样。
 //
 // 保持窄：只处理这一种确定性错误，不要顺手加别的条件——新分支需要新的证据。
 func grokMediaBuiltinOwnsError(statusCode int, upstreamMsg string, respBody []byte) bool {
@@ -151,7 +156,12 @@ type grokMediaErrorHandlingRuleInput struct {
 	// 引擎，恒为 false；Grok media 传输层错误（请求发送失败）走的是
 	// handleOpenAIUpstreamTransportError（与 OpenAI/Chat Completions/Responses 共用
 	// 同一个函数体，自己合成 502 并设置 SyntheticStatus），#228 task-13 打开
-	// openAIErrorHandlingRulesActive 的平台闸门后已经生效，不再是缺口。
+	// openAIErrorHandlingRulesActive 的平台闸门后已经生效——但只对生成端点生效。
+	// video_status（ForwardGrokMedia 里 GET 状态请求）与 video_content（
+	// forwardGrokMediaVideoContent 内部的状态+内容两次请求）在传输层同样按 owner
+	// binding 排除：grok_media.go 的三个 handleOpenAIUpstreamTransportErrorWithURL
+	// 调用点分别传 endpoint.IsGenerationRequest() / false / false 作为 ruleEligible，
+	// 与本文件、HTTP 响应侧的允许清单保持同一形状（详见该函数的调用点注释）。
 	SyntheticStatus bool
 }
 
@@ -191,7 +201,6 @@ func (s *OpenAIGatewayService) grokMediaErrorHandlingRuleOverride(
 		StatusCode:          statusCode,
 		Header:              respHeader,
 		Body:                respBody,
-		ReqModel:            in.ReqModel,
 		BuiltinOwns:         grokMediaBuiltinOwnsError(statusCode, upstreamMsg, respBody),
 		BuiltinWillFailover: in.BuiltinWillFailover,
 		SyntheticStatus:     in.SyntheticStatus,

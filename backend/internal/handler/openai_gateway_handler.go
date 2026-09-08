@@ -1577,7 +1577,14 @@ func (h *OpenAIGatewayHandler) handleAnthropicFailoverExhausted(c *gin.Context, 
 	if failoverErr != nil &&
 		failoverErr.ExhaustedAction == service.ErrorHandlingExhaustedActionPassthrough &&
 		failoverErr.SafeErrorType != "" && failoverErr.SafeErrorMessage != "" {
-		service.SetOpsUpstreamError(c, failoverErr.StatusCode, failoverErr.SafeErrorMessage, "")
+		// failoverErr.SyntheticStatus 为真时 failoverErr.StatusCode 是传输层/流中断
+		// 合成的虚拟 502，没有真实上游响应：传 0 让 ops_error_logs.upstream_status_code
+		// 保持 NULL，不动下面 anthropicStreamingAwareError 用的客户端响应状态码。
+		opsStatusCode := failoverErr.StatusCode
+		if failoverErr.SyntheticStatus {
+			opsStatusCode = 0
+		}
+		service.SetOpsUpstreamError(c, opsStatusCode, failoverErr.SafeErrorMessage, "")
 		h.anthropicStreamingAwareError(
 			c,
 			failoverErr.StatusCode,
@@ -3331,7 +3338,14 @@ func (h *OpenAIGatewayHandler) handleFailoverExhausted(c *gin.Context, failoverE
 	// 绝不把裸上游响应体吐给客户端。
 	if failoverErr.ExhaustedAction == service.ErrorHandlingExhaustedActionPassthrough &&
 		failoverErr.SafeErrorType != "" && failoverErr.SafeErrorMessage != "" {
-		service.SetOpsUpstreamError(c, failoverErr.StatusCode, failoverErr.SafeErrorMessage, "")
+		// failoverErr.SyntheticStatus 为真时 failoverErr.StatusCode 是传输层/流中断
+		// 合成的虚拟 502，没有真实上游响应：传 0 让 ops_error_logs.upstream_status_code
+		// 保持 NULL，不动下面 handleStreamingAwareError 用的客户端响应状态码。
+		opsStatusCode := failoverErr.StatusCode
+		if failoverErr.SyntheticStatus {
+			opsStatusCode = 0
+		}
+		service.SetOpsUpstreamError(c, opsStatusCode, failoverErr.SafeErrorMessage, "")
 		h.handleStreamingAwareError(
 			c,
 			failoverErr.StatusCode,

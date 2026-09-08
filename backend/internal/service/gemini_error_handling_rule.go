@@ -158,7 +158,6 @@ func (s *GeminiMessagesCompatService) geminiErrorHandlingRuleOverride(
 		StatusCode:          statusCode,
 		Header:              respHeader,
 		Body:                respBody,
-		ReqModel:            in.ReqModel,
 		BuiltinOwns:         geminiBuiltinOwnsError(statusCode, lowerMsg, respBody),
 		BuiltinWillFailover: in.BuiltinWillFailover,
 		SyntheticStatus:     in.SyntheticStatus,

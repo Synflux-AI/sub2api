@@ -1062,7 +1062,7 @@ export default {
       errorHandlingRule: {
         title: '错误处理规则',
         description:
-          '按状态码和/或关键字匹配上游错误响应，命中后按配置的动作处理。每条规则按「适用平台」生效，目前支持 Anthropic 与 OpenAI。换任何账号都会复现的确定性错误（如 prompt is too long、max_tokens 超限），建议配成「直接返回客户端」，避免空耗重试预算直至账号池耗尽。',
+          '按状态码和/或关键字匹配上游错误响应，命中后按配置的动作处理。每条规则按下方勾选的「适用平台」生效。换任何账号都会复现的确定性错误（如 prompt is too long、max_tokens 超限），建议配成「直接返回客户端」，避免空耗重试预算直至账号池耗尽。',
         platforms: '适用平台',
         platformsHint:
           '至少勾选一个；「全平台」请把所有平台都勾上。存量规则未配置此项时按仅 Anthropic 处理。',

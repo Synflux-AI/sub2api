@@ -263,6 +263,93 @@ func TestOpenAIBuiltinOwnsError(t *testing.T) {
 	}
 }
 
+// Grok 内容策略拒绝同样归内置：文本推理走 OpenAIGatewayService（openai / grok /
+// kimi / zhipu / deepseek 共同宿主），三道平台闸门打开之前 Platform=grok 从未到达
+// 这里，isGrokContentPolicyRejection 这一条独占分支因此补在 openAIBuiltinOwnsError
+// 里而不是在更早的物理 return——grok media 侧的 grokMediaBuiltinOwnsError 已经有
+// 同一条判据，这里是"双保险"两端对齐，不是重复。
+func TestOpenAIBuiltinOwnsError_GrokContentPolicyRejection(t *testing.T) {
+	grokAccount := grokMediaRuleAccount()
+	contentPolicyBody := []byte(`{"error":{"code":"new_sensitive","message":"image is sensitive"}}`)
+
+	require.True(t, openAIBuiltinOwnsError(http.StatusForbidden, "image is sensitive", contentPolicyBody, grokAccount),
+		"Grok 内容策略拒绝必须归内置独占，否则一条宽泛的 403 规则会把它接管")
+
+	// 同样的 403，但 body 不是内容策略拒绝时规则仍可覆盖——不能把整个 Grok 403 都锁死。
+	notContentPolicyBody := []byte(`{"error":{"code":"forbidden","message":"some other reason"}}`)
+	require.False(t, openAIBuiltinOwnsError(http.StatusForbidden, "some other reason", notContentPolicyBody, grokAccount))
+
+	// 非 Grok 账号即便 body 长得像内容策略拒绝也不受影响：判据里显式挂了平台条件。
+	require.False(t, openAIBuiltinOwnsError(http.StatusForbidden, "image is sensitive", contentPolicyBody, openAIRuleAccount()))
+}
+
+// 端到端钉住测试：一条完全合理的「403 → 换号」规则（管理员视角，403 通常意味着鉴权
+// 失败）打到 Grok 平台上时，不得接管内容策略拒绝——否则每一条被拒的用户 prompt 都会
+// 扫空整个 Grok 账号池（同一个确定性错误在任何账号上都复现），客户端还会丢失专用的
+// 403 invalid_request_error + grokContentPolicyClientMessage 文案，换成规则引擎的
+// 通用耗尽错误。这条测试驱动的是真实调用序列
+// （failoverOpenAIUpstreamHTTPError → handleErrorResponse，见
+// openai_gateway_chat_completions.go:389-391 的实际接线），而不是单独调用
+// openAIBuiltinOwnsError，用来证明"没有更早的物理 return 能救它"这条结论在集成层面
+// 同样成立。
+func TestOpenAIErrorHandlingRule_GrokContentPolicyRejectionBypassesEngine(t *testing.T) {
+	svc := newOpenAIRuleService(t, nil, ErrorHandlingRule{
+		ID: "broad-403-failover", Name: "403 换号",
+		StatusCodes: []int{403}, Action: ErrorHandlingActionFailover,
+		Platforms: []string{PlatformGrok},
+	})
+	svc.accountRepo = &grokQuotaAccountRepo{}
+	account := grokMediaRuleAccount()
+	body := []byte(`{"error":{"code":"new_sensitive","message":"image is sensitive"}}`)
+	c, rec := newGrokMediaRuleTestContext()
+
+	resp := &http.Response{
+		StatusCode: http.StatusForbidden,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(bytes.NewReader(body)),
+	}
+
+	// 第一步：failoverOpenAIUpstreamHTTPError 是规则引擎在文本推理路径上的接线点。
+	// 内置结论是不换号（isGrokContentPolicyRejection → shouldFailoverGrokUpstreamError
+	// 恒 false），规则引擎必须尊重 BuiltinOwns、报告未命中，调用方才会继续走到
+	// handleErrorResponse 的专用分支。
+	foErr := svc.failoverOpenAIUpstreamHTTPError(context.Background(), c, account, resp,
+		body, "image is sensitive", "grok-imagine")
+	require.Nil(t, foErr, "内容策略拒绝不得被规则引擎接管为 failover 错误")
+	events := opsUpstreamErrorEvents(t, c)
+	for _, ev := range events {
+		require.NotEqual(t, "error_handling_rule_failover", ev.Kind,
+			"不该出现规则接管的事件——内容策略拒绝必须由内置兜底处理")
+	}
+
+	// 第二步：调用方在 foErr==nil 时会继续走 handleErrorResponse（真实序列里紧接着的
+	// 下一行），断言最终交付给客户端的确实是专用文案，不是规则引擎的产物。
+	resp2 := &http.Response{
+		StatusCode: http.StatusForbidden,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(bytes.NewReader(body)),
+	}
+	result, err := svc.handleErrorResponse(context.Background(), resp2, c, account, body, "grok-imagine")
+	require.Nil(t, result)
+	require.Error(t, err)
+
+	var failoverErr *UpstreamFailoverError
+	require.False(t, errors.As(err, &failoverErr),
+		"规则引擎产出的错误是 *UpstreamFailoverError；这里必须不是")
+
+	require.Equal(t, http.StatusForbidden, rec.Code)
+	var payload struct {
+		Error struct {
+			Type    string `json:"type"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &payload))
+	require.Equal(t, "invalid_request_error", payload.Error.Type)
+	require.Equal(t, grokContentPolicyClientMessage(body), payload.Error.Message,
+		"客户端必须拿到专用的内容策略拒绝文案，不是规则引擎/通用错误处理链改写过的消息")
+}
+
 // access-state 与 request-scoped 容量削峰同样归内置。用各自的判定函数取真实样本，
 // 避免把 marker 表硬编码进测试。
 func TestOpenAIBuiltinOwnsError_TypedClassificationsReserved(t *testing.T) {

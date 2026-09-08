@@ -207,7 +207,11 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 					continue
 				case ErrorHandlingActionFailover:
 					virtualResp := &http.Response{StatusCode: ruleMatch.statusCode, Header: resp.Header.Clone(), Body: http.NoBody}
-					err := s.errorHandlingRuleFailover(ctx, virtualResp, ruleMatch.body, account, input.RequestModel, ruleMatch.decision, true)
+					// synthetic 必须原样带 ruleMatch.synthetic：这条 ruleMatch 既可能来自
+					// 真实的上游 SSE error 事件（synthetic=false，statusCode 是上游给的
+					// 真实状态码），也可能来自缺失 terminal 事件合成的虚拟 502
+					// （synthetic=true）——不能像上面的 streamRule 那样恒定成一个值。
+					err := s.errorHandlingRuleFailover(ctx, virtualResp, ruleMatch.body, account, input.RequestModel, ruleMatch.decision, true, ruleMatch.synthetic)
 					if failoverErr, ok := err.(*UpstreamFailoverError); ok {
 						// 已交付的 error 帧也是终止性输出，不能和下一账号的流拼接。
 						// semanticEventForwarded 刻意不包含 error 事件，因此还要检查
@@ -982,6 +986,18 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthroughWithRu
 	}
 }
 
+// anthropicPassthroughOpsStatusCode 决定写进 ops_error_logs.upstream_status_code
+// 的状态码：match.synthetic 为真时该状态码是缺失 terminal 事件合成的虚拟 502，
+// 没有真实上游响应，必须传 0 让该列保持 NULL——那一列为 NULL 正是「这是传输层/
+// 流中断失败」的判定依据。match.statusCode 本身仍原样用作客户端响应状态码
+// （writeAnthropicPassthroughStreamRuleError 下面写 SSE 错误帧时不受影响）。
+func anthropicPassthroughOpsStatusCode(match *anthropicPassthroughStreamRuleMatch) int {
+	if match.synthetic {
+		return 0
+	}
+	return match.statusCode
+}
+
 func (s *GatewayService) writeAnthropicPassthroughStreamRuleError(
 	ctx context.Context,
 	c *gin.Context,
@@ -997,7 +1013,7 @@ func (s *GatewayService) writeAnthropicPassthroughStreamRuleError(
 	if s.rateLimitService != nil {
 		_ = s.rateLimitService.HandleUpstreamError(ctx, account, match.statusCode, resp.Header, match.body, model)
 	}
-	setOpsUpstreamError(c, match.statusCode, match.errMessage, "")
+	setOpsUpstreamError(c, anthropicPassthroughOpsStatusCode(match), match.errMessage, "")
 	MarkOpsStreamError(c, match.errType, match.errMessage, match.statusCode)
 
 	if !c.Writer.Written() {

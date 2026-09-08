@@ -452,3 +452,109 @@ func TestGrokVideoContentQueryBypassesErrorHandlingRule(t *testing.T) {
 		require.NotEqual(t, "error_handling_rule_failover", ev.Kind)
 	}
 }
+
+// ==================== #228 最终评审 FIX 2：video_status / video_content 的传输层同样例外 ====================
+//
+// 上面两个测试只驱动了"拿到了 HTTP 响应，状态码 >=400"这一分支
+// （handleGrokMediaErrorResponse 内部的 endpoint.IsGenerationRequest() 允许清单）。
+// 但 grok_media.go 里还有三处 handleOpenAIUpstreamTransportErrorWithURL 调用点：
+// ForwardGrokMedia 主体（服务生成端点与 video_status 直查，共用同一次 HTTP 请求）、
+// forwardGrokMediaVideoContent 内部的 status 子请求、以及同函数内的 content 子请求。
+// 这三处此前统一走 handleOpenAIUpstreamTransportError 这个默认 ruleEligible=true 的
+// 薄包装——由于该包装转投 handleOpenAIUpstreamTransportErrorWithURL 并把
+// ruleEligible 恒设为 true，一条会命中合成 502 的规则会在 video_status/video_content
+// 的传输层失败（拨号失败、DNS 失败等）上被规则引擎接管，产生跟 HTTP-响应侧完全一样的
+// "假生效"：ops_error_logs 显示 error_handling_rule_failover，而 owner binding 仍会
+// 阻止真正换号。修复后这三处按 endpoint.IsGenerationRequest() / false / false 显式传
+// ruleEligible，这里驱动真实的传输层失败路径证明修复生效。
+
+// video_status 直查（ForwardGrokMedia 主体，未落到 forwardGrokMediaVideoContent）在
+// 传输层失败时同样不得被规则引擎接管。
+func TestGrokVideoStatusQueryTransportErrorBypassesErrorHandlingRule(t *testing.T) {
+	c, _ := newGrokMediaRuleTestContext()
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/videos/request-997", nil)
+	account := grokMediaRuleAccount()
+	originalAccount := account
+
+	upstream := &failingOpenAIHTTPUpstream{err: errors.New("dial tcp: connection refused")}
+	svc := newGrokMediaRuleService(t, upstream, ErrorHandlingRule{
+		ID: "broad-502-video-status-transport", StatusCodes: []int{502},
+		Keywords: []string{"connection refused"}, Action: ErrorHandlingActionFailover,
+		Platforms: []string{PlatformGrok},
+	})
+
+	_, err := svc.ForwardGrokMedia(context.Background(), c, account, GrokMediaEndpointVideoStatus, "request-997", nil, "")
+
+	require.Error(t, err)
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.Empty(t, failoverErr.ErrorRuleID,
+		"video_status 查询的传输层失败即便配了匹配规则也必须 handled=false，理由同 HTTP-响应分支")
+
+	events := opsUpstreamErrorEvents(t, c)
+	for _, ev := range events {
+		require.NotEqual(t, "error_handling_rule_failover", ev.Kind,
+			"不该出现规则接管的事件——video_status 查询的传输层失败必须绕过规则引擎")
+	}
+	require.Same(t, originalAccount, account, "调用前后账号对象未被替换——service 层没有尝试切换账号")
+}
+
+// video_content 查询内部先发一次 video_status 子请求（forwardGrokMediaVideoContent），
+// 这里让那次子请求在传输层失败，验证同一例外同样生效。
+func TestGrokVideoContentQueryTransportErrorBypassesErrorHandlingRule(t *testing.T) {
+	c, _ := newGrokMediaRuleTestContext()
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/videos/request-996/content", nil)
+	account := grokMediaRuleAccount()
+
+	upstream := &failingOpenAIHTTPUpstream{err: errors.New("dial tcp: connection refused")}
+	svc := newGrokMediaRuleService(t, upstream, ErrorHandlingRule{
+		ID: "broad-502-video-content-transport", StatusCodes: []int{502},
+		Keywords: []string{"connection refused"}, Action: ErrorHandlingActionFailover,
+		Platforms: []string{PlatformGrok},
+	})
+
+	_, err := svc.ForwardGrokMedia(context.Background(), c, account, GrokMediaEndpointVideoContent, "request-996", nil, "")
+
+	require.Error(t, err)
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.Empty(t, failoverErr.ErrorRuleID,
+		"video_content 查询的传输层失败（status 子请求）即便配了匹配规则也必须 handled=false")
+
+	events := opsUpstreamErrorEvents(t, c)
+	for _, ev := range events {
+		require.NotEqual(t, "error_handling_rule_failover", ev.Kind)
+	}
+}
+
+// 正面对照：生成端点（endpoint.IsGenerationRequest()==true）的传输层失败必须仍然
+// 走规则引擎——证明上面两个 bypass 测试不是因为改动误伤了整个传输层接线点，而是
+// 精确排除了两个查询端点。
+func TestGrokMediaGenerationTransportErrorStillUsesErrorHandlingRule(t *testing.T) {
+	c, _ := newGrokMediaRuleTestContext()
+	account := grokMediaRuleAccount()
+
+	upstream := &failingOpenAIHTTPUpstream{err: errors.New("dial tcp: connection refused")}
+	svc := newGrokMediaRuleService(t, upstream, ErrorHandlingRule{
+		ID: "broad-502-generation-transport", StatusCodes: []int{502},
+		Keywords: []string{"connection refused"}, Action: ErrorHandlingActionFailover,
+		Platforms: []string{PlatformGrok},
+	})
+
+	_, err := svc.ForwardGrokMedia(context.Background(), c, account, GrokMediaEndpointImagesGenerations, "req-gen-1", []byte(`{"model":"grok-imagine","prompt":"a cat"}`), "application/json")
+
+	require.Error(t, err)
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.Equal(t, "broad-502-generation-transport", failoverErr.ErrorRuleID,
+		"生成端点的传输层失败必须仍然接线规则引擎——排除范围不能误伤生成路径")
+
+	events := opsUpstreamErrorEvents(t, c)
+	found := false
+	for _, ev := range events {
+		if ev.Kind == "error_handling_rule_failover" {
+			found = true
+		}
+	}
+	require.True(t, found, "生成端点传输层失败被规则接管时必须留下 error_handling_rule_failover 事件")
+}

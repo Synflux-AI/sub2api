@@ -736,7 +736,14 @@ func (h *GatewayHandler) handleGeminiFailoverExhausted(c *gin.Context, failoverE
 		if statusCode > 0 {
 			passthroughStatus = statusCode
 		}
-		service.SetOpsUpstreamError(c, statusCode, failoverErr.SafeErrorMessage, "")
+		// failoverErr.SyntheticStatus 为真时 statusCode 是传输层/流中断合成的虚拟
+		// 502，没有真实上游响应：传 0 让 ops_error_logs.upstream_status_code 保持
+		// NULL，不动下面 googleError 用的客户端响应 passthroughStatus。
+		opsStatusCode := statusCode
+		if failoverErr.SyntheticStatus {
+			opsStatusCode = 0
+		}
+		service.SetOpsUpstreamError(c, opsStatusCode, failoverErr.SafeErrorMessage, "")
 		googleError(c, passthroughStatus, failoverErr.SafeErrorMessage)
 		return
 	}

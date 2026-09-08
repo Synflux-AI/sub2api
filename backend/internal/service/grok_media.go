@@ -692,7 +692,12 @@ func (s *OpenAIGatewayService) ForwardGrokMedia(
 	resp, err := s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
 	SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 	if err != nil {
-		return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)
+		// ruleEligible = endpoint.IsGenerationRequest()：这条 HTTP 请求既服务生成端点
+		// 也服务 video_status 查询（GET /v1/videos/{id}，与下面 handleGrokMediaErrorResponse
+		// 里的 endpoint.IsGenerationRequest() 允许清单同一套判据）。video_status 绑定到
+		// 创建任务时选中的原账号（owner binding），传输层失败也不能交给规则引擎，否则
+		// 会出现"规则已接管 failover"的假生效记录。
+		return nil, s.handleOpenAIUpstreamTransportErrorWithURL(ctx, c, account, err, false, "", endpoint.IsGenerationRequest())
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -795,7 +800,9 @@ func (s *OpenAIGatewayService) forwardGrokMediaVideoContent(
 	statusResp, err := s.httpUpstream.Do(statusReq, proxyURL, account.ID, account.Concurrency)
 	if err != nil {
 		SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
-		return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)
+		// ruleEligible=false：forwardGrokMediaVideoContent 只服务 video_content 查询
+		// （#228 §六例外，owner binding，不能换号），传输层失败同样不得交给规则引擎。
+		return nil, s.handleOpenAIUpstreamTransportErrorWithURL(ctx, c, account, err, false, "", false)
 	}
 	statusRequestID := firstNonEmpty(statusResp.Header.Get("x-request-id"), statusResp.Header.Get("xai-request-id"))
 	if statusResp.StatusCode >= 300 {
@@ -854,7 +861,8 @@ func (s *OpenAIGatewayService) forwardGrokMediaVideoContent(
 	contentResp, err := s.httpUpstream.Do(contentReq, proxyURL, account.ID, account.Concurrency)
 	SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 	if err != nil {
-		return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)
+		// ruleEligible=false：同上，video_content 的内容下载请求也不得交给规则引擎。
+		return nil, s.handleOpenAIUpstreamTransportErrorWithURL(ctx, c, account, err, false, "", false)
 	}
 	defer func() { _ = contentResp.Body.Close() }()
 	contentRequestID := firstNonEmpty(contentResp.Header.Get("x-request-id"), contentResp.Header.Get("xai-request-id"), statusRequestID)

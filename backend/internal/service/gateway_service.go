@@ -714,6 +714,14 @@ type UpstreamFailoverError struct {
 	RuleRetryLimit   *int
 	SafeErrorType    string // 可安全返回给 Anthropic 客户端的错误类型
 	SafeErrorMessage string // 可安全返回给 Anthropic 客户端的错误消息
+	// SyntheticStatus 表示 StatusCode 是合成的（传输层错误/流中断没有真实 HTTP
+	// 响应，为了喂错误处理规则引擎才编出一个 502）。合成状态码只能用于**客户端
+	// 响应**（这一点从今天起保持不变——这从来就是传输层失败的既有兜底状态码），
+	// 绝不能写进 ops_error_logs 顶层的 upstream_status_code 列：那一列为 NULL 正是
+	// 「这是传输层失败」的判定依据。exhausted_action=passthrough 消费点在调用
+	// service.SetOpsUpstreamError 时必须查这个字段、传 0 让该列保持 NULL，而不能动
+	// 传给客户端的状态码。
+	SyntheticStatus bool
 }
 
 func (e *UpstreamFailoverError) Error() string {

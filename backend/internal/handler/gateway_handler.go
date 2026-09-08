@@ -1923,7 +1923,14 @@ func (h *GatewayHandler) handleFailoverExhausted(c *gin.Context, failoverErr *se
 	responseBody := failoverErr.ResponseBody
 	if failoverErr.ExhaustedAction == service.ErrorHandlingExhaustedActionPassthrough &&
 		failoverErr.SafeErrorType != "" && failoverErr.SafeErrorMessage != "" {
-		service.SetOpsUpstreamError(c, statusCode, failoverErr.SafeErrorMessage, "")
+		// failoverErr.SyntheticStatus 为真时 statusCode 是传输层/流中断合成的虚拟
+		// 502，没有真实上游响应：传 0 让 ops_error_logs.upstream_status_code 保持
+		// NULL，不动下面客户端响应用的 statusCode。
+		opsStatusCode := statusCode
+		if failoverErr.SyntheticStatus {
+			opsStatusCode = 0
+		}
+		service.SetOpsUpstreamError(c, opsStatusCode, failoverErr.SafeErrorMessage, "")
 		h.handleStreamingAwareError(
 			c,
 			statusCode,

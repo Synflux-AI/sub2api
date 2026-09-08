@@ -392,7 +392,14 @@ func (h *GatewayHandler) handleResponsesFailoverExhausted(c *gin.Context, lastEr
 		lastErr.ExhaustedAction == service.ErrorHandlingExhaustedActionPassthrough &&
 		lastErr.SafeErrorType != "" && lastErr.SafeErrorMessage != "" {
 		code, message = lastErr.SafeErrorType, lastErr.SafeErrorMessage
-		service.SetOpsUpstreamError(c, status, message, "")
+		// lastErr.SyntheticStatus 为真时 status 是传输层/流中断合成的虚拟 502，没有
+		// 真实上游响应：传 0 让 ops_error_logs.upstream_status_code 保持 NULL，不动
+		// 下面客户端响应用的 status。
+		opsStatusCode := status
+		if lastErr.SyntheticStatus {
+			opsStatusCode = 0
+		}
+		service.SetOpsUpstreamError(c, opsStatusCode, message, "")
 	} else if lastErr != nil && lastErr.IsCredentialFailure() {
 		status, message = credentialFailoverClientResponse(lastErr)
 	} else if lastErr != nil && lastErr.IsOpenAICapacityShed() && strings.TrimSpace(lastErr.ClientMessage) != "" {

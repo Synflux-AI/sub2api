@@ -252,7 +252,6 @@ func (s *AntigravityGatewayService) antigravityErrorHandlingRuleOverride(
 		StatusCode:          statusCode,
 		Header:              respHeader,
 		Body:                respBody,
-		ReqModel:            in.ReqModel,
 		BuiltinOwns:         antigravityBuiltinOwnsError(statusCode, lowerMsg, respBody),
 		BuiltinWillFailover: in.BuiltinWillFailover,
 		SyntheticStatus:     in.SyntheticStatus,

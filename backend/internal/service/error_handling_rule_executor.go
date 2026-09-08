@@ -31,7 +31,6 @@ type errorHandlingRuleExecInput struct {
 	StatusCode int
 	Header     http.Header
 	Body       []byte
-	ReqModel   string
 
 	// BuiltinOwns 表示这条错误归内置逻辑独占，规则不得抢走。由调用方按平台算好。
 	BuiltinOwns bool
@@ -134,6 +133,12 @@ func executeErrorHandlingRule(c *gin.Context, in errorHandlingRuleExecInput) (*U
 		ResponseHeaders: respHeader.Clone(),
 		ErrorRuleID:     decision.RuleID,
 		ExhaustedAction: decision.ExhaustedAction,
+		// 传输层接线点（openAITransportErrorRuleOverride 等）传 SyntheticStatus=true
+		// 时原样带到返回的 UpstreamFailoverError 上：exhausted_action=passthrough 的
+		// 六个消费点（各 handler 的 handle*FailoverExhausted）据此决定要不要把这个
+		// 状态码写进 ops_error_logs.upstream_status_code——绝不能改动它作为客户端
+		// 响应状态码的既有用法。
+		SyntheticStatus: in.SyntheticStatus,
 	}
 	// SafeErrorType/Message 三个动作都要填，不能只填 passthrough：
 	// exhausted_action=passthrough 的消费点要求这两个字段非空才认，只在 passthrough

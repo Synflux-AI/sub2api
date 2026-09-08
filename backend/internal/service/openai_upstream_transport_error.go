@@ -106,7 +106,7 @@ func classifyUpstreamTransportError(err error) upstreamTransportErrorClass {
 //
 // passthrough tags the Ops error event for the OpenAI passthrough forward path.
 func (s *OpenAIGatewayService) handleOpenAIUpstreamTransportError(ctx context.Context, c *gin.Context, account *Account, err error, passthrough bool) error {
-	return s.handleOpenAIUpstreamTransportErrorWithURL(ctx, c, account, err, passthrough, "")
+	return s.handleOpenAIUpstreamTransportErrorWithURL(ctx, c, account, err, passthrough, "", true)
 }
 
 // handleOpenAIUpstreamResponseBodyReadError promotes an interrupted non-streaming
@@ -128,7 +128,7 @@ func (s *OpenAIGatewayService) handleOpenAIUpstreamResponseBodyReadError(
 	if account == nil || !shouldClassifyOpenAIUpstreamStreamReadError(err, ctx, requestCtx) {
 		return err
 	}
-	return s.handleOpenAIUpstreamTransportErrorWithURL(ctx, c, account, err, passthrough, upstreamURL)
+	return s.handleOpenAIUpstreamTransportErrorWithURL(ctx, c, account, err, passthrough, upstreamURL, true)
 }
 
 // handleOpenAIUpstreamTransportErrorWithURL is handleOpenAIUpstreamTransportError
@@ -136,6 +136,14 @@ func (s *OpenAIGatewayService) handleOpenAIUpstreamResponseBodyReadError(
 //
 // 两个入口而不是给既有函数加参数：handleOpenAIUpstreamTransportError 有 21 个调用点，
 // 它们本来就不记 UpstreamURL，为了两个 images 站点去改 21 处签名不划算。
+//
+// ruleEligible 是 #228 §六 allowlist 在传输层的对应物：video_status / video_content
+// 查询绑定到创建任务时选中的原账号（owner binding），不能切换账号，错误处理规则引擎
+// 因此不得接触这两类查询的传输层失败——否则会出现"规则已接管 failover"的
+// ops_error_logs 记录，而 owner binding 实际上仍会阻止真正换号，这正是 #228 评审
+// 修订 §六要消灭的"假生效"。与 HTTP 响应侧的 endpoint.IsGenerationRequest() 允许清单
+// 保持同一形状（允许清单而不是拒绝清单）：新增调用点必须显式传 true 才能接线规则
+// 引擎，默认（复制一个已有调用点粗心漏改）落在"不接线"这一更安全的一侧。
 func (s *OpenAIGatewayService) handleOpenAIUpstreamTransportErrorWithURL(
 	ctx context.Context,
 	c *gin.Context,
@@ -143,6 +151,7 @@ func (s *OpenAIGatewayService) handleOpenAIUpstreamTransportErrorWithURL(
 	err error,
 	passthrough bool,
 	upstreamURL string,
+	ruleEligible bool,
 ) error {
 	safeErr := sanitizeUpstreamErrorMessage(err.Error())
 	setOpsUpstreamError(c, 0, safeErr, "")
@@ -183,8 +192,13 @@ func (s *OpenAIGatewayService) handleOpenAIUpstreamTransportErrorWithURL(
 	// 错误处理规则最后问一次：合成 502 + OpenAI 形状错误体后交给引擎。命中就用规则版
 	// 错误（可能是同号重试 / 换号 / 直接返回客户端），否则保持内置的「一律 failover」。
 	// 放在副作用（停号）之后：规则只决定动作，不决定是否记账，与 Anthropic 侧同序。
-	if ruleErr := s.openAITransportErrorRuleOverride(ctx, c, account, safeErr); ruleErr != nil {
-		return ruleErr
+	//
+	// ruleEligible=false 的调用点（Grok video_status/video_content 查询）连问都不问：
+	// 这不是"规则未命中"，是结构性不让规则引擎看到这条错误。
+	if ruleEligible {
+		if ruleErr := s.openAITransportErrorRuleOverride(ctx, c, account, safeErr); ruleErr != nil {
+			return ruleErr
+		}
 	}
 
 	return &UpstreamFailoverError{

@@ -34,10 +34,14 @@ const openAITransportRuleSyntheticStatus = http.StatusBadGateway
 // openAIBuiltinOwnsError 判断这条上游错误是否归内置逻辑独占，规则不得抢走。
 //
 // 判据是「规则动作对这类错误是否必然错误或有害」：
+//
 //   - cyber_policy：request-scoped，换号/重试都是空耗，还误伤凭据；
+//
 //   - context window：确定性错误，换任何号都复现；
+//
 //   - OAuth 账号的 429：ShouldStopOpenAIOAuth429Failover 是跨 switch 的计数状态机，
 //     规则插进去会把计数算乱；
+//
 //   - body-too-large / access-state / request-scoped 容量削峰：这三类由
 //     newOpenAIUpstreamFailoverError 算出 Reason / Scope / Stage / ClientStatusCode /
 //     ClientMessage / RequestScopedTransient 等**带类型的**字段，下游的
@@ -45,6 +49,13 @@ const openAITransportRuleSyntheticStatus = http.StatusBadGateway
 //     ShouldReportAccountScheduleFailure() 全靠它们分流。规则版错误是另起一个
 //     UpstreamFailoverError，带不出这些字段，一条宽泛规则（如「413 → 换号」）会把
 //     413 的专用文案、凭据失败的归因、容量削峰的「不扣账号健康分」一起清零。
+//
+//   - Grok 内容策略拒绝（isGrokContentPolicyRejection）：确定性错误，同一 prompt 在
+//     账号池里任何账号上都复现，换号只是空耗上游请求；grok_media.go 侧
+//     （grokMediaBuiltinOwnsError）已经把这类错误判给内置独占，文本推理走的是
+//     OpenAIGatewayService，早前因为平台闸门挡住 Platform=grok 而从未触达这里，三道
+//     闸门打开后必须在这里补一份同样的独占，否则一条宽泛的「403 → 换号」规则会把
+//     grokContentPolicyClientMessage 这条专用文案换成规则版的通用耗尽错误。
 //
 // 其余（通用 4xx/5xx、transient processing、传输层错误）一律允许规则覆盖。
 func openAIBuiltinOwnsError(statusCode int, upstreamMsg string, upstreamBody []byte, account *Account) bool {
@@ -64,6 +75,9 @@ func openAIBuiltinOwnsError(statusCode int, upstreamMsg string, upstreamBody []b
 		return true
 	}
 	if isOpenAIRequestScopedCapacityShed(upstreamMsg, upstreamBody) {
+		return true
+	}
+	if account != nil && account.Platform == PlatformGrok && isGrokContentPolicyRejection(statusCode, upstreamBody) {
 		return true
 	}
 	return false
@@ -165,7 +179,6 @@ func (s *OpenAIGatewayService) openAIErrorHandlingRuleOverride(
 		StatusCode:          statusCode,
 		Header:              respHeader,
 		Body:                respBody,
-		ReqModel:            in.ReqModel,
 		BuiltinOwns:         openAIBuiltinOwnsError(statusCode, sanitizeUpstreamErrorMessage(strings.TrimSpace(extractUpstreamErrorMessage(respBody))), respBody, account),
 		BuiltinWillFailover: in.BuiltinWillFailover,
 		SyntheticStatus:     in.SyntheticStatus,

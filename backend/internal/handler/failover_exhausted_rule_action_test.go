@@ -150,6 +150,66 @@ func TestHandleResponsesFailoverExhaustedWithoutRuleKeepsGenericError(t *testing
 	}
 }
 
+// FIX 3（#228 最终评审）：耗尽后走 passthrough 时，如果 StatusCode 是传输层失败
+// 合成的虚拟 502（SyntheticStatus=true），不能把它写进 ops_error_logs 顶层的
+// upstream_status_code——那一列为 NULL 正是"这是传输层失败、根本没有 HTTP 响应"
+// 的判定依据。客户端仍然要拿到这个合成状态码（这是既有行为，FIX 3 不改）。
+// CC / Gemini / Responses 三个 handler 各自一份拷贝，必须分别钉住。
+func syntheticExhaustedError() *service.UpstreamFailoverError {
+	return &service.UpstreamFailoverError{
+		StatusCode:       http.StatusBadGateway,
+		ResponseBody:     []byte(`{"error":{"type":"upstream_error","message":"upstream request failed: connection reset"}}`),
+		ExhaustedAction:  service.ErrorHandlingExhaustedActionPassthrough,
+		SafeErrorType:    "upstream_error",
+		SafeErrorMessage: "upstream request failed: connection reset",
+		SyntheticStatus:  true,
+	}
+}
+
+func TestHandleCCFailoverExhausted_SyntheticStatusNotRecordedAsUpstreamStatus(t *testing.T) {
+	c, rec := newExhaustedTestContext()
+	h := &GatewayHandler{}
+
+	h.handleCCFailoverExhausted(c, syntheticExhaustedError(), service.PlatformOpenAI, false)
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("expected the synthetic status to still be delivered to the client, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if _, ok := c.Get(service.OpsUpstreamStatusCodeKey); ok {
+		t.Fatal("合成状态码只能用于客户端响应，不得落进 ops_error_logs 顶层列")
+	}
+}
+
+func TestHandleGeminiFailoverExhausted_SyntheticStatusNotRecordedAsUpstreamStatus(t *testing.T) {
+	c, rec := newExhaustedTestContext()
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1beta/models/gemini-2.5-pro:generateContent", nil)
+	h := &GatewayHandler{}
+
+	h.handleGeminiFailoverExhausted(c, syntheticExhaustedError())
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("expected the synthetic status to still be delivered to the client, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if _, ok := c.Get(service.OpsUpstreamStatusCodeKey); ok {
+		t.Fatal("合成状态码只能用于客户端响应，不得落进 ops_error_logs 顶层列")
+	}
+}
+
+func TestHandleResponsesFailoverExhausted_SyntheticStatusNotRecordedAsUpstreamStatus(t *testing.T) {
+	c, rec := newExhaustedTestContext()
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	h := &GatewayHandler{}
+
+	h.handleResponsesFailoverExhausted(c, syntheticExhaustedError(), false)
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("expected the synthetic status to still be delivered to the client, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if _, ok := c.Get(service.OpsUpstreamStatusCodeKey); ok {
+		t.Fatal("合成状态码只能用于客户端响应，不得落进 ops_error_logs 顶层列")
+	}
+}
+
 // fakeErrorPassthroughRepo 是 service.ErrorPassthroughRepository 的最小实现，
 // 只用来把固定规则集喂给 service.NewErrorPassthroughService 的启动加载。
 // handler 包测试里没有现成的 mock（那个 mock 在 internal/service 包内且未导出），

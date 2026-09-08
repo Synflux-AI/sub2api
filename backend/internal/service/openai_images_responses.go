@@ -1833,7 +1833,7 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 		// 与 forwardOpenAIImagesAPIKey 同因：传输层失败必须走统一 helper 返回
 		// *UpstreamFailoverError，handler 才会换号；ops 记录也由 helper 独家负责。
 		return nil, s.handleOpenAIUpstreamTransportErrorWithURL(
-			upstreamCtx, c, account, err, false, safeUpstreamURL(upstreamReq.URL.String()))
+			upstreamCtx, c, account, err, false, safeUpstreamURL(upstreamReq.URL.String()), true)
 	}
 	if resp.StatusCode >= 400 {
 		respBody := s.readUpstreamErrorBody(resp)

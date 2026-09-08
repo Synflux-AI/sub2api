@@ -173,13 +173,18 @@ func TestErrorHandlingRuleMatrix_GrokMediaGeneration(t *testing.T) {
 		matrixAssertTestExists(t, ".", "TestGrokMedia429FailoverIsBounded")
 	})
 	t.Run("exhausted_passthrough_shared_mechanism", func(t *testing.T) {
-		// h.handleFailoverExhausted 是 grok_media.go 里生成路径（images/videos
-		// generations）复用的同一个通用兜底函数（与 CC 共用），没有 Grok-media 专属的
-		// exhausted 兜底实现或专属测试；这里引用 CC 行的测试作为共享机制证明，并用
-		// TestGrokMedia429FailoverIsBounded（同一子测试组的"第二次 429 直接停止换号"
-		// 分支）作为该入口确实会触达 exhausted 分支的佐证。
+		// h.handleFailoverExhausted 在 grok_media.go 里的接收者是 *OpenAIGatewayHandler
+		// （见该文件 GrokImages/GrokVideoGeneration 等方法的接收者类型），调用的是
+		// OpenAIGatewayHandler.handleFailoverExhausted（openai_gateway_handler.go，
+		// 3 个参数：c/failoverErr/streamStarted）。这与 GatewayHandler.handleFailoverExhausted
+		// （gateway_handler.go，4 个参数：多一个 platform）是两个不同结构体上的同名
+		// 不同方法——不能共用。此前这里误引用了 handleCCFailoverExhausted（属于
+		// GatewayHandler 的另一个方法，同样对不上）。正确的共享机制证明是
+		// TestOpenAIFailoverExhausted_RulePassthroughReturnsUpstreamError：它直接调用
+		// (&OpenAIGatewayHandler{}).handleFailoverExhausted，与 Grok media 生成路径的
+		// 调用点完全一致。
 		matrixAssertTestExists(t, ".",
-			"TestHandleCCFailoverExhaustedHonorsRulePassthrough",
+			"TestOpenAIFailoverExhausted_RulePassthroughReturnsUpstreamError",
 			"TestGrokMedia429FailoverIsBounded",
 		)
 	})

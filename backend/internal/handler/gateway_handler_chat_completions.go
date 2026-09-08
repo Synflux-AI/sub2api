@@ -418,7 +418,14 @@ func (h *GatewayHandler) handleCCFailoverExhausted(c *gin.Context, lastErr *serv
 	if lastErr != nil &&
 		lastErr.ExhaustedAction == service.ErrorHandlingExhaustedActionPassthrough &&
 		lastErr.SafeErrorType != "" && lastErr.SafeErrorMessage != "" {
-		service.SetOpsUpstreamError(c, statusCode, lastErr.SafeErrorMessage, "")
+		// lastErr.SyntheticStatus 为真时 statusCode 是传输层/流中断合成的虚拟 502，
+		// 没有真实上游响应：传 0 让 ops_error_logs.upstream_status_code 保持 NULL，
+		// 不动下面 chatCompletionsErrorResponse 用的客户端响应 statusCode。
+		opsStatusCode := statusCode
+		if lastErr.SyntheticStatus {
+			opsStatusCode = 0
+		}
+		service.SetOpsUpstreamError(c, opsStatusCode, lastErr.SafeErrorMessage, "")
 		h.chatCompletionsErrorResponse(c, statusCode, lastErr.SafeErrorType, lastErr.SafeErrorMessage)
 		return
 	}

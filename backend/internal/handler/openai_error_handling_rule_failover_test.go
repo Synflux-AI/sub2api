@@ -63,6 +63,33 @@ func TestOpenAIFailoverExhausted_RulePassthroughWithoutSafeErrorFallsBack(t *tes
 	require.NotContains(t, rec.Body.String(), "must-not-leak")
 }
 
+// FIX 3（#228 最终评审）：耗尽后走 passthrough 时，如果 StatusCode 是传输层失败
+// 合成的虚拟 502（SyntheticStatus=true），不能把它写进 ops_error_logs 顶层的
+// upstream_status_code——那一列为 NULL 正是"这是传输层失败、根本没有 HTTP 响应"
+// 的判定依据。客户端仍然要拿到这个合成状态码（这是既有行为，FIX 3 不改）。
+func TestOpenAIFailoverExhausted_SyntheticStatusNotRecordedAsUpstreamStatus(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/images/edits", nil)
+
+	(&OpenAIGatewayHandler{}).handleFailoverExhausted(c, &service.UpstreamFailoverError{
+		StatusCode:       http.StatusBadGateway,
+		ResponseBody:     []byte(`{"error":{"type":"upstream_error","message":"upstream request failed: connection reset"}}`),
+		ExhaustedAction:  service.ErrorHandlingExhaustedActionPassthrough,
+		SafeErrorType:    "upstream_error",
+		SafeErrorMessage: "upstream request failed: connection reset",
+		SyntheticStatus:  true,
+	}, false)
+
+	// 客户端响应状态码不受影响：仍是合成的 502。
+	require.Equal(t, http.StatusBadGateway, rec.Code)
+	require.Contains(t, rec.Body.String(), "connection reset")
+
+	_, ok := c.Get(service.OpsUpstreamStatusCodeKey)
+	require.False(t, ok, "合成状态码只能用于客户端响应，不得落进 ops_error_logs 顶层列")
+}
+
 func TestEffectiveSameAccountRetryLimit_RuleBudgetOverridesPoolMode(t *testing.T) {
 	account := &service.Account{ID: 60, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey}
 	// 没有规则预算时沿用账号侧的 pool-mode 预算（非 pool-mode 账号取默认值）。
@@ -131,4 +158,28 @@ func TestAnthropicFailoverExhausted_RulePassthroughWithoutSafeErrorFallsBack(t *
 	}, false)
 
 	require.NotContains(t, rec.Body.String(), "must-not-leak")
+}
+
+// FIX 3（#228 最终评审）：handleAnthropicFailoverExhausted 与 handleFailoverExhausted
+// 是同一份 SyntheticStatus 处理逻辑各自的一份拷贝，必须分别钉住。
+func TestAnthropicFailoverExhausted_SyntheticStatusNotRecordedAsUpstreamStatus(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+
+	(&OpenAIGatewayHandler{}).handleAnthropicFailoverExhausted(c, &service.UpstreamFailoverError{
+		StatusCode:       http.StatusBadGateway,
+		ResponseBody:     []byte(`{"error":{"type":"upstream_error","message":"upstream request failed: connection reset"}}`),
+		ExhaustedAction:  service.ErrorHandlingExhaustedActionPassthrough,
+		SafeErrorType:    "upstream_error",
+		SafeErrorMessage: "upstream request failed: connection reset",
+		SyntheticStatus:  true,
+	}, false)
+
+	require.Equal(t, http.StatusBadGateway, rec.Code)
+	require.Contains(t, rec.Body.String(), "connection reset")
+
+	_, ok := c.Get(service.OpsUpstreamStatusCodeKey)
+	require.False(t, ok, "合成状态码只能用于客户端响应，不得落进 ops_error_logs 顶层列")
 }
