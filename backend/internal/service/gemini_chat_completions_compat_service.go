@@ -145,6 +145,14 @@ func (s *GeminiMessagesCompatService) forwardClaudeBodyAsChatCompletions(
 				continue
 			}
 			setOpsUpstreamError(c, 0, safeErr, "")
+			// #228 task-10：客户端断连不算真正的传输层失败——upstream 请求已经打
+			// 出去，没人会读响应，规则换号是纯粹空耗还可能误伤账号，必须排除在规则
+			// 匹配之外。
+			if ctx.Err() == nil {
+				if ruleErr := s.geminiTransportErrorRuleOverride(ctx, c, account, safeErr); ruleErr != nil {
+					return nil, ruleErr
+				}
+			}
 			return nil, s.writeChatCompletionsError(c, http.StatusBadGateway, "upstream_error", "Upstream request failed after retries: "+safeErr)
 		}
 

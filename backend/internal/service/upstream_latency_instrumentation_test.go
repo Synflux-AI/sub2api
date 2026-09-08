@@ -70,7 +70,7 @@ func TestTimedUpstreamDoRecordsLatency(t *testing.T) {
 //
 // 名单只能因以上两条之一而增长，不能因为「改起来麻烦」。
 var instrumentationExempt = map[string]string{
-	"gemini_messages_compat_service.go:2923": "AI Studio GET 辅助路径，签名只有 context.Context，非请求转发路径",
+	"gemini_messages_compat_service.go:2939": "AI Studio GET 辅助路径，签名只有 context.Context，非请求转发路径",
 }
 
 func TestGeminiAndAntigravityUpstreamExitsAreInstrumented(t *testing.T) {

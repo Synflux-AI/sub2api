@@ -204,9 +204,10 @@ type antigravityErrorHandlingRuleInput struct {
 	// SyntheticStatus 表示 StatusCode 是合成的（传输层错误没有 HTTP 响应）。只用于
 	// **匹配**，绝不能写进 ops_error_logs 顶层的 upstream_status_code：那一列为 NULL
 	// 正是「这是传输层失败」的判定依据。由 logAntigravityErrorHandlingRuleDecision
-	// 负责落实。本任务（#228 task-8）四条转发链的所有接线点都在拿到真实上游 HTTP
-	// 响应之后才会问规则引擎，恒为 false；跟 Gemini 一样，Antigravity 传输层错误
-	// （请求发送失败）的接线留给后续任务。
+	// 负责落实。四条转发链在拿到真实上游 HTTP 响应之后才会问规则引擎的三个标准接线点
+	// 与 antigravityRetryLoop 里的早接线点上恒为 false；antigravityTransportErrorRuleOverride
+	// （#228 task-10，antigravityRetryLoop 内部 Do() 失败、重试与 URL fallback 都耗尽
+	// 之后调用）上恒为 true。
 	SyntheticStatus bool
 }
 
@@ -264,6 +265,56 @@ func (s *AntigravityGatewayService) antigravityErrorHandlingRuleOverride(
 			s.logAntigravityErrorHandlingRuleDecision(ctx, c, account, in, decision, effectiveAction)
 		},
 	})
+}
+
+// antigravityTransportRuleSyntheticStatus 是传输层错误喂给规则引擎时用的合成状态码。
+//
+// 传输层失败没有 HTTP 响应，引擎又只看状态码+响应体，所以这里合成一个。与 OpenAI /
+// Gemini 侧同一先例（openAITransportRuleSyntheticStatus / geminiTransportRuleSyntheticStatus）。
+const antigravityTransportRuleSyntheticStatus = http.StatusBadGateway
+
+// antigravityTransportErrorRuleOverride 把没有完整可用 HTTP 响应的传输层错误合成成
+// 502 + 统一形状的错误体（syntheticTransportRuleBody）后问规则。命中返回规则版的
+// failover 错误，未命中返回 nil。
+//
+// 唯一调用点在 antigravityRetryLoop 内部（antigravity_gateway_retry.go）：Do() 失败、
+// 同账号重试与 URL fallback 全部耗尽之后（#228 task-10）。这是 ForwardGemini
+// （antigravity_gateway_gemini.go）与 forwardAntigravityCompat/
+// handleAntigravityCompatTransportError（antigravity_gateway_compat.go）共同依赖的
+// 唯一"连接失败、重试用尽"出口——两条转发链都已经在这个 err 上先判过
+// `err.(*UpstreamFailoverError)`，命中就直接把它当 failover 错误交给 Handler，所以
+// 只需要在 antigravityRetryLoop 这一处接线，两条转发链自动生效，不需要分别在
+// ForwardGemini / handleAntigravityCompatTransportError 里各插一次。
+//
+// 调用方必须先排除客户端断连（p.ctx.Err() != nil）：那种情况下 upstream 请求已经
+// 打出去，没人会读响应，规则换号是纯粹空耗还可能误伤账号——具体排除逻辑见
+// antigravityRetryLoop 里的调用点。
+//
+// 照搬 openAITransportErrorRuleOverride 的取舍：BuiltinWillFailover 恒传 true——传输层
+// 失败上内置只有"一律 failover"一种意见，没有"本地写响应"那条链，不必替内置补记账，
+// 也不该给透传规则让路（透传规则匹配的是真实上游响应，这里的 502 是合成的）。
+func (s *AntigravityGatewayService) antigravityTransportErrorRuleOverride(
+	ctx context.Context,
+	c *gin.Context,
+	account *Account,
+	safeErr string,
+) *UpstreamFailoverError {
+	body := syntheticTransportRuleBody(safeErr)
+	if body == nil {
+		return nil
+	}
+	failoverErr, handled := s.antigravityErrorHandlingRuleOverride(ctx, c, antigravityErrorHandlingRuleInput{
+		Account:             account,
+		StatusCode:          antigravityTransportRuleSyntheticStatus,
+		Header:              http.Header{},
+		Body:                body,
+		BuiltinWillFailover: true,
+		SyntheticStatus:     true,
+	})
+	if !handled {
+		return nil
+	}
+	return failoverErr
 }
 
 // antigravityRuleOverrideHook 是喂给 antigravityRetryLoop 的早接线钩子类型。
@@ -329,8 +380,9 @@ func (s *AntigravityGatewayService) logAntigravityErrorHandlingRuleDecision(
 	//
 	// 但**合成**状态码不能写进去：传输层失败根本没有 HTTP 响应，那一列为 NULL 正是
 	// 「这是传输层失败」的判定依据。传 0 让 setOpsUpstreamError 只落 message、不动
-	// 状态码。本任务四条转发链的接线点 SyntheticStatus 恒为 false，这里的分支是为了
-	// 与 Gemini 保持同一口径、并给后续任务接传输层错误留好落点。
+	// 状态码。三个标准接线点与早接线点上 SyntheticStatus 恒为 false；
+	// antigravityTransportErrorRuleOverride（#228 task-10）上恒为 true，这里的分支
+	// 与 Gemini/OpenAI 保持同一口径。
 	opsStatusCode := statusCode
 	if in.SyntheticStatus {
 		opsStatusCode = 0

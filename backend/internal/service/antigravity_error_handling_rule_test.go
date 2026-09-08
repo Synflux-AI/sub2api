@@ -15,6 +15,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/model"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
@@ -523,4 +524,215 @@ func TestAntigravityRuleAppliesBeforeGenericRetry(t *testing.T) {
 			require.Equal(t, 1, upstream.callCount, "规则在首次失败就该接管，不应因为内置的通用重试而产生第 2 次上游请求")
 		})
 	}
+}
+
+// ==================== #228 task-10：传输层错误合成 502 ====================
+
+// alwaysFailAntigravityUpstream 的 Do 每次调用都返回同一个连接失败错误——模拟
+// antigravityRetryLoop 里"同账号重试 + URL fallback 全部耗尽，每次都是同一个连接
+// 失败"的场景。可选 cancelAfter/cancel：在第 N 次调用返回之前触发 context 取消，
+// 用来精确复现"客户端在最后一次上游调用期间断连，但循环顶部的 ctx.Done() 检查在那
+// 一次调用开始前还没观察到取消"这个时序缝隙——这正是
+// antigravityTransportErrorRuleOverride 调用点前 `p.ctx.Err() == nil` 判断要单独
+// 兜底的那条路径。
+type alwaysFailAntigravityUpstream struct {
+	err         error
+	calls       int
+	cancel      context.CancelFunc
+	cancelAfter int
+}
+
+func (u *alwaysFailAntigravityUpstream) Do(_ *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
+	u.calls++
+	if u.cancel != nil && u.calls == u.cancelAfter {
+		u.cancel()
+	}
+	return nil, u.err
+}
+
+func (u *alwaysFailAntigravityUpstream) DoWithTLS(req *http.Request, proxyURL string, accountID int64, concurrency int, _ *tlsfingerprint.Profile) (*http.Response, error) {
+	return u.Do(req, proxyURL, accountID, concurrency)
+}
+
+func antigravityTransportErrTestUpstream() *alwaysFailAntigravityUpstream {
+	return &alwaysFailAntigravityUpstream{err: errors.New("dial tcp: connection reset by peer")}
+}
+
+func antigravityRetryLoopBaseParams(account *Account, upstream HTTPUpstream, c *gin.Context) antigravityRetryLoopParams {
+	return antigravityRetryLoopParams{
+		ctx:            context.Background(),
+		prefix:         "[test]",
+		account:        account,
+		accessToken:    "token",
+		action:         "streamGenerateContent",
+		body:           []byte(`{"input":"test"}`),
+		c:              c,
+		httpUpstream:   upstream,
+		requestedModel: "claude-sonnet-4-5",
+		handleError: func(ctx context.Context, prefix string, account *Account, statusCode int, headers http.Header, body []byte, requestedModel string, groupID int64, sessionHash string, isStickySession bool) *handleModelRateLimitResult {
+			return nil
+		},
+	}
+}
+
+// 传输层错误必须合成 502 交给规则匹配，但合成状态码绝不能写进
+// ops_error_logs.upstream_status_code。直接调用
+// antigravityTransportErrorRuleOverride（而不是驱动整条 antigravityRetryLoop）：
+// 与 OpenAI/Gemini 侧同一层级，快且不依赖 sleepAntigravityBackoffWithContext 的
+// 真实退避耗时。
+func TestAntigravityTransportErrorSynthesizes502WithoutPollutingOpsStatus(t *testing.T) {
+	svc := &AntigravityGatewayService{settingService: newAntigravityRuleSettingService(t, ErrorHandlingRule{
+		ID: "antigravity-lost-ping", Name: "antigravity 连接丢失换号",
+		StatusCodes: []int{502}, Action: ErrorHandlingActionFailover, Platforms: []string{PlatformAntigravity},
+	})}
+	c, _ := newAntigravityRuleTestContext()
+
+	failoverErr := svc.antigravityTransportErrorRuleOverride(context.Background(), c, antigravityRuleAccount(), "connection reset by peer")
+
+	require.NotNil(t, failoverErr, "规则应命中，产出规则版 failover 错误")
+	require.Equal(t, "antigravity-lost-ping", failoverErr.ErrorRuleID)
+	require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
+
+	_, ok := c.Get(OpsUpstreamStatusCodeKey)
+	require.False(t, ok, "合成状态码只用于匹配，不得落进 ops_error_logs 顶层列")
+
+	events := opsUpstreamErrorEvents(t, c)
+	require.NotEmpty(t, events)
+	last := events[len(events)-1]
+	require.Equal(t, "error_handling_rule_failover", last.Kind)
+	require.Zero(t, last.UpstreamStatusCode)
+}
+
+func TestAntigravityTransportErrorRuleOverride_NoMatchReturnsNil(t *testing.T) {
+	svc := &AntigravityGatewayService{settingService: newAntigravityRuleSettingService(t, ErrorHandlingRule{
+		ID: "only-429", StatusCodes: []int{429}, Action: ErrorHandlingActionFailover,
+		Platforms: []string{PlatformAntigravity},
+	})}
+	c, _ := newAntigravityRuleTestContext()
+
+	failoverErr := svc.antigravityTransportErrorRuleOverride(context.Background(), c, antigravityRuleAccount(), "connection reset by peer")
+
+	require.Nil(t, failoverErr, "规则只勾了 429，合成的 502 不该命中")
+	require.Empty(t, opsUpstreamErrorEvents(t, c), "未命中不得留下规则事件")
+}
+
+// ==================== #228 task-10：antigravityRetryLoop 的实际接线点 ====================
+//
+// 唯一调用点在 antigravityRetryLoop 内部——同账号重试与 URL fallback 全部耗尽
+// 之后（见 antigravity_gateway_retry.go）。这一处接线同时覆盖 ForwardGemini 与
+// forwardAntigravityCompat/handleAntigravityCompatTransportError 两条转发链，
+// 它们都已经在这个 err 上先判过 `err.(*UpstreamFailoverError)`，所以直接驱动
+// antigravityRetryLoop 就足以证明两条链都会生效，不需要分别驱动 ForwardGemini 和
+// forwardAntigravityCompat 各自的账号/凭据/上游全链路。
+
+func TestAntigravityRetryLoop_TransportErrorRuleTakesEffect(t *testing.T) {
+	upstream := antigravityTransportErrTestUpstream()
+	account := antigravityRuleAccount()
+	svc := &AntigravityGatewayService{settingService: newAntigravityRuleSettingService(t, ErrorHandlingRule{
+		ID: "retry-loop-lost-ping", StatusCodes: []int{502}, Action: ErrorHandlingActionFailover,
+		Platforms: []string{PlatformAntigravity},
+	})}
+	c, _ := newAntigravityRuleTestContext()
+
+	result, err := svc.antigravityRetryLoop(antigravityRetryLoopBaseParams(account, upstream, c))
+
+	require.Nil(t, result)
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.Equal(t, "retry-loop-lost-ping", failoverErr.ErrorRuleID)
+	require.Equal(t, antigravityMaxRetries, upstream.calls, "必须先耗尽内置重试预算才问规则")
+
+	_, ok := c.Get(OpsUpstreamStatusCodeKey)
+	require.False(t, ok, "合成状态码不得落进 ops_error_logs 顶层列")
+}
+
+// 规则未命中时，存量行为必须零变化：antigravityRetryLoop 原样返回
+// "upstream request failed after retries: ..." 包裹错误，不是规则版
+// *UpstreamFailoverError；ForwardGemini/forwardAntigravityCompat 据此走各自原有
+// 的 writeGoogleError/writeAntigravityCompatError 兜底路径。
+func TestAntigravityRetryLoop_TransportErrorNoRuleUnchangedOutput(t *testing.T) {
+	upstream := antigravityTransportErrTestUpstream()
+	account := antigravityRuleAccount()
+	svc := &AntigravityGatewayService{settingService: newAntigravityRuleSettingService(t, ErrorHandlingRule{
+		ID: "only-429", StatusCodes: []int{429}, Action: ErrorHandlingActionFailover,
+		Platforms: []string{PlatformAntigravity},
+	})}
+	c, _ := newAntigravityRuleTestContext()
+
+	result, err := svc.antigravityRetryLoop(antigravityRetryLoopBaseParams(account, upstream, c))
+
+	require.Nil(t, result)
+	var failoverErr *UpstreamFailoverError
+	require.False(t, errors.As(err, &failoverErr), "未命中时不得产出规则版错误")
+	require.ErrorIs(t, err, upstream.err, "原始连接错误必须原样被 %w 包裹，调用方的 errors.Is/文案不能变")
+	require.Contains(t, err.Error(), "upstream request failed after retries")
+	require.Equal(t, antigravityMaxRetries, upstream.calls)
+
+	_, ok := c.Get(OpsUpstreamStatusCodeKey)
+	require.False(t, ok)
+}
+
+// ==================== #228 task-10：客户端断连必须排除在规则匹配之外 ====================
+//
+// antigravityRetryLoop 顶部的 `<-p.ctx.Done()` 检查只覆盖"下一次 attempt 开始前"
+// 的取消；这里让取消发生在最后一次（第 antigravityMaxRetries 次）Do() 调用返回
+// 之后、重试预算刚耗尽的那一刻——顶部检查完全看不到这次取消，只有紧邻
+// antigravityTransportErrorRuleOverride 调用点前的 `p.ctx.Err() == nil` 单独判断
+// 能兜住它。
+func TestAntigravityRetryLoop_TransportError_ClientDisconnectedSkipsRule(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	upstream := antigravityTransportErrTestUpstream()
+	upstream.cancel = cancel
+	upstream.cancelAfter = antigravityMaxRetries
+
+	account := antigravityRuleAccount()
+	svc := &AntigravityGatewayService{settingService: newAntigravityRuleSettingService(t, ErrorHandlingRule{
+		ID: "any-502", StatusCodes: []int{502}, Action: ErrorHandlingActionFailover,
+		Platforms: []string{PlatformAntigravity},
+	})}
+	c, _ := newAntigravityRuleTestContext()
+	params := antigravityRetryLoopBaseParams(account, upstream, c)
+	params.ctx = ctx
+
+	result, err := svc.antigravityRetryLoop(params)
+
+	require.Nil(t, result)
+	var failoverErr *UpstreamFailoverError
+	require.False(t, errors.As(err, &failoverErr), "客户端已断开：不能被规则接管")
+	require.Equal(t, antigravityMaxRetries, upstream.calls)
+	for _, ev := range opsUpstreamErrorEvents(t, c) {
+		require.NotEqual(t, "error_handling_rule_failover", ev.Kind, "不该出现规则接管的事件")
+	}
+}
+
+// ==================== #228 task-10：handleAntigravityCompatTransportError 的
+// 账号切换（typed-field）分支不受影响 ====================
+//
+// AntigravityAccountSwitchError 是模型限流驱动的账号切换信号，来自
+// handleSmartRetry，与本任务接线的"Do() 失败、重试用尽"路径结构上不相交——
+// forwardAntigravityCompat 在拿到 antigravityRetryLoop 的返回错误后，先判
+// `err.(*UpstreamFailoverError)`（本任务新增的规则版错误会在这里被直接放行），
+// 剩下没有被那一判命中的错误才会落到 handleAntigravityCompatTransportError，而
+// AntigravityAccountSwitchError 从不是 *UpstreamFailoverError，所以两条路径永不
+// 交叉。这里直接调用 handleAntigravityCompatTransportError 证明：即便配了一条
+// 宽泛能匹配 502/503 的 failover 规则，账号切换信号的 typed 字段
+// （ForceCacheBilling 来自 IsStickySession）依然原样带出，规则引擎从未被问到。
+func TestAntigravityCompatTransportError_AccountSwitchRetainsTypedFields(t *testing.T) {
+	svc := &AntigravityGatewayService{settingService: newAntigravityRuleSettingService(t, ErrorHandlingRule{
+		ID: "broad-failover", StatusCodes: []int{502, 503}, Action: ErrorHandlingActionFailover,
+		Platforms: []string{PlatformAntigravity},
+	})}
+	c, _ := newAntigravityRuleTestContext()
+	switchErr := &AntigravityAccountSwitchError{
+		OriginalAccountID: 80, RateLimitedModel: "claude-sonnet-4-5", IsStickySession: true,
+	}
+
+	err := svc.handleAntigravityCompatTransportError(c, switchErr)
+
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.Equal(t, http.StatusServiceUnavailable, failoverErr.StatusCode)
+	require.True(t, failoverErr.ForceCacheBilling, "IsStickySession=true 必须原样带出到 ForceCacheBilling")
+	require.Empty(t, failoverErr.ErrorRuleID, "账号切换信号是独立类型，规则引擎从未被问到，不能被规则版错误顶替")
+	require.Empty(t, opsUpstreamErrorEvents(t, c), "规则引擎没有被问到，不该留下任何规则事件")
 }

@@ -170,11 +170,46 @@ func (s *GeminiMessagesCompatService) geminiErrorHandlingRuleOverride(
 	})
 }
 
-// 本任务（#228 task-7）没有 Gemini 传输层错误的接线点：三条转发链的 HTTP 请求失败
-// 都直接返回 error，不经过响应体解析，还没有合成状态码喂给规则引擎的落点。留白由
-// 后续任务补，这里先把 logGeminiErrorHandlingRuleDecision 的 SyntheticStatus 落地口径
-// 写对（opsStatusCode = 0），避免将来接线时才发现口径错了。
+// geminiTransportRuleSyntheticStatus 是传输层错误喂给规则引擎时用的合成状态码。
 //
+// 传输层失败没有 HTTP 响应，引擎又只看状态码+响应体，所以这里合成一个。与 OpenAI
+// 侧 openAITransportRuleSyntheticStatus（openai_error_handling_rule.go）同一先例。
+const geminiTransportRuleSyntheticStatus = http.StatusBadGateway
+
+// geminiTransportErrorRuleOverride 把没有完整可用 HTTP 响应的传输层错误合成成 502 +
+// 统一形状的错误体（syntheticTransportRuleBody）后问规则。命中返回规则版的
+// failover 错误，未命中返回 nil。Forward / ForwardNative / ForwardAsChatCompletions
+// 三条转发链在各自的重试循环耗尽后调用这里（#228 task-10）——调用方必须先排除客户端
+// 断连（ctx.Err() != nil）：那种情况下 upstream 请求已经打出去，没人会读响应，规则
+// 换号是纯粹空耗还可能误伤账号，具体排除逻辑见各调用点。
+//
+// 照搬 openAITransportErrorRuleOverride 的取舍：BuiltinWillFailover 恒传 true——传输层
+// 失败上内置只有"一律 failover"一种意见，没有"本地写响应"那条链，不必替内置补记账，
+// 也不该给透传规则让路（透传规则匹配的是真实上游响应，这里的 502 是合成的）。
+func (s *GeminiMessagesCompatService) geminiTransportErrorRuleOverride(
+	ctx context.Context,
+	c *gin.Context,
+	account *Account,
+	safeErr string,
+) *UpstreamFailoverError {
+	body := syntheticTransportRuleBody(safeErr)
+	if body == nil {
+		return nil
+	}
+	failoverErr, handled := s.geminiErrorHandlingRuleOverride(ctx, c, geminiErrorHandlingRuleInput{
+		Account:             account,
+		StatusCode:          geminiTransportRuleSyntheticStatus,
+		Header:              http.Header{},
+		Body:                body,
+		BuiltinWillFailover: true,
+		SyntheticStatus:     true,
+	})
+	if !handled {
+		return nil
+	}
+	return failoverErr
+}
+
 // logGeminiErrorHandlingRuleDecision 与 OpenAI 侧的 logOpenAIErrorHandlingRuleDecision
 // 口径一致。Kind 必须是 "error_handling_rule_" + **生效**动作（不是配置动作）：排查时
 // 判断「引擎有没有被绕过」全靠 upstream_errors 里有没有这个前缀，而各平台的 outcome
