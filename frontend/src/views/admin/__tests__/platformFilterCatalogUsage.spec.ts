@@ -23,11 +23,18 @@ describe('admin platform filters', () => {
     for (const path of [
       'src/components/admin/account/AccountTableFilters.vue',
       'src/components/admin/ErrorPassthroughRulesModal.vue',
-      'src/views/admin/ops/components/OpsDashboardHeader.vue'
+      'src/views/admin/ops/components/OpsDashboardHeader.vue',
+      'src/views/admin/ErrorHandlingRulesView.vue'
     ]) {
       const source = readSource(path)
-      expect(source).toContain("import { CONCRETE_PLATFORM_OPTIONS } from '@/constants/platforms'")
-      expect(source).toMatch(/platformOptions\s*=.*CONCRETE_PLATFORM_OPTIONS|pOpts.*\.\.\.CONCRETE_PLATFORM_OPTIONS/s)
+      // 引号/分号风格允许两种写法：现有三个文件用单引号无分号，
+      // ErrorHandlingRulesView.vue 沿用该文件本身的双引号+分号风格。
+      expect(source).toMatch(
+        /import\s*\{\s*CONCRETE_PLATFORM_OPTIONS\s*\}\s*from\s*['"]@\/constants\/platforms['"];?/
+      )
+      expect(source).toMatch(
+        /platformOptions\s*=.*CONCRETE_PLATFORM_OPTIONS|pOpts.*\.\.\.CONCRETE_PLATFORM_OPTIONS|_PLATFORM_OPTIONS\s*=\s*\[?\s*\.\.\.CONCRETE_PLATFORM_OPTIONS/s
+      )
     }
   })
 })

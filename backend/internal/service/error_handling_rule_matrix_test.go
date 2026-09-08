@@ -38,7 +38,8 @@ import (
 // 更贴近现有测试的组织方式；如果这个解释被认为不合适，具体的判断依据（各测试
 // 引用的行号）都在下面每个子测试里写明，方便复核。
 //
-// 两个诚实披露的真实生产缺口（不是测试缺口，本任务范围不含修复）：
+// 一个诚实披露的真实生产缺口（不是测试缺口，本任务范围不含修复），另有两条
+// 已关闭 / 已反转的历史记录（保留是为了让复核的人看到判断是怎么变的，不是遗漏）：
 //
 //  1. Anthropic Messages 的 "transport 错误" 维度完全没有接到规则引擎。
 //     GatewayService.handleUpstreamTransportError（gateway_upstream_transport_error.go:41-70）
@@ -68,16 +69,23 @@ import (
 //     违反旧口径，所以不再算作"缺口"，注释保留 _KnownGap 后缀是历史命名，留给下一次
 //     touch 这个文件的人重新考虑是否要改名）。
 //
-//  3. Grok Media generation 的 "transport 错误" 维度同样没有真正接线：虽然
+//  3. Grok Media generation 的 "transport 错误" 维度曾经没有真正接线：虽然
 //     ForwardGrokMedia 请求发送失败时确实调用了 handleOpenAIUpstreamTransportError
 //     （与 OpenAI/Chat Completions/Responses 共用同一个函数体），但
-//     openAIErrorHandlingRulesActive（openai_error_handling_rule.go:104）硬编码了
+//     openAIErrorHandlingRulesActive（openai_error_handling_rule.go:104）曾硬编码了
 //     `account.Platform != PlatformOpenAI` 直接拒绝——只有 Platform=openai 的账号
 //     才会真的问到规则引擎，Grok 账号（Platform=grok）在匹配前就被短路。这条是
 //     写验收测试时才发现的：本来以为"机制是通用的，只是没测过"，写出的测试本身
 //     断言失败，才发现真相与 grok_media_error_handling_rule.go:146 的注释一致——
-//     "Grok media 传输层错误…接线留给后续任务"仍然成立，不是过时注释。见
-//     TestGrokMediaGenerationTransportErrorBypassesErrorHandlingRule_KnownGap。
+//     当时"Grok media 传输层错误…接线留给后续任务"确实仍然成立。
+//
+//     已关闭（口径已变，不再是缺口）：#228 task-13 把这一行的判定换成
+//     `!isConcreteRequestPlatform(account.Platform)`，一次性放开 grok / kimi /
+//     zhipu / deepseek 文本推理与 Grok media 生成路径共用的这道闸门。原缺口钉住
+//     测试 TestGrokMediaGenerationTransportErrorBypassesErrorHandlingRule_KnownGap
+//     已改名为 TestGrokMediaGenerationTransportErrorAppliesErrorHandlingRule，
+//     断言从"规则不生效、无条件换号"反转为"规则命中、passthrough 按配置停止换号"。
+//     见该测试。
 //
 // 一个对 RULING B 的有依据的扩展（供复核，不是既定结论）：RULING B 只点名
 // Gemini 和 Antigravity 的流内错误维度必须标"不适用"，理由是两个平台的三个
@@ -419,18 +427,16 @@ func TestErrorHandlingRuleMatrix_GrokMediaGeneration(t *testing.T) {
 			"TestGrokMediaContentPolicyRejectionBypassesErrorHandlingRule", // miss：内置独占抢先
 		)
 	})
-	t.Run("transport_error_KNOWN_GAP_documented_below", func(t *testing.T) {
-		// 第三个诚实披露的真实生产缺口（写这条子测试之前先假设了机制通用、后来被
-		// 自己的新测试推翻）：ForwardGrokMedia 请求发送失败时确实调用了
-		// handleOpenAIUpstreamTransportError（与 OpenAI/Chat Completions/Responses
-		// 共用同一个函数体），但 openAIErrorHandlingRulesActive
-		// （openai_error_handling_rule.go:104）里硬编码了
-		// `account.Platform != PlatformOpenAI` 直接拒绝——这个函数只对 Platform=openai
-		// 的账号生效，Grok media 账号 Platform=grok，规则引擎从第一步就被短路，
-		// 无论管理端配没配一条会命中的规则都一样。这与
-		// grok_media_error_handling_rule.go:146 那条注释（"Grok media 传输层错误…
-		// 接线留给后续任务"）互相印证——那不是一句过时的注释，是仍然成立的真实缺口。
-		matrixAssertTestExists(t, ".", "TestGrokMediaGenerationTransportErrorBypassesErrorHandlingRule_KnownGap")
+	t.Run("transport_error", func(t *testing.T) {
+		// 第三个"诚实披露的真实生产缺口"在 #228 task-13 打开三道闸门后已被关闭：
+		// openAIErrorHandlingRulesActive（openai_error_handling_rule.go:104）原来
+		// 硬编码 `account.Platform != PlatformOpenAI` 直接拒绝 Grok 账号，现在换成
+		// `!isConcreteRequestPlatform(account.Platform)`，grok / kimi / zhipu /
+		// deepseek 文本推理与 Grok media 生成路径一起放开。原来的缺口钉住测试
+		// TestGrokMediaGenerationTransportErrorBypassesErrorHandlingRule_KnownGap
+		// 已改名为 TestGrokMediaGenerationTransportErrorAppliesErrorHandlingRule，
+		// 断言反转为规则确实命中（见该测试）。
+		matrixAssertTestExists(t, ".", "TestGrokMediaGenerationTransportErrorAppliesErrorHandlingRule")
 	})
 	t.Run("stream_error_NOT_APPLICABLE", func(t *testing.T) {
 		t.Log("not applicable: issue #228 §七原表本身把 Grok Media generation 的流内错误列标为" +
@@ -448,18 +454,23 @@ func TestErrorHandlingRuleMatrix_GrokMediaGeneration(t *testing.T) {
 	})
 }
 
-// ==================== Grok Media generation 的 transport 错误缺口钉住测试 ====================
+// ==================== Grok Media generation 的 transport 错误接线证明测试 ====================
 //
 // 起初以为这一格只是"没写测试"，尝试写一个证明 ForwardGrokMedia 遇到 transport
 // 错误时规则会生效的测试，结果测试本身失败了——才发现 openAIErrorHandlingRulesActive
-// 硬编码只认 PlatformOpenAI，Grok 账号从第一步就被拒绝。保留下面这个曾经失败的
-// 断言的对照版本（期望值取反），把它变成如实记录当前行为的缺口钉住测试，而不是
-// 悄悄改小范围或者删掉不提。
+// 硬编码只认 PlatformOpenAI，Grok 账号从第一步就被拒绝。当时把这个曾经失败的断言
+// 取反，保留成如实记录当前行为的缺口钉住测试
+// TestGrokMediaGenerationTransportErrorBypassesErrorHandlingRule_KnownGap。
+//
+// #228 task-13 把 openAIErrorHandlingRulesActive 的平台判定换成
+// `!isConcreteRequestPlatform(account.Platform)`，这个缺口随之关闭。下面是同一个
+// 测试场景的正面版本：断言取反、改名去掉 _KnownGap 后缀，证明打开闸门确实让规则
+// 在 Grok media 的 transport 错误路径上生效了，而不是悄悄把这一格从矩阵里删掉。
 
-func TestGrokMediaGenerationTransportErrorBypassesErrorHandlingRule_KnownGap(t *testing.T) {
+func TestGrokMediaGenerationTransportErrorAppliesErrorHandlingRule(t *testing.T) {
 	upstream := &failingOpenAIHTTPUpstream{err: errors.New(`dial tcp 1.2.3.4:443: connect: connection refused`)}
 	svc := newGrokMediaRuleService(t, upstream, ErrorHandlingRule{
-		ID: "would-match-if-wired", StatusCodes: []int{502}, Action: ErrorHandlingActionPassthrough,
+		ID: "grok-media-transport-passthrough", StatusCodes: []int{502}, Action: ErrorHandlingActionPassthrough,
 		Platforms: []string{PlatformGrok},
 	})
 	c, _ := newGrokMediaRuleTestContext()
@@ -471,12 +482,11 @@ func TestGrokMediaGenerationTransportErrorBypassesErrorHandlingRule_KnownGap(t *
 	require.Error(t, err)
 	var failoverErr *UpstreamFailoverError
 	require.ErrorAs(t, err, &failoverErr)
-	require.Empty(t, failoverErr.ErrorRuleID,
-		"当前行为：即便配了一条会匹配 502 的 passthrough 规则，Grok media 的 transport 错误路径"+
-			"仍然拿到空 ErrorRuleID——openAIErrorHandlingRulesActive 硬编码只认 PlatformOpenAI，"+
-			"Grok 账号在规则匹配前就被拒绝")
-	require.True(t, failoverErr.ShouldRetryNextAccount(),
-		"当前行为：规则配置的 passthrough（应停止换号）从未生效，transport 错误无条件换号")
+	require.Equal(t, "grok-media-transport-passthrough", failoverErr.ErrorRuleID,
+		"打开 gate 3 后：配了一条会匹配 502 的 passthrough 规则，Grok media 的 transport 错误"+
+			"路径现在会命中它——openAIErrorHandlingRulesActive 不再硬编码只认 PlatformOpenAI")
+	require.False(t, failoverErr.ShouldRetryNextAccount(),
+		"规则配置的 passthrough 必须停止换号，不能再无条件换号")
 }
 
 func TestGrokMediaGeneration_TransportErrorNoRuleUnchangedOutput(t *testing.T) {

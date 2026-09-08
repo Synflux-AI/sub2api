@@ -148,8 +148,10 @@ type grokMediaErrorHandlingRuleInput struct {
 	// **匹配**，绝不能写进 ops_error_logs 顶层的 upstream_status_code：那一列为 NULL
 	// 正是「这是传输层失败」的判定依据。由 logGrokMediaErrorHandlingRuleDecision
 	// 负责落实。本任务（#228 task-9）的接线点在拿到真实上游 HTTP 响应之后才会问规则
-	// 引擎，恒为 false；Grok media 传输层错误（请求发送失败，走
-	// handleOpenAIUpstreamTransportError）的接线留给后续任务。
+	// 引擎，恒为 false；Grok media 传输层错误（请求发送失败）走的是
+	// handleOpenAIUpstreamTransportError（与 OpenAI/Chat Completions/Responses 共用
+	// 同一个函数体，自己合成 502 并设置 SyntheticStatus），#228 task-13 打开
+	// openAIErrorHandlingRulesActive 的平台闸门后已经生效，不再是缺口。
 	SyntheticStatus bool
 }
 

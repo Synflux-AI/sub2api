@@ -93,11 +93,14 @@ func TestUpdateErrorHandlingRuleSettingsRejectsUnsupportedPlatform(t *testing.T)
 		Enabled: true, DefaultRetryCount: 1,
 		Rules: []dto.ErrorHandlingRule{{
 			ID: "r1", StatusCodes: []int{500}, Action: service.ErrorHandlingActionRetry,
-			Platforms: []string{service.PlatformGemini},
+			// #228 task-13 打开写入白名单后，8 个具体平台都能勾（含 gemini）。composite
+			// 是分组层虚拟平台，account.Platform 永远是具体平台，仍然必须被拒绝——它是
+			// 唯一继续代表"不支持"的取值。
+			Platforms: []string{service.PlatformComposite},
 		}},
 	})
 	require.Equal(t, http.StatusBadRequest, rec.Code,
-		"引擎没接线 gemini，勾了不生效，必须在写入时就拦下来")
+		"composite 是分组层虚拟平台，account.Platform 永远是具体平台，写入时必须拦下来")
 }
 
 func TestUpdateErrorHandlingRuleSettingsRejectsNegativeUpstreamLatency(t *testing.T) {

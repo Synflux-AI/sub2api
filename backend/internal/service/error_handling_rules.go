@@ -99,13 +99,6 @@ func (r *ErrorHandlingRule) IsEnabled() bool {
 	return r.Enabled == nil || *r.Enabled
 }
 
-// errorHandlingRuleSupportedPlatforms 是规则引擎**真正接线了**的平台。
-// 只有这些平台能被勾选：勾一个引擎没接线的平台等于给管理员一个不生效的开关。
-var errorHandlingRuleSupportedPlatforms = map[string]struct{}{
-	PlatformAnthropic: {},
-	PlatformOpenAI:    {},
-}
-
 // MatchesPlatform 报告规则是否适用于该平台。空列表只可能出现在「还没 normalize」的
 // 中间态（normalize 会补成 ["anthropic"]），此时不做过滤。
 func (r *ErrorHandlingRule) MatchesPlatform(platform string) bool {
@@ -390,7 +383,11 @@ func validateErrorHandlingRuleSettings(settings *ErrorHandlingRuleSettings) erro
 		// normalize 已经把空列表补成 ["anthropic"]，所以这里只会拦到管理员显式勾了
 		// 引擎没接线的平台。勾了不生效比报错更坏：管理员会以为规则在跑。
 		for _, platform := range rule.Platforms {
-			if _, ok := errorHandlingRuleSupportedPlatforms[platform]; !ok {
+			// 平台白名单复用 isConcreteRequestPlatform：那是本仓库「具体请求平台」的
+			// 单一权威清单（composite 是分组层的虚拟平台，account.Platform 永远是具体
+			// 平台，收进来只会多一个永不命中的框）。第二份清单必然漂移，而漂移的后果
+			// 是管理台出现「勾了却存不下」或「存下了却不生效」。
+			if !isConcreteRequestPlatform(platform) {
 				return invalid("rule %d: unsupported platform %q", i+1, platform)
 			}
 		}

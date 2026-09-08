@@ -95,8 +95,20 @@ func safeAnthropicError(body []byte) (string, string) {
 	return "upstream_error", message
 }
 
+// isErrorHandlingRuleAccount 报告该账号是否适用错误处理规则。
+//
+// Anthropic 保留 Type == AccountTypeAPIKey 的要求，纯为「存量行为零变化」：那是当年
+// 用账号类型给 OAuth 做的粗粒度兜底，放开会改变已上线规则在 OAuth 账号上的行为。
+// 其余具体平台不卡账号类型（按 OpenAI 侧做法）：OAuth 的真正风险点是各平台的 429
+// 状态机，已经列进各自的 BuiltinOwns 独占，不必再用账号类型二次设限。
 func isErrorHandlingRuleAccount(account *Account) bool {
-	return account != nil && account.Platform == PlatformAnthropic && account.Type == AccountTypeAPIKey
+	if account == nil || !isConcreteRequestPlatform(account.Platform) {
+		return false
+	}
+	if account.Platform == PlatformAnthropic {
+		return account.Type == AccountTypeAPIKey
+	}
+	return true
 }
 
 func (s *GatewayService) errorHandlingRulesActive(ctx context.Context, account *Account) bool {

@@ -93,15 +93,17 @@ func safeOpenAIError(body []byte) (string, string) {
 	return "upstream_error", message
 }
 
-// openAIErrorHandlingRulesActive 是热路径早退出：没配规则、没勾 openai、账号不是
-// OpenAI 平台时，一次配置读取以外什么都不做。
+// openAIErrorHandlingRulesActive 是热路径早退出：没配规则、没勾对应平台、账号不是
+// isConcreteRequestPlatform 认可的具体平台时，一次配置读取以外什么都不做。
+// OpenAIGatewayService 是 openai / grok / kimi / zhipu / deepseek 文本推理的共同
+// 宿主，这里放行的是这一整组具体平台，不再只认 PlatformOpenAI。
 //
-// 与 Anthropic 侧不同，这里**不卡账号类型**：isErrorHandlingRuleAccount 除平台外还
-// 要求 Type == AccountTypeAPIKey，那是当年用账号类型给 OAuth 做的粗粒度兜底。
-// OAuth 的真正风险点是 429 状态机，已经列进 openAIBuiltinOwnsError 独占，不必再用
-// 账号类型二次设限。
+// 与 Anthropic 侧不同，这里**不卡账号类型**：isErrorHandlingRuleAccount 对
+// PlatformAnthropic 额外要求 Type == AccountTypeAPIKey，那是当年用账号类型给 OAuth
+// 做的粗粒度兜底。OAuth 的真正风险点是各平台的 429 状态机，已经列进各自的
+// BuiltinOwns 独占，不必再用账号类型二次设限。
 func (s *OpenAIGatewayService) openAIErrorHandlingRulesActive(ctx context.Context, account *Account) (ErrorHandlingRuleSettings, bool) {
-	if s == nil || s.settingService == nil || account == nil || account.Platform != PlatformOpenAI {
+	if s == nil || s.settingService == nil || account == nil || !isConcreteRequestPlatform(account.Platform) {
 		return ErrorHandlingRuleSettings{}, false
 	}
 	settings := s.settingService.GetErrorHandlingRuleSettingsCached(ctx)
