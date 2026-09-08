@@ -445,7 +445,7 @@ handleSuccess:
 
 	if stream {
 		// 客户端要求流式，直接透传
-		streamRes, err := s.handleGeminiStreamingResponse(c, resp, startTime)
+		streamRes, err := s.handleGeminiStreamingResponse(c, resp, startTime, antigravityStreamRuleOptions{ctx: ctx, account: account, reqModel: mappedModel})
 		if err != nil {
 			logger.LegacyPrintf("service.antigravity_gateway", "%s status=stream_error error=%v", prefix, err)
 			return nil, err

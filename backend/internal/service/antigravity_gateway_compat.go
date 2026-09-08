@@ -358,7 +358,7 @@ func (s *AntigravityGatewayService) consumeAntigravityCompatResponse(
 	if requestID != "" {
 		c.Header("x-request-id", requestID)
 	}
-	streamResult, err := s.consumeAntigravityCompatSuccess(c, call, resp)
+	streamResult, err := s.consumeAntigravityCompatSuccess(ctx, c, account, call, resp)
 	if err != nil {
 		return nil, err
 	}
@@ -383,7 +383,9 @@ func (s *AntigravityGatewayService) consumeAntigravityCompatResponse(
 }
 
 func (s *AntigravityGatewayService) consumeAntigravityCompatSuccess(
+	ctx context.Context,
 	c *gin.Context,
+	account *Account,
 	call *antigravityCompatUpstreamCall,
 	resp *http.Response,
 ) (*antigravityStreamResult, error) {
@@ -395,9 +397,11 @@ func (s *AntigravityGatewayService) consumeAntigravityCompatSuccess(
 				call.request.startTime,
 				call.request.originalModel,
 				call.request.includeUsage,
+				antigravityStreamRuleOptions{ctx: ctx, account: account, reqModel: call.billingModel},
 			)
 		}
-		return s.handleResponsesStreamingFromAntigravity(c, resp, call.request.startTime, call.request.originalModel)
+		return s.handleResponsesStreamingFromAntigravity(c, resp, call.request.startTime, call.request.originalModel,
+			antigravityStreamRuleOptions{ctx: ctx, account: account, reqModel: call.billingModel})
 	}
 
 	if call.request.protocol == antigravityCompatChatCompletions {

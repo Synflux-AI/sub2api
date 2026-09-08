@@ -2074,6 +2074,18 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 						return resultWithUsage(), compactErr
 					}
 				}
+				if !cyberHit && (!codexFailureTerminal || eventType != "error") {
+					if ruleErr := s.openAIStreamErrorHandlingRuleOverride(ctx, c, openAIStreamErrorHandlingRuleInput{
+						Account:                account,
+						Header:                 resp.Header,
+						Payload:                dataBytes,
+						Message:                failedMessage,
+						ReqModel:               mappedModel,
+						SemanticEventForwarded: semanticOutputSeen,
+					}); ruleErr != nil {
+						return resultWithUsage(), ruleErr
+					}
+				}
 				if outputStarted && !cyberHit {
 					if codexFailureTerminal && eventType == "error" {
 						// Wait for the authoritative response.failed before mutating
@@ -2216,6 +2228,16 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return resultWithUsage(), fmt.Errorf("stream usage incomplete: %w", err)
 		}
+		if ruleErr := s.openAIStreamErrorHandlingRuleOverride(ctx, c, openAIStreamErrorHandlingRuleInput{
+			Account:                account,
+			Header:                 resp.Header,
+			Message:                "OpenAI passthrough stream read error: " + err.Error(),
+			ReqModel:               mappedModel,
+			SyntheticStatus:        true,
+			SemanticEventForwarded: semanticOutputSeen,
+		}); ruleErr != nil {
+			return resultWithUsage(), ruleErr
+		}
 		if errors.Is(err, bufio.ErrTooLong) {
 			logger.LegacyPrintf("service.openai_gateway", "[OpenAI passthrough] SSE line too long: account=%d max_size=%d error=%v", account.ID, maxLineSize, err)
 			return resultWithUsage(), err
@@ -2249,6 +2271,16 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			zap.Int64("account_id", account.ID),
 			zap.String("upstream_request_id", upstreamRequestID),
 		).Info("OpenAI passthrough 上游流在未收到 [DONE] 时结束，疑似断流")
+		if ruleErr := s.openAIStreamErrorHandlingRuleOverride(ctx, c, openAIStreamErrorHandlingRuleInput{
+			Account:                account,
+			Header:                 resp.Header,
+			Message:                "OpenAI stream ended before a terminal event",
+			ReqModel:               mappedModel,
+			SyntheticStatus:        true,
+			SemanticEventForwarded: semanticOutputSeen,
+		}); ruleErr != nil {
+			return resultWithUsage(), ruleErr
+		}
 		if !openAIStreamClientOutputStarted(c, clientOutputStarted) {
 			return resultWithUsage(),
 				s.newOpenAIStreamFailoverError(c, account, true, upstreamRequestID, nil, "OpenAI stream ended before a terminal event")

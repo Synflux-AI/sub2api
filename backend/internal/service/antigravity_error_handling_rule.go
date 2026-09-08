@@ -7,8 +7,26 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/tidwall/gjson"
 	"go.uber.org/zap"
 )
+
+type antigravityStreamRuleOptions struct {
+	ctx      context.Context
+	account  *Account
+	reqModel string
+}
+
+func resolveAntigravityStreamRuleOptions(c *gin.Context, options []antigravityStreamRuleOptions) antigravityStreamRuleOptions {
+	if len(options) > 0 {
+		return options[0]
+	}
+	ctx := context.Background()
+	if c != nil && c.Request != nil {
+		ctx = c.Request.Context()
+	}
+	return antigravityStreamRuleOptions{ctx: ctx}
+}
 
 // 错误处理规则的 Antigravity 执行层。
 //
@@ -16,8 +34,8 @@ import (
 // 的四条转发链（Forward / ForwardGemini / ForwardAsChatCompletions /
 // ForwardAsResponses，后两者共用 forwardAntigravityCompat）都挂在同一个
 // *AntigravityGatewayService 接收者上，所以这里同 Gemini 一样只需要一个方法，多处
-// 复用即可。ForwardUpstream（AccountTypeUpstream 的透传账号）不接线：见该方法上的
-// 注释，它是"永远原样透传、从不换号"的单发代理，没有 HTTP 错误分类点可插。
+// 复用即可。ForwardUpstream（AccountTypeUpstream 的透传账号）也使用同一执行层，
+// 从而让 HTTP、transport 与流内失败遵循相同的规则语义。
 //
 // 与 Gemini 侧一个关键的**扩展**（#228 task-8 / 评审修订 §三）：Antigravity 除了
 // 三个"标准"接线点（各转发链顶层的错误处理，紧跟在 handleUpstreamError 记账之后），
@@ -210,6 +228,10 @@ type antigravityErrorHandlingRuleInput struct {
 	// （#228 task-10，antigravityRetryLoop 内部 Do() 失败、重试与 URL fallback 都耗尽
 	// 之后调用）上恒为 true。
 	SyntheticStatus bool
+
+	// SemanticEventForwarded 表示当前流已经向客户端写出语义内容。共享执行层据此
+	// 禁止 retry / failover 在已提交的流后拼接另一条响应。
+	SemanticEventForwarded bool
 }
 
 // antigravityErrorHandlingRuleOverride 问一次规则引擎，命中就返回规则版的 failover
@@ -247,15 +269,16 @@ func (s *AntigravityGatewayService) antigravityErrorHandlingRuleOverride(
 	lowerMsg := strings.ToLower(strings.TrimSpace(extractAntigravityErrorMessage(respBody)))
 
 	return executeErrorHandlingRule(c, errorHandlingRuleExecInput{
-		Settings:            settings,
-		Account:             account,
-		StatusCode:          statusCode,
-		Header:              respHeader,
-		Body:                respBody,
-		BuiltinOwns:         antigravityBuiltinOwnsError(statusCode, lowerMsg, respBody),
-		BuiltinWillFailover: in.BuiltinWillFailover,
-		SyntheticStatus:     in.SyntheticStatus,
-		SafeError:           safeAntigravityError,
+		Settings:               settings,
+		Account:                account,
+		StatusCode:             statusCode,
+		Header:                 respHeader,
+		Body:                   respBody,
+		BuiltinOwns:            antigravityBuiltinOwnsError(statusCode, lowerMsg, respBody),
+		BuiltinWillFailover:    in.BuiltinWillFailover,
+		SyntheticStatus:        in.SyntheticStatus,
+		SemanticEventForwarded: in.SemanticEventForwarded,
+		SafeError:              safeAntigravityError,
 		// 记账已在三个标准接线点之前由 handleUpstreamError 跑完；早接线点上记账尚未
 		// 跑，但 BuiltinWillFailover 在那个位置恒为 true，执行层的补记账保护
 		// （!BuiltinWillFailover && AccountAccounting != nil）天然不会触发。两类接线
@@ -317,6 +340,77 @@ func (s *AntigravityGatewayService) antigravityTransportErrorRuleOverride(
 		return nil
 	}
 	return failoverErr
+}
+
+func (s *AntigravityGatewayService) antigravityStreamErrorHandlingRuleOverride(
+	ctx context.Context,
+	c *gin.Context,
+	account *Account,
+	header http.Header,
+	statusCode int,
+	body []byte,
+	reqModel string,
+	message string,
+	syntheticStatus bool,
+	semanticEventForwarded bool,
+) *UpstreamFailoverError {
+	message = sanitizeUpstreamErrorMessage(strings.TrimSpace(message))
+	if message == "" {
+		message = "Antigravity stream failed"
+	}
+	if syntheticStatus {
+		statusCode = antigravityTransportRuleSyntheticStatus
+		body = syntheticTransportRuleBody(message)
+	}
+	failoverErr, handled := s.antigravityErrorHandlingRuleOverride(ctx, c, antigravityErrorHandlingRuleInput{
+		Account:                account,
+		StatusCode:             statusCode,
+		Header:                 header,
+		Body:                   body,
+		ReqModel:               reqModel,
+		BuiltinWillFailover:    true,
+		SyntheticStatus:        syntheticStatus,
+		SemanticEventForwarded: semanticEventForwarded,
+	})
+	if !handled {
+		return nil
+	}
+	s.handleUpstreamError(ctx, "antigravity stream", account, statusCode, header, body, reqModel, 0, "", false)
+	failoverErr.SafeToFailoverAfterWrite = !semanticEventForwarded
+	return failoverErr
+}
+
+func antigravityStreamErrorPayload(payload []byte) (int, []byte, string, bool) {
+	if len(payload) == 0 || !gjson.ValidBytes(payload) {
+		return 0, nil, "", false
+	}
+	isError := gjson.GetBytes(payload, "error").Exists() || strings.EqualFold(strings.TrimSpace(gjson.GetBytes(payload, "type").String()), "error")
+	if !isError {
+		return 0, nil, "", false
+	}
+	statusCode := 0
+	for _, path := range []string{"error.status_code", "error.statusCode", "error.code", "status_code", "statusCode", "code"} {
+		value := int(gjson.GetBytes(payload, path).Int())
+		if value >= 400 && value <= 599 {
+			statusCode = value
+			break
+		}
+	}
+	message := sanitizeUpstreamErrorMessage(strings.TrimSpace(extractAntigravityErrorMessage(payload)))
+	if statusCode == 0 {
+		lower := strings.ToLower(message)
+		switch {
+		case strings.Contains(lower, "rate limit"), strings.Contains(lower, "resource exhausted"):
+			statusCode = http.StatusTooManyRequests
+		case strings.Contains(lower, "unauthorized"), strings.Contains(lower, "authentication"):
+			statusCode = http.StatusUnauthorized
+		case strings.Contains(lower, "forbidden"), strings.Contains(lower, "permission"):
+			statusCode = http.StatusForbidden
+		default:
+			statusCode = http.StatusBadGateway
+		}
+	}
+	return statusCode, payload, message, true
 }
 
 // antigravityRuleOverrideHook 是喂给 antigravityRetryLoop 的早接线钩子类型。

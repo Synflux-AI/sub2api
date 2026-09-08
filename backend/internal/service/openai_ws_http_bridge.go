@@ -593,11 +593,32 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 		shouldFailover := s.shouldFailoverOpenAIUpstreamResponse(account, resp.StatusCode, upstreamMsg, respBody)
 		if account.Platform == PlatformGrok {
 			shouldFailover = s.shouldFailoverGrokUpstreamError(resp.StatusCode, respBody)
-			s.handleGrokAccountUpstreamError(withGrokTeamRateLimitModel(ctx, resolveGrokWSUpstreamModel(account, body, originalModel)), account, resp.StatusCode, resp.Header, respBody)
-			if shouldFailover && (turn == 1 || resp.StatusCode == http.StatusTooManyRequests) {
+		}
+		mayBuiltinFailover := shouldFailover && (turn == 1 || resp.StatusCode == http.StatusTooManyRequests)
+		accountingModel := actualModel
+		if account.Platform == PlatformGrok {
+			accountingModel = resolveGrokWSUpstreamModel(account, body, originalModel)
+		}
+		if ruleErr, handled := s.openAIErrorHandlingRuleOverride(ctx, c, openAIErrorHandlingRuleInput{
+			Account: account, StatusCode: resp.StatusCode, Header: resp.Header, Body: respBody,
+			ReqModel: accountingModel, BuiltinWillFailover: mayBuiltinFailover,
+		}); handled {
+			// BuiltinWillFailover=true 时执行层不会补记账；在返回规则错误前补且只补一次。
+			if mayBuiltinFailover {
+				if account.Platform == PlatformGrok {
+					s.handleGrokAccountUpstreamError(withGrokTeamRateLimitModel(ctx, accountingModel), account, resp.StatusCode, resp.Header, respBody)
+				} else {
+					s.handleOpenAIAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody, accountingModel)
+				}
+			}
+			return nil, ruleErr
+		}
+		if account.Platform == PlatformGrok {
+			s.handleGrokAccountUpstreamError(withGrokTeamRateLimitModel(ctx, accountingModel), account, resp.StatusCode, resp.Header, respBody)
+			if mayBuiltinFailover {
 				return nil, newOpenAIUpstreamFailoverError(resp.StatusCode, resp.Header, respBody, upstreamMsg, false)
 			}
-		} else if shouldFailover && (turn == 1 || resp.StatusCode == http.StatusTooManyRequests) {
+		} else if mayBuiltinFailover {
 			return nil, s.handleFailoverErrorResponsePassthrough(ctx, resp, c, account, body, respBody)
 		}
 		if account.Platform != PlatformGrok && (shouldFailover || shouldCooldownOpenAITransientUpstreamError(resp.StatusCode, respBody)) {
@@ -831,8 +852,25 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 					shouldFailover = false
 				} else {
 					shouldFailover = s.shouldFailoverGrokUpstreamError(statusCode, upstreamMessage)
-					s.handleGrokAccountUpstreamError(ctx, account, statusCode, resp.Header, upstreamMessage)
 				}
+			}
+			if !officialOpenAIResponses || eventType != "error" {
+				if ruleErr := s.openAIStreamErrorHandlingRuleOverride(ctx, c, openAIStreamErrorHandlingRuleInput{
+					Account:                account,
+					Header:                 resp.Header,
+					Payload:                upstreamMessage,
+					Message:                errMessage,
+					ReqModel:               mappedModel,
+					StatusCode:             statusCode,
+					SemanticEventForwarded: wroteDownstream,
+				}); ruleErr != nil {
+					return resultWithUsage(), ruleErr
+				}
+			}
+			if account.Platform == PlatformGrok && !failureAccountSideEffectsApplied &&
+				!isGrokContentPolicyRejection(http.StatusForbidden, upstreamMessage) {
+				s.handleGrokAccountUpstreamError(ctx, account, statusCode, resp.Header, upstreamMessage)
+				failureAccountSideEffectsApplied = true
 			}
 			if !wroteDownstream && shouldFailover && (turn == 1 || statusCode == http.StatusTooManyRequests) {
 				if account.Platform == PlatformGrok {
@@ -955,6 +993,16 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 		}
 	}
 	if bareErrorPending {
+		if ruleErr := s.openAIStreamErrorHandlingRuleOverride(ctx, c, openAIStreamErrorHandlingRuleInput{
+			Account:                account,
+			Header:                 resp.Header,
+			Payload:                bareErrorPayload,
+			Message:                bareErrorMessage,
+			ReqModel:               mappedModel,
+			SemanticEventForwarded: wroteDownstream,
+		}); ruleErr != nil {
+			return resultWithUsage(), ruleErr
+		}
 		if finalizeErr := finalizeBareError(); finalizeErr != nil {
 			return resultWithUsage(), finalizeErr
 		}
@@ -965,6 +1013,18 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 	}
 	if err := scanner.Err(); err != nil {
 		streamErr := fmt.Errorf("read upstream http bridge stream: %w", err)
+		if ctx.Err() == nil {
+			if ruleErr := s.openAIStreamErrorHandlingRuleOverride(ctx, c, openAIStreamErrorHandlingRuleInput{
+				Account:                account,
+				Header:                 resp.Header,
+				Message:                streamErr.Error(),
+				ReqModel:               mappedModel,
+				SyntheticStatus:        true,
+				SemanticEventForwarded: wroteDownstream,
+			}); ruleErr != nil {
+				return resultWithUsage(), ruleErr
+			}
+		}
 		if turn == 1 && !wroteDownstream {
 			return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, streamErr, true)
 		}
@@ -973,6 +1033,16 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 	terminalErr := errors.New("upstream http bridge stream ended before terminal event")
 	if sawDone {
 		terminalErr = errors.New("upstream http bridge stream sent [DONE] before terminal event")
+	}
+	if ruleErr := s.openAIStreamErrorHandlingRuleOverride(ctx, c, openAIStreamErrorHandlingRuleInput{
+		Account:                account,
+		Header:                 resp.Header,
+		Message:                terminalErr.Error(),
+		ReqModel:               mappedModel,
+		SyntheticStatus:        true,
+		SemanticEventForwarded: wroteDownstream,
+	}); ruleErr != nil {
+		return resultWithUsage(), ruleErr
 	}
 	if turn == 1 && !wroteDownstream {
 		return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, terminalErr, true)

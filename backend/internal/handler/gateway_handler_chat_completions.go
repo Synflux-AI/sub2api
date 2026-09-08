@@ -305,9 +305,12 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 		if err != nil {
 			var failoverErr *service.UpstreamFailoverError
 			if errors.As(err, &failoverErr) {
-				if c.Writer.Size() != writerSizeBeforeForward {
+				if !gatewayForwardMayFailover(c, writerSizeBeforeForward, failoverErr) {
 					h.handleCCFailoverExhausted(c, failoverErr, groupPlatform, true)
 					return
+				}
+				if failoverErr.SafeToFailoverAfterWrite && c.Writer.Written() {
+					streamStarted = true
 				}
 				// 走 effectiveSameAccountRetryLimit 而不是裸的 GetPoolModeRetryCount()：
 				// 裸调用会让账号基数顶掉规则显式配的 RuleRetryLimit，两种基数取值

@@ -114,7 +114,9 @@ func handleStreamReadError(err error, clientDisconnected bool, prefix string) (d
 	return false, false
 }
 
-func (s *AntigravityGatewayService) handleGeminiStreamingResponse(c *gin.Context, resp *http.Response, startTime time.Time) (*antigravityStreamResult, error) {
+func (s *AntigravityGatewayService) handleGeminiStreamingResponse(c *gin.Context, resp *http.Response, startTime time.Time, options ...antigravityStreamRuleOptions) (*antigravityStreamResult, error) {
+	ruleOptions := resolveAntigravityStreamRuleOptions(c, options)
+	ctx, account, reqModel := ruleOptions.ctx, ruleOptions.account, ruleOptions.reqModel
 	if upstreamResponseModelObserverFromContext(c) == nil {
 		beginUpstreamResponseModelObservation(c)
 	}
@@ -137,13 +139,15 @@ func (s *AntigravityGatewayService) handleGeminiStreamingResponse(c *gin.Context
 	// 使用 Scanner 并限制单行大小，避免 ReadString 无上限导致 OOM
 	scanner := bufio.NewScanner(resp.Body)
 	maxLineSize := defaultMaxLineSize
-	if s.settingService.cfg != nil && s.settingService.cfg.Gateway.MaxLineSize > 0 {
+	if s.settingService != nil && s.settingService.cfg != nil && s.settingService.cfg.Gateway.MaxLineSize > 0 {
 		maxLineSize = s.settingService.cfg.Gateway.MaxLineSize
 	}
 	scanBuf := getSSEScannerBuf64K()
 	scanner.Buffer(scanBuf[:0], maxLineSize)
 	usage := &ClaudeUsage{}
 	var firstTokenMs *int
+	failoverUnsafeOutputForwarded := false
+	sawTerminalEvent := false
 
 	type scanEvent struct {
 		line string
@@ -179,7 +183,7 @@ func (s *AntigravityGatewayService) handleGeminiStreamingResponse(c *gin.Context
 
 	// 上游数据间隔超时保护（防止上游挂起长期占用连接）
 	streamInterval := time.Duration(0)
-	if s.settingService.cfg != nil && s.settingService.cfg.Gateway.StreamDataIntervalTimeout > 0 {
+	if s.settingService != nil && s.settingService.cfg != nil && s.settingService.cfg.Gateway.StreamDataIntervalTimeout > 0 {
 		streamInterval = time.Duration(s.settingService.cfg.Gateway.StreamDataIntervalTimeout) * time.Second
 	}
 	var intervalTicker *time.Ticker
@@ -194,7 +198,7 @@ func (s *AntigravityGatewayService) handleGeminiStreamingResponse(c *gin.Context
 
 	// 下游 keepalive：防止代理/Cloudflare Tunnel 因连接空闲而断开
 	keepaliveInterval := time.Duration(0)
-	if s.settingService.cfg != nil && s.settingService.cfg.Gateway.StreamKeepaliveInterval > 0 {
+	if s.settingService != nil && s.settingService.cfg != nil && s.settingService.cfg.Gateway.StreamKeepaliveInterval > 0 {
 		keepaliveInterval = time.Duration(s.settingService.cfg.Gateway.StreamKeepaliveInterval) * time.Second
 	}
 	var keepaliveTicker *time.Ticker
@@ -217,19 +221,37 @@ func (s *AntigravityGatewayService) handleGeminiStreamingResponse(c *gin.Context
 			return
 		}
 		errorEventSent = true
-		_, _ = fmt.Fprintf(c.Writer, "event: error\ndata: {\"error\":\"%s\"}\n\n", reason)
+		payload, _ := json.Marshal(map[string]any{"error": map[string]any{"type": "upstream_error", "message": reason}})
+		_, _ = fmt.Fprintf(c.Writer, "event: error\ndata: %s\n\n", payload)
 		flusher.Flush()
+		MarkResponseCommitted(c)
 	}
 
 	for {
 		select {
 		case ev, ok := <-events:
 			if !ok {
+				if !sawTerminalEvent && ctx.Err() == nil && !cw.Disconnected() {
+					message := "Antigravity Gemini stream ended before a terminal event"
+					if ruleErr := s.antigravityStreamErrorHandlingRuleOverride(
+						ctx, c, account, resp.Header, 0, nil, reqModel, message, true, failoverUnsafeOutputForwarded,
+					); ruleErr != nil {
+						return &antigravityStreamResult{usage: usage, firstTokenMs: firstTokenMs}, ruleErr
+					}
+					sendErrorEvent(message)
+					return &antigravityStreamResult{usage: usage, firstTokenMs: firstTokenMs}, errors.New("stream usage incomplete: missing terminal event")
+				}
 				return &antigravityStreamResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: cw.Disconnected()}, nil
 			}
 			if ev.err != nil {
 				if disconnect, handled := handleStreamReadError(ev.err, cw.Disconnected(), "antigravity gemini"); handled {
 					return &antigravityStreamResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: disconnect}, nil
+				}
+				if ruleErr := s.antigravityStreamErrorHandlingRuleOverride(
+					ctx, c, account, resp.Header, 0, nil, reqModel,
+					"Antigravity Gemini stream read error: "+ev.err.Error(), true, failoverUnsafeOutputForwarded,
+				); ruleErr != nil {
+					return &antigravityStreamResult{usage: usage, firstTokenMs: firstTokenMs}, ruleErr
 				}
 				if errors.Is(ev.err, bufio.ErrTooLong) {
 					logger.LegacyPrintf("service.antigravity_gateway", "SSE line too long (antigravity): max_size=%d error=%v", maxLineSize, ev.err)
@@ -248,6 +270,9 @@ func (s *AntigravityGatewayService) handleGeminiStreamingResponse(c *gin.Context
 			if strings.HasPrefix(trimmed, "data:") {
 				payload := strings.TrimSpace(strings.TrimPrefix(trimmed, "data:"))
 				if payload == "" || payload == "[DONE]" {
+					if payload == "[DONE]" {
+						sawTerminalEvent = true
+					}
 					cw.Fprintf("%s\n", line)
 					continue
 				}
@@ -257,6 +282,19 @@ func (s *AntigravityGatewayService) handleGeminiStreamingResponse(c *gin.Context
 				if parseErr == nil && inner != nil {
 					payload = string(inner)
 				}
+				streamPayload := inner
+				if len(streamPayload) == 0 {
+					streamPayload = []byte(payload)
+				}
+				if statusCode, errorBody, message, isError := antigravityStreamErrorPayload(streamPayload); isError {
+					if ruleErr := s.antigravityStreamErrorHandlingRuleOverride(
+						ctx, c, account, resp.Header, statusCode, errorBody, reqModel, message, false, failoverUnsafeOutputForwarded,
+					); ruleErr != nil {
+						return &antigravityStreamResult{usage: usage, firstTokenMs: firstTokenMs}, ruleErr
+					}
+					sendErrorEvent(message)
+					return &antigravityStreamResult{usage: usage, firstTokenMs: firstTokenMs}, fmt.Errorf("upstream response failed: %s", message)
+				}
 
 				// 解析 usage
 				if u := extractGeminiUsage(inner); u != nil {
@@ -264,6 +302,9 @@ func (s *AntigravityGatewayService) handleGeminiStreamingResponse(c *gin.Context
 				}
 				var parsed map[string]any
 				if json.Unmarshal(inner, &parsed) == nil {
+					if strings.TrimSpace(extractGeminiFinishReason(parsed)) != "" {
+						sawTerminalEvent = true
+					}
 					// Check for MALFORMED_FUNCTION_CALL
 					if candidates, ok := parsed["candidates"].([]any); ok && len(candidates) > 0 {
 						if cand, ok := candidates[0].(map[string]any); ok {
@@ -285,10 +326,14 @@ func (s *AntigravityGatewayService) handleGeminiStreamingResponse(c *gin.Context
 				}
 
 				cw.Fprintf("data: %s\n\n", payload)
+				failoverUnsafeOutputForwarded = true
 				continue
 			}
 
 			cw.Fprintf("%s\n", line)
+			if trimmed != "" && !strings.HasPrefix(trimmed, ":") {
+				failoverUnsafeOutputForwarded = true
+			}
 
 		case <-intervalCh:
 			lastRead := time.Unix(0, atomic.LoadInt64(&lastReadAt))
@@ -300,6 +345,12 @@ func (s *AntigravityGatewayService) handleGeminiStreamingResponse(c *gin.Context
 				return &antigravityStreamResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: true}, nil
 			}
 			logger.LegacyPrintf("service.antigravity_gateway", "Stream data interval timeout (antigravity)")
+			if ruleErr := s.antigravityStreamErrorHandlingRuleOverride(
+				ctx, c, account, resp.Header, 0, nil, reqModel,
+				"Antigravity Gemini stream data interval timeout", true, failoverUnsafeOutputForwarded,
+			); ruleErr != nil {
+				return &antigravityStreamResult{usage: usage, firstTokenMs: firstTokenMs}, ruleErr
+			}
 			sendErrorEvent("stream_timeout")
 			return &antigravityStreamResult{usage: usage, firstTokenMs: firstTokenMs}, fmt.Errorf("stream data interval timeout")
 
@@ -327,7 +378,7 @@ func (s *AntigravityGatewayService) handleGeminiStreamToNonStreaming(c *gin.Cont
 	}
 	scanner := bufio.NewScanner(resp.Body)
 	maxLineSize := defaultMaxLineSize
-	if s.settingService.cfg != nil && s.settingService.cfg.Gateway.MaxLineSize > 0 {
+	if s.settingService != nil && s.settingService.cfg != nil && s.settingService.cfg.Gateway.MaxLineSize > 0 {
 		maxLineSize = s.settingService.cfg.Gateway.MaxLineSize
 	}
 	scanBuf := getSSEScannerBuf64K()
@@ -376,7 +427,7 @@ func (s *AntigravityGatewayService) handleGeminiStreamToNonStreaming(c *gin.Cont
 
 	// 上游数据间隔超时保护（防止上游挂起长期占用连接）
 	streamInterval := time.Duration(0)
-	if s.settingService.cfg != nil && s.settingService.cfg.Gateway.StreamDataIntervalTimeout > 0 {
+	if s.settingService != nil && s.settingService.cfg != nil && s.settingService.cfg.Gateway.StreamDataIntervalTimeout > 0 {
 		streamInterval = time.Duration(s.settingService.cfg.Gateway.StreamDataIntervalTimeout) * time.Second
 	}
 	var intervalTicker *time.Ticker
@@ -801,7 +852,7 @@ func (s *AntigravityGatewayService) collectClaudeStreamResponse(c *gin.Context, 
 	}
 	scanner := bufio.NewScanner(resp.Body)
 	maxLineSize := defaultMaxLineSize
-	if s.settingService.cfg != nil && s.settingService.cfg.Gateway.MaxLineSize > 0 {
+	if s.settingService != nil && s.settingService.cfg != nil && s.settingService.cfg.Gateway.MaxLineSize > 0 {
 		maxLineSize = s.settingService.cfg.Gateway.MaxLineSize
 	}
 	scanBuf := getSSEScannerBuf64K()
@@ -849,7 +900,7 @@ func (s *AntigravityGatewayService) collectClaudeStreamResponse(c *gin.Context, 
 
 	// 上游数据间隔超时保护（防止上游挂起长期占用连接）
 	streamInterval := time.Duration(0)
-	if s.settingService.cfg != nil && s.settingService.cfg.Gateway.StreamDataIntervalTimeout > 0 {
+	if s.settingService != nil && s.settingService.cfg != nil && s.settingService.cfg.Gateway.StreamDataIntervalTimeout > 0 {
 		streamInterval = time.Duration(s.settingService.cfg.Gateway.StreamDataIntervalTimeout) * time.Second
 	}
 	var intervalTicker *time.Ticker
@@ -1003,7 +1054,9 @@ func (s *AntigravityGatewayService) handleClaudeStreamToNonStreaming(c *gin.Cont
 }
 
 // handleClaudeStreamingResponse 处理 Claude 流式响应（Gemini SSE → Claude SSE 转换）
-func (s *AntigravityGatewayService) handleClaudeStreamingResponse(c *gin.Context, resp *http.Response, startTime time.Time, originalModel string) (*antigravityStreamResult, error) {
+func (s *AntigravityGatewayService) handleClaudeStreamingResponse(c *gin.Context, resp *http.Response, startTime time.Time, originalModel string, options ...antigravityStreamRuleOptions) (*antigravityStreamResult, error) {
+	ruleOptions := resolveAntigravityStreamRuleOptions(c, options)
+	ctx, account := ruleOptions.ctx, ruleOptions.account
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
@@ -1017,10 +1070,12 @@ func (s *AntigravityGatewayService) handleClaudeStreamingResponse(c *gin.Context
 
 	processor := antigravity.NewStreamingProcessor(originalModel)
 	var firstTokenMs *int
+	failoverUnsafeOutputForwarded := false
+	sawTerminalEvent := false
 	// 使用 Scanner 并限制单行大小，避免 ReadString 无上限导致 OOM
 	scanner := bufio.NewScanner(resp.Body)
 	maxLineSize := defaultMaxLineSize
-	if s.settingService.cfg != nil && s.settingService.cfg.Gateway.MaxLineSize > 0 {
+	if s.settingService != nil && s.settingService.cfg != nil && s.settingService.cfg.Gateway.MaxLineSize > 0 {
 		maxLineSize = s.settingService.cfg.Gateway.MaxLineSize
 	}
 	scanBuf := getSSEScannerBuf64K()
@@ -1072,7 +1127,7 @@ func (s *AntigravityGatewayService) handleClaudeStreamingResponse(c *gin.Context
 	defer close(done)
 
 	streamInterval := time.Duration(0)
-	if s.settingService.cfg != nil && s.settingService.cfg.Gateway.StreamDataIntervalTimeout > 0 {
+	if s.settingService != nil && s.settingService.cfg != nil && s.settingService.cfg.Gateway.StreamDataIntervalTimeout > 0 {
 		streamInterval = time.Duration(s.settingService.cfg.Gateway.StreamDataIntervalTimeout) * time.Second
 	}
 	var intervalTicker *time.Ticker
@@ -1087,7 +1142,7 @@ func (s *AntigravityGatewayService) handleClaudeStreamingResponse(c *gin.Context
 
 	// 下游 keepalive：防止代理/Cloudflare Tunnel 因连接空闲而断开
 	keepaliveInterval := time.Duration(0)
-	if s.settingService.cfg != nil && s.settingService.cfg.Gateway.StreamKeepaliveInterval > 0 {
+	if s.settingService != nil && s.settingService.cfg != nil && s.settingService.cfg.Gateway.StreamKeepaliveInterval > 0 {
 		keepaliveInterval = time.Duration(s.settingService.cfg.Gateway.StreamKeepaliveInterval) * time.Second
 	}
 	var keepaliveTicker *time.Ticker
@@ -1110,8 +1165,10 @@ func (s *AntigravityGatewayService) handleClaudeStreamingResponse(c *gin.Context
 			return
 		}
 		errorEventSent = true
-		_, _ = fmt.Fprintf(c.Writer, "event: error\ndata: {\"error\":\"%s\"}\n\n", reason)
+		payload, _ := json.Marshal(map[string]any{"type": "error", "error": map[string]any{"type": "upstream_error", "message": reason}})
+		_, _ = fmt.Fprintf(c.Writer, "event: error\ndata: %s\n\n", payload)
 		flusher.Flush()
+		MarkResponseCommitted(c)
 	}
 
 	// finishUsage 是获取 processor 最终 usage 的辅助函数
@@ -1124,6 +1181,23 @@ func (s *AntigravityGatewayService) handleClaudeStreamingResponse(c *gin.Context
 		select {
 		case ev, ok := <-events:
 			if !ok {
+				if !sawTerminalEvent && ctx.Err() == nil && !cw.Disconnected() {
+					message := "Antigravity Claude stream ended before a terminal event"
+					if ruleErr := s.antigravityStreamErrorHandlingRuleOverride(
+						ctx, c, account, resp.Header, 0, nil, originalModel, message, true, failoverUnsafeOutputForwarded,
+					); ruleErr != nil {
+						return &antigravityStreamResult{usage: finishUsage(), firstTokenMs: firstTokenMs}, ruleErr
+					}
+					if !processor.MessageStartSent() {
+						return nil, &UpstreamFailoverError{
+							StatusCode:             http.StatusBadGateway,
+							ResponseBody:           []byte(`{"error":"empty stream response from upstream"}`),
+							RetryableOnSameAccount: true,
+						}
+					}
+					sendErrorEvent(message)
+					return &antigravityStreamResult{usage: finishUsage(), firstTokenMs: firstTokenMs}, errors.New("stream usage incomplete: missing terminal event")
+				}
 				// 上游完成，发送结束事件
 				finalEvents, agUsage := processor.Finish()
 				if len(finalEvents) > 0 {
@@ -1144,6 +1218,12 @@ func (s *AntigravityGatewayService) handleClaudeStreamingResponse(c *gin.Context
 				if disconnect, handled := handleStreamReadError(ev.err, cw.Disconnected(), "antigravity claude"); handled {
 					return &antigravityStreamResult{usage: finishUsage(), firstTokenMs: firstTokenMs, clientDisconnect: disconnect}, nil
 				}
+				if ruleErr := s.antigravityStreamErrorHandlingRuleOverride(
+					ctx, c, account, resp.Header, 0, nil, originalModel,
+					"Antigravity Claude stream read error: "+ev.err.Error(), true, failoverUnsafeOutputForwarded,
+				); ruleErr != nil {
+					return &antigravityStreamResult{usage: finishUsage(), firstTokenMs: firstTokenMs}, ruleErr
+				}
 				if errors.Is(ev.err, bufio.ErrTooLong) {
 					logger.LegacyPrintf("service.antigravity_gateway", "SSE line too long (antigravity): max_size=%d error=%v", maxLineSize, ev.err)
 					sendErrorEvent("response_too_large")
@@ -1155,10 +1235,32 @@ func (s *AntigravityGatewayService) handleClaudeStreamingResponse(c *gin.Context
 
 			lastDataAt = time.Now()
 			s.observeAntigravityGeminiSSELine(c, ev.line)
+			if data, ok := extractOpenAISSEDataLine(ev.line); ok {
+				payload := []byte(strings.TrimSpace(data))
+				if inner, err := s.unwrapV1InternalResponse(payload); err == nil && len(inner) > 0 {
+					payload = inner
+				}
+				if statusCode, errorBody, message, isError := antigravityStreamErrorPayload(payload); isError {
+					if ruleErr := s.antigravityStreamErrorHandlingRuleOverride(
+						ctx, c, account, resp.Header, statusCode, errorBody, originalModel, message, false, failoverUnsafeOutputForwarded,
+					); ruleErr != nil {
+						return &antigravityStreamResult{usage: finishUsage(), firstTokenMs: firstTokenMs}, ruleErr
+					}
+					sendErrorEvent(message)
+					return &antigravityStreamResult{usage: finishUsage(), firstTokenMs: firstTokenMs}, fmt.Errorf("upstream response failed: %s", message)
+				}
+				var parsed map[string]any
+				if json.Unmarshal(payload, &parsed) == nil {
+					if strings.TrimSpace(extractGeminiFinishReason(parsed)) != "" {
+						sawTerminalEvent = true
+					}
+				}
+			}
 
 			// 处理 SSE 行，转换为 Claude 格式
 			claudeEvents := processor.ProcessLine(strings.TrimRight(ev.line, "\r\n"))
 			if len(claudeEvents) > 0 {
+				failoverUnsafeOutputForwarded = true
 				if firstTokenMs == nil {
 					ms := int(time.Since(startTime).Milliseconds())
 					firstTokenMs = &ms
@@ -1176,6 +1278,12 @@ func (s *AntigravityGatewayService) handleClaudeStreamingResponse(c *gin.Context
 				return &antigravityStreamResult{usage: finishUsage(), firstTokenMs: firstTokenMs, clientDisconnect: true}, nil
 			}
 			logger.LegacyPrintf("service.antigravity_gateway", "Stream data interval timeout (antigravity)")
+			if ruleErr := s.antigravityStreamErrorHandlingRuleOverride(
+				ctx, c, account, resp.Header, 0, nil, originalModel,
+				"Antigravity Claude stream data interval timeout", true, failoverUnsafeOutputForwarded,
+			); ruleErr != nil {
+				return &antigravityStreamResult{usage: finishUsage(), firstTokenMs: firstTokenMs}, ruleErr
+			}
 			sendErrorEvent("stream_timeout")
 			return &antigravityStreamResult{usage: convertUsage(nil), firstTokenMs: firstTokenMs}, fmt.Errorf("stream data interval timeout")
 

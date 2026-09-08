@@ -387,6 +387,19 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		if sawTerminalEvent && !sawFailedEvent {
 			s.clearOpenAIProxyStreamDisconnect(account)
 		}
+		if !sawTerminalEvent && ctx.Err() == nil {
+			message := "OpenAI stream ended before a terminal event"
+			if ruleErr := s.openAIStreamErrorHandlingRuleOverride(ctx, c, openAIStreamErrorHandlingRuleInput{
+				Account:                account,
+				Header:                 resp.Header,
+				Message:                message,
+				ReqModel:               mappedModel,
+				SyntheticStatus:        true,
+				SemanticEventForwarded: responsesSemanticOutputSeen,
+			}); ruleErr != nil {
+				return resultWithUsage(), ruleErr
+			}
+		}
 		if !sawTerminalEvent && !openAIStreamClientOutputStarted(c, clientOutputStarted) && !eventShouldFlush {
 			return resultWithUsage(), s.newOpenAIStreamFailoverError(
 				c,
@@ -447,6 +460,17 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				flushPending("Client disconnected during canceled stream flush, returning collected usage")
 			}
 			return resultWithUsage(), fmt.Errorf("stream usage incomplete: %w", scanErr), true
+		}
+		message := "OpenAI stream read error: " + scanErr.Error()
+		if ruleErr := s.openAIStreamErrorHandlingRuleOverride(ctx, c, openAIStreamErrorHandlingRuleInput{
+			Account:                account,
+			Header:                 resp.Header,
+			Message:                message,
+			ReqModel:               mappedModel,
+			SyntheticStatus:        true,
+			SemanticEventForwarded: responsesSemanticOutputSeen,
+		}); ruleErr != nil {
+			return resultWithUsage(), ruleErr, true
 		}
 		if errors.Is(scanErr, bufio.ErrTooLong) {
 			logger.LegacyPrintf("service.openai_gateway", "SSE line too long: account=%d max_size=%d error=%v", account.ID, maxLineSize, scanErr)
@@ -549,6 +573,22 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 					if compactErr := newOpenAICompactFallbackSignal(c, dataBytes, failedMessage); compactErr != nil {
 						sawFailedEvent = true
 						streamEarlyErr = compactErr
+						return
+					}
+				}
+				if !cyberHit && (!codexFailureTerminal || eventType != "error") {
+					if ruleErr := s.openAIStreamErrorHandlingRuleOverride(ctx, c, openAIStreamErrorHandlingRuleInput{
+						Account:                account,
+						Header:                 resp.Header,
+						Payload:                dataBytes,
+						Message:                failedMessage,
+						ReqModel:               mappedModel,
+						SemanticEventForwarded: responsesSemanticOutputSeen,
+					}); ruleErr != nil {
+						sawFailedEvent = true
+						suppressCurrentEvent = true
+						terminalFailurePending = false
+						streamEarlyErr = ruleErr
 						return
 					}
 				}
@@ -900,6 +940,16 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				return resultWithUsage(), fmt.Errorf("stream usage incomplete after timeout")
 			}
 			logger.LegacyPrintf("service.openai_gateway", "Stream data interval timeout: account=%d model=%s interval=%s", account.ID, originalModel, streamInterval)
+			if ruleErr := s.openAIStreamErrorHandlingRuleOverride(ctx, c, openAIStreamErrorHandlingRuleInput{
+				Account:                account,
+				Header:                 resp.Header,
+				Message:                "OpenAI responses stream data interval timeout",
+				ReqModel:               mappedModel,
+				SyntheticStatus:        true,
+				SemanticEventForwarded: responsesSemanticOutputSeen,
+			}); ruleErr != nil {
+				return resultWithUsage(), ruleErr
+			}
 			// 处理流超时，可能标记账户为临时不可调度或错误状态
 			if s.rateLimitService != nil {
 				s.rateLimitService.HandleStreamTimeout(ctx, account, originalModel)

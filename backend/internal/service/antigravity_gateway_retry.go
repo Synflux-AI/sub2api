@@ -586,6 +586,13 @@ urlFallbackLoop:
 					logger.LegacyPrintf("service.antigravity_gateway", "%s URL fallback (connection error): %s -> %s", p.prefix, baseURL, availableURLs[urlIdx+1])
 					continue urlFallbackLoop
 				}
+				// URL fallback 属于会改变目标地址的内置纠错，优先保留；没有可用
+				// fallback 后，规则必须在通用退避之前看到首次 transport 失败。
+				if p.ctx.Err() == nil {
+					if ruleErr := s.antigravityTransportErrorRuleOverride(p.ctx, p.c, p.account, safeErr); ruleErr != nil {
+						return nil, ruleErr
+					}
+				}
 				if attempt < antigravityMaxRetries {
 					logger.LegacyPrintf("service.antigravity_gateway", "%s status=request_failed retry=%d/%d error=%v", p.prefix, attempt, antigravityMaxRetries, err)
 					if !sleepAntigravityBackoffWithContext(p.ctx, attempt) {
@@ -596,19 +603,6 @@ urlFallbackLoop:
 				}
 				logger.LegacyPrintf("service.antigravity_gateway", "%s status=request_failed retries_exhausted error=%v", p.prefix, err)
 				setOpsUpstreamError(p.c, 0, safeErr, "")
-				// #228 task-10：客户端断连不算真正的传输层失败——upstream 请求已经
-				// 打出去，没人会读响应，规则换号是纯粹空耗还可能误伤账号。
-				// antigravityRetryLoop 顶部的 ctx.Done() 检查只覆盖下一次 attempt
-				// 开始前的取消，重试预算耗尽的这最后一击仍可能是同一次客户端取消，
-				// 必须在这里单独排除。这一处接线覆盖 ForwardGemini 与
-				// forwardAntigravityCompat/handleAntigravityCompatTransportError
-				// 两条转发链——它们都已经在这个 err 上先判过
-				// `err.(*UpstreamFailoverError)`，命中就直接当 failover 错误用。
-				if p.ctx.Err() == nil {
-					if ruleErr := s.antigravityTransportErrorRuleOverride(p.ctx, p.c, p.account, safeErr); ruleErr != nil {
-						return nil, ruleErr
-					}
-				}
 				return nil, fmt.Errorf("upstream request failed after retries: %w", err)
 			}
 
@@ -667,6 +661,7 @@ urlFallbackLoop:
 					// 更靠后的 attempt 已经是内置重试预算的一部分，不应该被规则半路打断。
 					if attempt == 1 && p.ruleOverride != nil {
 						if failoverErr, handled := p.ruleOverride(resp.StatusCode, resp.Header, respBody); handled {
+							p.handleError(p.ctx, p.prefix, p.account, resp.StatusCode, resp.Header, respBody, p.requestedModel, p.groupID, p.sessionHash, p.isStickySession)
 							return nil, failoverErr
 						}
 					}
@@ -714,6 +709,7 @@ urlFallbackLoop:
 					// 内置 3 次通用重试耗尽之前被问到，只在 attempt==1 问一次。
 					if attempt == 1 && p.ruleOverride != nil {
 						if failoverErr, handled := p.ruleOverride(resp.StatusCode, resp.Header, respBody); handled {
+							p.handleError(p.ctx, p.prefix, p.account, resp.StatusCode, resp.Header, respBody, p.requestedModel, p.groupID, p.sessionHash, p.isStickySession)
 							return nil, failoverErr
 						}
 					}

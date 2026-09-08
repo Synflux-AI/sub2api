@@ -150,6 +150,10 @@ type openAIErrorHandlingRuleInput struct {
 	// upstream_status_code：那一列为 NULL 正是「这是传输层失败、根本没有 HTTP 响应」
 	// 的判定依据（#189 就是靠 `upstream_status_code IS NULL` 把那 128 条捞出来的）。
 	SyntheticStatus bool
+
+	// SemanticEventForwarded 表示当前流已经向客户端写出语义内容。共享执行层据此
+	// 把 retry / failover 降级成安全的 passthrough 终态。
+	SemanticEventForwarded bool
 }
 
 // openAIErrorHandlingRuleOverride 问一次规则引擎，命中就返回规则版的 failover 错误。
@@ -174,16 +178,21 @@ func (s *OpenAIGatewayService) openAIErrorHandlingRuleOverride(
 	}
 
 	return executeErrorHandlingRule(c, errorHandlingRuleExecInput{
-		Settings:            settings,
-		Account:             account,
-		StatusCode:          statusCode,
-		Header:              respHeader,
-		Body:                respBody,
-		BuiltinOwns:         openAIBuiltinOwnsError(statusCode, sanitizeUpstreamErrorMessage(strings.TrimSpace(extractUpstreamErrorMessage(respBody))), respBody, account),
-		BuiltinWillFailover: in.BuiltinWillFailover,
-		SyntheticStatus:     in.SyntheticStatus,
-		SafeError:           safeOpenAIError,
+		Settings:               settings,
+		Account:                account,
+		StatusCode:             statusCode,
+		Header:                 respHeader,
+		Body:                   respBody,
+		BuiltinOwns:            openAIBuiltinOwnsError(statusCode, sanitizeUpstreamErrorMessage(strings.TrimSpace(extractUpstreamErrorMessage(respBody))), respBody, account),
+		BuiltinWillFailover:    in.BuiltinWillFailover,
+		SyntheticStatus:        in.SyntheticStatus,
+		SemanticEventForwarded: in.SemanticEventForwarded,
+		SafeError:              safeOpenAIError,
 		AccountAccounting: func() {
+			if account.Platform == PlatformGrok {
+				s.handleGrokAccountUpstreamError(withGrokTeamRateLimitModel(ctx, in.ReqModel), account, statusCode, respHeader, respBody)
+				return
+			}
 			s.handleOpenAIAccountUpstreamError(ctx, account, statusCode, respHeader, respBody, in.ReqModel)
 		},
 		LogDecision: func(decision errorHandlingRuleDecision, effectiveAction string) {
@@ -219,6 +228,59 @@ func (s *OpenAIGatewayService) openAITransportErrorRuleOverride(
 	if !handled {
 		return nil
 	}
+	return failoverErr
+}
+
+type openAIStreamErrorHandlingRuleInput struct {
+	Account                *Account
+	Header                 http.Header
+	Payload                []byte
+	Message                string
+	ReqModel               string
+	StatusCode             int
+	SyntheticStatus        bool
+	SemanticEventForwarded bool
+}
+
+func (s *OpenAIGatewayService) openAIStreamErrorHandlingRuleOverride(
+	ctx context.Context,
+	c *gin.Context,
+	in openAIStreamErrorHandlingRuleInput,
+) *UpstreamFailoverError {
+	message := sanitizeUpstreamErrorMessage(strings.TrimSpace(in.Message))
+	if message == "" {
+		message = "OpenAI stream failed"
+	}
+	body := in.Payload
+	statusCode := in.StatusCode
+	if in.SyntheticStatus {
+		statusCode = openAITransportRuleSyntheticStatus
+		body = syntheticTransportRuleBody(message)
+	} else if statusCode == 0 {
+		statusCode = openAIStreamFailedEventSemanticStatus(body, message)
+	}
+	if len(body) == 0 {
+		body = syntheticTransportRuleBody(message)
+	}
+	failoverErr, handled := s.openAIErrorHandlingRuleOverride(ctx, c, openAIErrorHandlingRuleInput{
+		Account:                in.Account,
+		StatusCode:             statusCode,
+		Header:                 in.Header,
+		Body:                   body,
+		ReqModel:               in.ReqModel,
+		BuiltinWillFailover:    false,
+		SyntheticStatus:        in.SyntheticStatus,
+		SemanticEventForwarded: in.SemanticEventForwarded,
+	})
+	if !handled {
+		return nil
+	}
+	failoverErr.SafeToFailoverAfterWrite = !in.SemanticEventForwarded
+	failoverErr.SafeErrorType = "upstream_error"
+	if statusCode == http.StatusTooManyRequests {
+		failoverErr.SafeErrorType = "rate_limit_error"
+	}
+	failoverErr.SafeErrorMessage = message
 	return failoverErr
 }
 

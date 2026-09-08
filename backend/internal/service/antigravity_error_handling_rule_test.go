@@ -648,8 +648,8 @@ func TestAntigravityTransportErrorRuleOverride_NoMatchReturnsNil(t *testing.T) {
 
 // ==================== #228 task-10：antigravityRetryLoop 的实际接线点 ====================
 //
-// 唯一调用点在 antigravityRetryLoop 内部——同账号重试与 URL fallback 全部耗尽
-// 之后（见 antigravity_gateway_retry.go）。这一处接线同时覆盖 ForwardGemini 与
+// 唯一调用点在 antigravityRetryLoop 内部——URL fallback 耗尽后、同账号通用退避
+// 之前（见 antigravity_gateway_retry.go）。这一处接线同时覆盖 ForwardGemini 与
 // forwardAntigravityCompat/handleAntigravityCompatTransportError 两条转发链，
 // 它们都已经在这个 err 上先判过 `err.(*UpstreamFailoverError)`，所以直接驱动
 // antigravityRetryLoop 就足以证明两条链都会生效，不需要分别驱动 ForwardGemini 和
@@ -670,7 +670,7 @@ func TestAntigravityRetryLoop_TransportErrorRuleTakesEffect(t *testing.T) {
 	var failoverErr *UpstreamFailoverError
 	require.ErrorAs(t, err, &failoverErr)
 	require.Equal(t, "retry-loop-lost-ping", failoverErr.ErrorRuleID)
-	require.Equal(t, antigravityMaxRetries, upstream.calls, "必须先耗尽内置重试预算才问规则")
+	require.Equal(t, 1, upstream.calls, "规则命中后必须在首次失败停止通用退避重试")
 
 	_, ok := c.Get(OpsUpstreamStatusCodeKey)
 	require.False(t, ok, "合成状态码不得落进 ops_error_logs 顶层列")
@@ -704,16 +704,15 @@ func TestAntigravityRetryLoop_TransportErrorNoRuleUnchangedOutput(t *testing.T) 
 
 // ==================== #228 task-10：客户端断连必须排除在规则匹配之外 ====================
 //
-// antigravityRetryLoop 顶部的 `<-p.ctx.Done()` 检查只覆盖"下一次 attempt 开始前"
-// 的取消；这里让取消发生在最后一次（第 antigravityMaxRetries 次）Do() 调用返回
-// 之后、重试预算刚耗尽的那一刻——顶部检查完全看不到这次取消，只有紧邻
+// antigravityRetryLoop 顶部的 `<-p.ctx.Done()` 检查只覆盖请求发出前的取消；
+// 这里让取消发生在首次 Do() 调用返回之后——顶部检查看不到这次取消，只有紧邻
 // antigravityTransportErrorRuleOverride 调用点前的 `p.ctx.Err() == nil` 单独判断
 // 能兜住它。
 func TestAntigravityRetryLoop_TransportError_ClientDisconnectedSkipsRule(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	upstream := antigravityTransportErrTestUpstream()
 	upstream.cancel = cancel
-	upstream.cancelAfter = antigravityMaxRetries
+	upstream.cancelAfter = 1
 
 	account := antigravityRuleAccount()
 	svc := &AntigravityGatewayService{settingService: newAntigravityRuleSettingService(t, ErrorHandlingRule{
@@ -729,7 +728,7 @@ func TestAntigravityRetryLoop_TransportError_ClientDisconnectedSkipsRule(t *test
 	require.Nil(t, result)
 	var failoverErr *UpstreamFailoverError
 	require.False(t, errors.As(err, &failoverErr), "客户端已断开：不能被规则接管")
-	require.Equal(t, antigravityMaxRetries, upstream.calls)
+	require.Equal(t, 1, upstream.calls)
 	for _, ev := range opsUpstreamErrorEvents(t, c) {
 		require.NotEqual(t, "error_handling_rule_failover", ev.Kind, "不该出现规则接管的事件")
 	}

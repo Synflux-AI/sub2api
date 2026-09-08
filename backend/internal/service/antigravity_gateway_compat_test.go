@@ -723,8 +723,9 @@ func TestAntigravityCompatKeepaliveAfterFirstEvent(t *testing.T) {
 	require.NoError(t, err)
 	time.Sleep(1200 * time.Millisecond)
 	require.NoError(t, writer.Close())
-	require.NoError(t, <-done)
+	require.EqualError(t, <-done, "stream usage incomplete: missing terminal event")
 	require.Contains(t, recorder.Body.String(), ": ping\n\n")
+	require.Equal(t, 1, strings.Count(recorder.Body.String(), "event: error"))
 	require.Contains(t, recorder.Header().Get("Content-Type"), "text/event-stream")
 	require.NoError(t, reader.Close())
 }

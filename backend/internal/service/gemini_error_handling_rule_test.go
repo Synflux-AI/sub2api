@@ -373,10 +373,8 @@ func TestGeminiTransportErrorRuleOverride_NoMatchReturnsNil(t *testing.T) {
 // ==================== #228 task-10：三条转发链的实际接线点 ====================
 //
 // geminiCompatHTTPUpstreamStub.err 一旦设置，Do 每次调用都返回同一个错误
-// （见 gemini_messages_compat_service_test.go），正好模拟「重试预算耗尽、
-// 每次都是同一个连接失败」。geminiMaxRetries=5、sleepGeminiBackoff 不感知
-// context 取消，耗尽前会真实睡满 1+2+4+8=15s —— 这些测试因此比其余用例慢，
-// 但这是唯一能证明「接线点真的在这条转发链的这个 return 点上」的方式。
+// （见 gemini_messages_compat_service_test.go）。规则命中必须在首次 transport 失败时
+// 接管，未命中才继续走完整的内置重试预算。
 
 func geminiTransportErrTestUpstream() *geminiCompatHTTPUpstreamStub {
 	return &geminiCompatHTTPUpstreamStub{err: errors.New("dial tcp: connection reset by peer")}
@@ -397,7 +395,7 @@ func TestGeminiForward_TransportErrorRuleTakesEffect(t *testing.T) {
 	var failoverErr *UpstreamFailoverError
 	require.ErrorAs(t, err, &failoverErr)
 	require.Equal(t, "forward-lost-ping", failoverErr.ErrorRuleID)
-	require.Equal(t, geminiMaxRetries, httpStub.calls, "必须先耗尽内置重试预算才问规则")
+	require.Equal(t, 1, httpStub.calls, "规则命中后不得先消耗内置重试预算")
 
 	_, ok := c.Get(OpsUpstreamStatusCodeKey)
 	require.False(t, ok, "合成状态码不得落进 ops_error_logs 顶层列")

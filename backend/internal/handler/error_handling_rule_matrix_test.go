@@ -151,6 +151,7 @@ func TestErrorHandlingRuleMatrix_ChatCompletions(t *testing.T) {
 func TestErrorHandlingRuleMatrix_Responses(t *testing.T) {
 	t.Run("retry_budget_shared_mechanism", func(t *testing.T) {
 		retryBudgetSharedRefs(t)
+		matrixAssertTestExists(t, ".", "TestOpenAIWSSameAccountRetryAllowed_RuleBudget")
 	})
 	t.Run("exhausted_passthrough", func(t *testing.T) {
 		matrixAssertTestExists(t, ".",
@@ -159,6 +160,7 @@ func TestErrorHandlingRuleMatrix_Responses(t *testing.T) {
 			"TestHandleFailoverExhaustedUsesResponsesFailedEventForResponsesRequest",
 			"TestHandleResponsesFailoverExhaustedUsesRuleSafeResponseFailedAfterStreamStart",
 			"TestHandleResponsesFailoverExhaustedWithoutRuleKeepsGenericError", // miss：#228 task-12 修复轮1 补
+			"TestOpenAIWSFailoverExhausted_RulePassthroughPreservesSyntheticStatus",
 		)
 	})
 }

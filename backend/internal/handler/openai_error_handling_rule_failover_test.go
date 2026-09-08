@@ -118,6 +118,42 @@ func TestSameAccountRetryAllowed_RuleBudget(t *testing.T) {
 	require.False(t, sameAccountRetryAllowed(failoverErr, 2, limit), "预算耗尽后必须换号")
 }
 
+func TestOpenAIWSSameAccountRetryAllowed_RuleBudget(t *testing.T) {
+	account := &service.Account{ID: 61, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey}
+	limit := 2
+	failoverErr := &service.UpstreamFailoverError{
+		StatusCode: http.StatusServiceUnavailable, RetryableOnSameAccount: true,
+		RuleRetryLimit: &limit, ErrorRuleID: "rule-ws",
+	}
+
+	require.True(t, openAIWSSameAccountRetryAllowed(account, failoverErr, 0))
+	require.True(t, openAIWSSameAccountRetryAllowed(account, failoverErr, 1))
+	require.False(t, openAIWSSameAccountRetryAllowed(account, failoverErr, 2))
+	require.False(t, openAIWSSameAccountRetryAllowed(account, &service.UpstreamFailoverError{StatusCode: http.StatusServiceUnavailable}, 0))
+}
+
+func TestOpenAIWSFailoverExhausted_RulePassthroughPreservesSyntheticStatus(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+
+	closeOpenAIWSFailoverExhausted(c, nil, &service.UpstreamFailoverError{
+		StatusCode:       http.StatusBadGateway,
+		ExhaustedAction:  service.ErrorHandlingExhaustedActionPassthrough,
+		SafeErrorType:    "upstream_error",
+		SafeErrorMessage: "upstream stream interrupted",
+		SyntheticStatus:  true,
+	})
+
+	streamErr, ok := service.GetOpsStreamError(c)
+	require.True(t, ok)
+	require.Equal(t, "upstream_error", streamErr.ErrType)
+	require.Equal(t, "upstream stream interrupted", streamErr.Message)
+	require.Zero(t, streamErr.IntendedStatus, "合成 502 不得伪装成真实上游状态")
+	require.True(t, streamErr.CountTowardsSLA)
+}
+
 // ==================== PR #194 评审后的补丁覆盖 ====================
 
 // failoverOpenAIUpstreamHTTPError 是三条 *_anthropic_native 路径的汇聚点，而

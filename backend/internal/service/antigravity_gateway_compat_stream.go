@@ -2,6 +2,7 @@ package service
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -115,6 +116,8 @@ type antigravityCompatStreamSession struct {
 	firstTokenMs   *int
 	startTime      time.Time
 	meaningfulData bool
+	semanticOutput bool
+	terminalEvent  bool
 }
 
 func newAntigravityCompatStreamSession(
@@ -193,6 +196,12 @@ func (s *antigravityCompatStreamSession) consumeClaudeData(eventType, payload st
 	if event.Message != nil {
 		mergeAnthropicUsage(s.usage, event.Message.Usage)
 	}
+	if event.Type == "message_stop" {
+		s.terminalEvent = true
+	}
+	if isSemanticAntigravityCompatEvent(&event) {
+		s.semanticOutput = true
+	}
 	s.emitOrBuffer(event)
 }
 
@@ -242,6 +251,21 @@ func isMeaningfulAntigravityCompatEvent(event *apicompat.AnthropicStreamEvent) b
 	return false
 }
 
+func isSemanticAntigravityCompatEvent(event *apicompat.AnthropicStreamEvent) bool {
+	if event == nil {
+		return false
+	}
+	if event.ContentBlock != nil {
+		block := event.ContentBlock
+		return block.Type == "tool_use" || block.Text != "" || block.Thinking != "" || block.Signature != "" || block.Source != nil
+	}
+	if event.Delta != nil {
+		delta := event.Delta
+		return delta.Text != "" || delta.PartialJSON != "" || delta.Thinking != "" || delta.Signature != ""
+	}
+	return false
+}
+
 func mergeAntigravityCompatUsage(dst *ClaudeUsage, src *antigravity.ClaudeUsage) {
 	if dst == nil || src == nil {
 		return
@@ -254,10 +278,13 @@ func mergeAntigravityCompatUsage(dst *ClaudeUsage, src *antigravity.ClaudeUsage)
 }
 
 func (s *AntigravityGatewayService) handleAntigravityCompatStream(
+	ctx context.Context,
 	c *gin.Context,
 	resp *http.Response,
+	account *Account,
 	startTime time.Time,
 	originalModel string,
+	reqModel string,
 	adapter antigravityCompatStreamAdapter,
 	prefix string,
 ) (*antigravityStreamResult, error) {
@@ -292,26 +319,53 @@ func (s *AntigravityGatewayService) handleAntigravityCompatStream(
 		select {
 		case event, open := <-events:
 			if !open {
+				if !session.terminalEvent && ctx.Err() == nil && !writer.Disconnected() {
+					message := "Antigravity compatibility stream ended before a terminal event"
+					if ruleErr := s.antigravityStreamErrorHandlingRuleOverride(
+						ctx, c, account, resp.Header, 0, nil, reqModel, message, true, session.semanticOutput,
+					); ruleErr != nil {
+						return session.collectResult(false), ruleErr
+					}
+					if session.hasMeaningfulData() {
+						writeAntigravityCompatStreamError(c, adapter, writer, message)
+						return session.collectResult(false), errors.New("stream usage incomplete: missing terminal event")
+					}
+				}
 				if !session.hasMeaningfulData() && !writer.Disconnected() {
 					return nil, antigravityCompatEmptyStreamError()
 				}
 				return session.finish(), nil
 			}
 			if event.err != nil {
-				return s.handleAntigravityCompatReadError(c, session, event.err, maxLineSize, prefix)
+				return s.handleAntigravityCompatReadError(ctx, c, resp, account, reqModel, session, event.err, maxLineSize, prefix)
 			}
 			resetAntigravityCompatTimer(timeoutTimer, timeout)
 			s.observeAntigravityGeminiSSELine(c, event.line)
+			if statusCode, errorBody, message, isError := s.antigravityCompatStreamLineError(event.line); isError {
+				if ruleErr := s.antigravityStreamErrorHandlingRuleOverride(
+					ctx, c, account, resp.Header, statusCode, errorBody, reqModel, message, false, session.semanticOutput,
+				); ruleErr != nil {
+					return session.collectResult(false), ruleErr
+				}
+				writeAntigravityCompatStreamError(c, adapter, writer, message)
+				return session.collectResult(false), fmt.Errorf("upstream response failed: %s", message)
+			}
 			session.consume(event.line)
 
 		case <-timeoutCh:
 			if writer.Disconnected() {
 				return session.collectResult(true), nil
 			}
+			logger.LegacyPrintf("service.antigravity_gateway", "Stream data interval timeout (%s)", prefix)
+			if ruleErr := s.antigravityStreamErrorHandlingRuleOverride(
+				ctx, c, account, resp.Header, 0, nil, reqModel,
+				"Antigravity compatibility stream data interval timeout", true, session.semanticOutput,
+			); ruleErr != nil {
+				return session.collectResult(false), ruleErr
+			}
 			if !session.hasMeaningfulData() {
 				return nil, antigravityCompatEmptyStreamError()
 			}
-			logger.LegacyPrintf("service.antigravity_gateway", "Stream data interval timeout (%s)", prefix)
 			writeAntigravityCompatStreamError(c, adapter, writer, "stream_timeout")
 			return session.collectResult(false), fmt.Errorf("stream data interval timeout")
 
@@ -321,6 +375,21 @@ func (s *AntigravityGatewayService) handleAntigravityCompatStream(
 			}
 		}
 	}
+}
+
+func (s *AntigravityGatewayService) antigravityCompatStreamLineError(line string) (int, []byte, string, bool) {
+	data, ok := extractOpenAISSEDataLine(line)
+	if !ok {
+		return 0, nil, "", false
+	}
+	payload := []byte(strings.TrimSpace(data))
+	if len(payload) == 0 || string(payload) == "[DONE]" {
+		return 0, nil, "", false
+	}
+	if inner, err := s.unwrapV1InternalResponse(payload); err == nil && len(inner) > 0 {
+		payload = inner
+	}
+	return antigravityStreamErrorPayload(payload)
 }
 
 func (s *AntigravityGatewayService) startAntigravityCompatScanner(
@@ -400,17 +469,27 @@ func resetAntigravityCompatTimer(timer *time.Timer, timeout time.Duration) {
 }
 
 func (s *AntigravityGatewayService) handleAntigravityCompatReadError(
+	ctx context.Context,
 	c *gin.Context,
+	resp *http.Response,
+	account *Account,
+	reqModel string,
 	session *antigravityCompatStreamSession,
 	err error,
 	maxLineSize int,
 	prefix string,
 ) (*antigravityStreamResult, error) {
-	if !session.hasMeaningfulData() && !session.writer.Disconnected() {
-		return nil, antigravityCompatEmptyStreamError()
-	}
 	if disconnect, handled := handleStreamReadError(err, session.writer.Disconnected(), prefix); handled {
 		return session.collectResult(disconnect), nil
+	}
+	if ruleErr := s.antigravityStreamErrorHandlingRuleOverride(
+		ctx, c, account, resp.Header, 0, nil, reqModel,
+		"Antigravity compatibility stream read error: "+err.Error(), true, session.semanticOutput,
+	); ruleErr != nil {
+		return session.collectResult(false), ruleErr
+	}
+	if !session.hasMeaningfulData() {
+		return nil, antigravityCompatEmptyStreamError()
 	}
 	if errors.Is(err, bufio.ErrTooLong) {
 		logger.LegacyPrintf("service.antigravity_gateway", "SSE line too long (%s): max_size=%d error=%v", prefix, maxLineSize, err)
@@ -446,12 +525,17 @@ func (s *AntigravityGatewayService) handleChatCompletionsStreamingFromAntigravit
 	startTime time.Time,
 	originalModel string,
 	includeUsage bool,
+	options ...antigravityStreamRuleOptions,
 ) (*antigravityStreamResult, error) {
+	ruleOptions := resolveAntigravityStreamRuleOptions(c, options)
 	return s.handleAntigravityCompatStream(
+		ruleOptions.ctx,
 		c,
 		resp,
+		ruleOptions.account,
 		startTime,
 		originalModel,
+		ruleOptions.reqModel,
 		newAntigravityChatStreamAdapter(originalModel, includeUsage),
 		"antigravity chat completions stream",
 	)
@@ -462,12 +546,17 @@ func (s *AntigravityGatewayService) handleResponsesStreamingFromAntigravity(
 	resp *http.Response,
 	startTime time.Time,
 	originalModel string,
+	options ...antigravityStreamRuleOptions,
 ) (*antigravityStreamResult, error) {
+	ruleOptions := resolveAntigravityStreamRuleOptions(c, options)
 	return s.handleAntigravityCompatStream(
+		ruleOptions.ctx,
 		c,
 		resp,
+		ruleOptions.account,
 		startTime,
 		originalModel,
+		ruleOptions.reqModel,
 		newAntigravityResponsesStreamAdapter(originalModel),
 		"antigravity responses stream",
 	)

@@ -578,6 +578,7 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 
 		// 5) forward (根据平台分流)
 		var result *service.ForwardResult
+		writerSizeBeforeForward := c.Writer.Size()
 		requestCtx := c.Request.Context()
 		if fs.SwitchCount > 0 {
 			requestCtx = service.WithAccountSwitchCount(requestCtx, fs.SwitchCount, h.metadataBridgeEnabled())
@@ -604,6 +605,10 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 		if err != nil {
 			var failoverErr *service.UpstreamFailoverError
 			if errors.As(err, &failoverErr) {
+				if !gatewayForwardMayFailover(c, writerSizeBeforeForward, failoverErr) {
+					h.handleGeminiFailoverExhausted(c, failoverErr)
+					return
+				}
 				// 走 effectiveSameAccountRetryLimit 而不是裸的 GetPoolModeRetryCount()：
 				// 裸调用会让账号基数顶掉规则显式配的 RuleRetryLimit，两种基数取值
 				// 都会错——账号非 pool-mode 或未显式配置时基数是默认值 3，规则配了

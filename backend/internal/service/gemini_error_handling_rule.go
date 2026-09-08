@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/tidwall/gjson"
 	"go.uber.org/zap"
 )
 
@@ -122,6 +123,11 @@ type geminiErrorHandlingRuleInput struct {
 	// **匹配**，绝不能写进 ops_error_logs 顶层的 upstream_status_code：那一列为 NULL
 	// 正是「这是传输层失败」的判定依据。由 logGeminiErrorHandlingRuleDecision 负责落实。
 	SyntheticStatus bool
+
+	// SemanticEventForwarded 表示当前流已经向客户端写出语义内容。规则命中 retry /
+	// failover 时，共享执行层会把动作降级为 passthrough，避免在已提交的流后拼接
+	// 另一个账号的响应。
+	SemanticEventForwarded bool
 }
 
 // geminiErrorHandlingRuleOverride 问一次规则引擎，命中就返回规则版的 failover 错误。
@@ -153,15 +159,16 @@ func (s *GeminiMessagesCompatService) geminiErrorHandlingRuleOverride(
 	lowerMsg := strings.ToLower(strings.TrimSpace(extractUpstreamErrorMessage(respBody)))
 
 	return executeErrorHandlingRule(c, errorHandlingRuleExecInput{
-		Settings:            settings,
-		Account:             account,
-		StatusCode:          statusCode,
-		Header:              respHeader,
-		Body:                respBody,
-		BuiltinOwns:         geminiBuiltinOwnsError(statusCode, lowerMsg, respBody),
-		BuiltinWillFailover: in.BuiltinWillFailover,
-		SyntheticStatus:     in.SyntheticStatus,
-		SafeError:           safeGeminiError,
+		Settings:               settings,
+		Account:                account,
+		StatusCode:             statusCode,
+		Header:                 respHeader,
+		Body:                   respBody,
+		BuiltinOwns:            geminiBuiltinOwnsError(statusCode, lowerMsg, respBody),
+		BuiltinWillFailover:    in.BuiltinWillFailover,
+		SyntheticStatus:        in.SyntheticStatus,
+		SemanticEventForwarded: in.SemanticEventForwarded,
+		SafeError:              safeGeminiError,
 		// 记账已在接线点之前由 handleGeminiUpstreamError 跑完，不再补跑，否则会重复
 		// 扣账号健康分。
 		AccountAccounting: nil,
@@ -210,6 +217,55 @@ func (s *GeminiMessagesCompatService) geminiTransportErrorRuleOverride(
 	if !handled {
 		return nil
 	}
+	return failoverErr
+}
+
+func geminiStreamErrorPayload(payload []byte) (int, []byte, bool) {
+	if !gjson.GetBytes(payload, "error").Exists() {
+		return 0, nil, false
+	}
+	statusCode := int(gjson.GetBytes(payload, "error.code").Int())
+	if statusCode < 400 || statusCode > 599 {
+		statusCode = http.StatusBadGateway
+	}
+	return statusCode, payload, true
+}
+
+func (s *GeminiMessagesCompatService) geminiStreamErrorHandlingRuleOverride(
+	ctx context.Context,
+	c *gin.Context,
+	account *Account,
+	header http.Header,
+	statusCode int,
+	body []byte,
+	reqModel string,
+	message string,
+	syntheticStatus bool,
+	semanticEventForwarded bool,
+) *UpstreamFailoverError {
+	message = sanitizeUpstreamErrorMessage(strings.TrimSpace(message))
+	if message == "" {
+		message = "Gemini stream failed"
+	}
+	if syntheticStatus {
+		statusCode = geminiTransportRuleSyntheticStatus
+		body = syntheticTransportRuleBody(message)
+	}
+	failoverErr, handled := s.geminiErrorHandlingRuleOverride(ctx, c, geminiErrorHandlingRuleInput{
+		Account:                account,
+		StatusCode:             statusCode,
+		Header:                 header,
+		Body:                   body,
+		ReqModel:               reqModel,
+		BuiltinWillFailover:    true,
+		SyntheticStatus:        syntheticStatus,
+		SemanticEventForwarded: semanticEventForwarded,
+	})
+	if !handled {
+		return nil
+	}
+	s.handleGeminiUpstreamError(ctx, account, statusCode, header, body)
+	failoverErr.SafeToFailoverAfterWrite = !semanticEventForwarded
 	return failoverErr
 }
 

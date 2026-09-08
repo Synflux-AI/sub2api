@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/gin-gonic/gin"
+	"github.com/tidwall/gjson"
 )
 
 // ForwardUpstream 使用 base_url + /v1/messages + 双 header 认证透传上游 Claude 请求
@@ -87,6 +89,12 @@ func (s *AntigravityGatewayService) ForwardUpstream(ctx context.Context, c *gin.
 	resp, err := timedUpstreamDo(c, s.httpUpstream, req, proxyURL, account.ID, account.Concurrency)
 	if err != nil {
 		logger.LegacyPrintf("service.antigravity_gateway", "%s upstream request failed: %v", prefix, err)
+		safeErr := sanitizeUpstreamErrorMessage(err.Error())
+		if ctx.Err() == nil {
+			if ruleErr := s.antigravityTransportErrorRuleOverride(ctx, c, account, safeErr); ruleErr != nil {
+				return nil, ruleErr
+			}
+		}
 		return nil, fmt.Errorf("upstream request failed: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
@@ -98,6 +106,19 @@ func (s *AntigravityGatewayService) ForwardUpstream(ctx context.Context, c *gin.
 		// 429 错误时标记账号限流
 		if resp.StatusCode == http.StatusTooManyRequests {
 			s.handleUpstreamError(ctx, prefix, account, resp.StatusCode, resp.Header, respBody, originalModel, 0, "", false)
+		}
+		if failoverErr, handled := s.antigravityErrorHandlingRuleOverride(ctx, c, antigravityErrorHandlingRuleInput{
+			Account:             account,
+			StatusCode:          resp.StatusCode,
+			Header:              resp.Header,
+			Body:                respBody,
+			ReqModel:            originalModel,
+			BuiltinWillFailover: false,
+		}); handled {
+			if resp.StatusCode != http.StatusTooManyRequests {
+				s.handleUpstreamError(ctx, prefix, account, resp.StatusCode, resp.Header, respBody, originalModel, 0, "", false)
+			}
+			return nil, failoverErr
 		}
 
 		// 透传上游错误
@@ -123,7 +144,10 @@ func (s *AntigravityGatewayService) ForwardUpstream(ctx context.Context, c *gin.
 		c.Header("X-Accel-Buffering", "no")
 		c.Status(http.StatusOK)
 
-		streamRes := s.streamUpstreamResponse(c, resp, startTime)
+		streamRes, err := s.streamUpstreamResponseWithRules(ctx, c, resp, account, startTime, originalModel)
+		if err != nil {
+			return nil, err
+		}
 		usage = streamRes.usage
 		firstTokenMs = streamRes.firstTokenMs
 		clientDisconnect = streamRes.clientDisconnect
@@ -165,14 +189,26 @@ func (s *AntigravityGatewayService) ForwardUpstream(ctx context.Context, c *gin.
 	}, nil
 }
 
-// streamUpstreamResponse 透传上游 SSE 流并提取 Claude usage
+// streamUpstreamResponse 保留旧的测试入口；生产转发使用带规则上下文的版本。
 func (s *AntigravityGatewayService) streamUpstreamResponse(c *gin.Context, resp *http.Response, startTime time.Time) *antigravityStreamResult {
+	ctx := context.Background()
+	if c != nil && c.Request != nil {
+		ctx = c.Request.Context()
+	}
+	result, _ := s.streamUpstreamResponseWithRules(ctx, c, resp, nil, startTime, "")
+	return result
+}
+
+// streamUpstreamResponseWithRules 透传上游 SSE 流、执行流内错误规则并提取 Claude usage。
+func (s *AntigravityGatewayService) streamUpstreamResponseWithRules(ctx context.Context, c *gin.Context, resp *http.Response, account *Account, startTime time.Time, reqModel string) (*antigravityStreamResult, error) {
 	usage := &ClaudeUsage{}
 	var firstTokenMs *int
+	sawTerminalEvent := false
+	pendingEventLine := ""
 
 	scanner := bufio.NewScanner(resp.Body)
 	maxLineSize := defaultMaxLineSize
-	if s.settingService.cfg != nil && s.settingService.cfg.Gateway.MaxLineSize > 0 {
+	if s.settingService != nil && s.settingService.cfg != nil && s.settingService.cfg.Gateway.MaxLineSize > 0 {
 		maxLineSize = s.settingService.cfg.Gateway.MaxLineSize
 	}
 	scanner.Buffer(make([]byte, 64*1024), maxLineSize)
@@ -208,7 +244,7 @@ func (s *AntigravityGatewayService) streamUpstreamResponse(c *gin.Context, resp 
 	defer close(done)
 
 	streamInterval := time.Duration(0)
-	if s.settingService.cfg != nil && s.settingService.cfg.Gateway.StreamDataIntervalTimeout > 0 {
+	if s.settingService != nil && s.settingService.cfg != nil && s.settingService.cfg.Gateway.StreamDataIntervalTimeout > 0 {
 		streamInterval = time.Duration(s.settingService.cfg.Gateway.StreamDataIntervalTimeout) * time.Second
 	}
 	var intervalTicker *time.Ticker
@@ -223,7 +259,7 @@ func (s *AntigravityGatewayService) streamUpstreamResponse(c *gin.Context, resp 
 
 	// 下游 keepalive：防止代理/Cloudflare Tunnel 因连接空闲而断开
 	keepaliveInterval := time.Duration(0)
-	if s.settingService.cfg != nil && s.settingService.cfg.Gateway.StreamKeepaliveInterval > 0 {
+	if s.settingService != nil && s.settingService.cfg != nil && s.settingService.cfg.Gateway.StreamKeepaliveInterval > 0 {
 		keepaliveInterval = time.Duration(s.settingService.cfg.Gateway.StreamKeepaliveInterval) * time.Second
 	}
 	var keepaliveTicker *time.Ticker
@@ -239,26 +275,89 @@ func (s *AntigravityGatewayService) streamUpstreamResponse(c *gin.Context, resp 
 
 	flusher, _ := c.Writer.(http.Flusher)
 	cw := newAntigravityClientWriter(c.Writer, flusher, "antigravity upstream")
+	errorEventSent := false
+	sendErrorEvent := func(reason string) {
+		if errorEventSent || cw.Disconnected() {
+			return
+		}
+		errorEventSent = true
+		reason = sanitizeUpstreamErrorMessage(strings.TrimSpace(reason))
+		if reason == "" {
+			reason = "Upstream stream failed"
+		}
+		payload, _ := json.Marshal(map[string]any{
+			"type":  "error",
+			"error": map[string]any{"type": "upstream_error", "message": reason},
+		})
+		cw.Fprintf("event: error\ndata: %s\n\n", payload)
+		MarkResponseCommitted(c)
+	}
+	result := func(clientDisconnect bool) *antigravityStreamResult {
+		return &antigravityStreamResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: clientDisconnect}
+	}
+	failoverUnsafeOutputForwarded := false
 
 	for {
 		select {
 		case ev, ok := <-events:
 			if !ok {
-				return &antigravityStreamResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: cw.Disconnected()}
+				if !sawTerminalEvent && ctx.Err() == nil && !cw.Disconnected() {
+					message := "Antigravity upstream stream ended before a terminal event"
+					if ruleErr := s.antigravityStreamErrorHandlingRuleOverride(
+						ctx, c, account, resp.Header, 0, nil, reqModel, message, true, failoverUnsafeOutputForwarded,
+					); ruleErr != nil {
+						return result(false), ruleErr
+					}
+					sendErrorEvent(message)
+					return result(false), errors.New("stream usage incomplete: missing terminal event")
+				}
+				return result(cw.Disconnected()), nil
 			}
 			if ev.err != nil {
 				if disconnect, handled := handleStreamReadError(ev.err, cw.Disconnected(), "antigravity upstream"); handled {
-					return &antigravityStreamResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: disconnect}
+					return result(disconnect), nil
+				}
+				if ruleErr := s.antigravityStreamErrorHandlingRuleOverride(
+					ctx, c, account, resp.Header, 0, nil, reqModel,
+					"Antigravity upstream stream read error: "+ev.err.Error(), true, failoverUnsafeOutputForwarded,
+				); ruleErr != nil {
+					return result(false), ruleErr
 				}
 				logger.LegacyPrintf("service.antigravity_gateway", "Stream read error (antigravity upstream): %v", ev.err)
-				return &antigravityStreamResult{usage: usage, firstTokenMs: firstTokenMs}
+				sendErrorEvent("stream_read_error")
+				return result(false), fmt.Errorf("stream read error: %w", ev.err)
 			}
 
 			lastDataAt = time.Now()
 
 			line := ev.line
+			if eventType, ok := extractOpenAISSEEventLine(line); ok {
+				pendingEventLine = "event: " + strings.TrimSpace(eventType)
+				continue
+			}
 			if data, ok := extractAnthropicSSEDataLine(line); ok {
-				upstreamResponseModelObserverFromContext(c).ObserveAnthropic([]byte(strings.TrimSpace(data)))
+				payload := []byte(strings.TrimSpace(data))
+				upstreamResponseModelObserverFromContext(c).ObserveAnthropic(payload)
+				eventType := strings.TrimSpace(gjson.GetBytes(payload, "type").String())
+				if eventType == "message_stop" {
+					sawTerminalEvent = true
+				}
+				if statusCode, errorBody, message, isError := antigravityStreamErrorPayload(payload); isError {
+					if ruleErr := s.antigravityStreamErrorHandlingRuleOverride(
+						ctx, c, account, resp.Header, statusCode, errorBody, reqModel, message, false, failoverUnsafeOutputForwarded,
+					); ruleErr != nil {
+						return result(false), ruleErr
+					}
+					if pendingEventLine != "" {
+						cw.Fprintf("%s\n", pendingEventLine)
+					}
+					cw.Fprintf("%s\n\n", line)
+					MarkResponseCommitted(c)
+					return result(false), fmt.Errorf("upstream response failed: %s", message)
+				}
+				if eventType != "ping" {
+					failoverUnsafeOutputForwarded = true
+				}
 			}
 
 			// 记录首 token 时间
@@ -271,7 +370,20 @@ func (s *AntigravityGatewayService) streamUpstreamResponse(c *gin.Context, resp 
 			s.extractSSEUsage(line, usage)
 
 			// 透传行
+			if pendingEventLine != "" {
+				cw.Fprintf("%s\n", pendingEventLine)
+				if !strings.EqualFold(strings.TrimSpace(strings.TrimPrefix(pendingEventLine, "event:")), "ping") {
+					failoverUnsafeOutputForwarded = true
+				}
+				pendingEventLine = ""
+			}
 			cw.Fprintf("%s\n", line)
+			if _, isDataLine := extractAnthropicSSEDataLine(line); !isDataLine {
+				trimmedLine := strings.TrimSpace(line)
+				if trimmedLine != "" && !strings.HasPrefix(trimmedLine, ":") {
+					failoverUnsafeOutputForwarded = true
+				}
+			}
 
 		case <-intervalCh:
 			lastRead := time.Unix(0, atomic.LoadInt64(&lastReadAt))
@@ -280,10 +392,17 @@ func (s *AntigravityGatewayService) streamUpstreamResponse(c *gin.Context, resp 
 			}
 			if cw.Disconnected() {
 				logger.LegacyPrintf("service.antigravity_gateway", "Upstream timeout after client disconnect (antigravity upstream), returning collected usage")
-				return &antigravityStreamResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: true}
+				return result(true), nil
 			}
 			logger.LegacyPrintf("service.antigravity_gateway", "Stream data interval timeout (antigravity upstream)")
-			return &antigravityStreamResult{usage: usage, firstTokenMs: firstTokenMs}
+			if ruleErr := s.antigravityStreamErrorHandlingRuleOverride(
+				ctx, c, account, resp.Header, 0, nil, reqModel,
+				"Antigravity upstream stream data interval timeout", true, failoverUnsafeOutputForwarded,
+			); ruleErr != nil {
+				return result(false), ruleErr
+			}
+			sendErrorEvent("stream_timeout")
+			return result(false), fmt.Errorf("stream data interval timeout")
 
 		case <-keepaliveCh:
 			if cw.Disconnected() {
