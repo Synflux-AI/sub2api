@@ -1237,6 +1237,7 @@ func (s *GatewayService) extractSSEUsagePatch(event map[string]any) *sseUsagePat
 				patch.hasCacheCreation1h = true
 			}
 		}
+		applyOpenAISemanticUsagePatch(usageObj, patch)
 		return patch
 
 	case "message_delta":
@@ -1272,10 +1273,60 @@ func (s *GatewayService) extractSSEUsagePatch(event map[string]any) *sseUsagePat
 				patch.hasCacheCreation1h = true
 			}
 		}
+		applyOpenAISemanticUsagePatch(usageObj, patch)
 		return patch
 	}
 
 	return nil
+}
+
+// applyOpenAISemanticUsagePatch 处理「Anthropic 形状 + OpenAI 语义」的上游 usage。
+//
+// 这类中转在 usage.billing_usage 里显式声明口径：semantic=openai 表示外层
+// input_tokens 是含缓存的 prompt 总量，同时附带原始 openai_usage。直接采信外层
+// 值会让缓存 token 先按 input 单价计一次、再按 cache read 单价计一次。
+// 未声明或声明为其它口径时不做任何改动，原生 Anthropic 上游行为不变。
+func applyOpenAISemanticUsagePatch(usageObj map[string]any, patch *sseUsagePatch) {
+	if patch == nil {
+		return
+	}
+	billing, _ := usageObj["billing_usage"].(map[string]any)
+	if len(billing) == 0 {
+		return
+	}
+	semantic, _ := billing["semantic"].(string)
+	if !strings.EqualFold(strings.TrimSpace(semantic), "openai") {
+		return
+	}
+	oaiUsage, _ := billing["openai_usage"].(map[string]any)
+	if len(oaiUsage) == 0 {
+		return
+	}
+	promptTokens, ok := parseSSEUsageInt(oaiUsage["prompt_tokens"])
+	if !ok || promptTokens <= 0 {
+		return
+	}
+
+	cacheReadTokens := 0
+	if patch.hasCacheReadInput {
+		cacheReadTokens = patch.cacheReadInputTokens
+	}
+	if details, ok := oaiUsage["prompt_tokens_details"].(map[string]any); ok {
+		if v, exists := parseSSEUsageInt(details["cached_tokens"]); exists && v > 0 {
+			cacheReadTokens = v
+		}
+	}
+	cacheCreationTokens := 0
+	if patch.hasCacheCreationInput {
+		cacheCreationTokens = patch.cacheCreationInputTokens
+	}
+
+	patch.inputTokens = max(promptTokens-cacheReadTokens-cacheCreationTokens, 0)
+	patch.hasInputTokens = true
+	if cacheReadTokens > 0 {
+		patch.cacheReadInputTokens = cacheReadTokens
+		patch.hasCacheReadInput = true
+	}
 }
 
 func mergeSSEUsagePatch(usage *ClaudeUsage, patch *sseUsagePatch) {
@@ -1444,6 +1495,12 @@ func (s *GatewayService) handleNonStreamingResponse(ctx context.Context, resp *h
 				body = newBody
 			}
 		}
+	}
+
+	// 上游显式声明 billing_usage.semantic=openai 时，外层 input_tokens 是含缓存的
+	// prompt 总量，按 openai_usage 还原互斥桶，避免缓存 token 再按 input 单价计一次。
+	if oaiNode, ok := openAISemanticUsageNode(gjson.GetBytes(body, "usage")); ok {
+		normalizeAnthropicCompatiblePromptUsage(oaiNode, &response.Usage)
 	}
 
 	// Cache TTL Override: 重写 non-streaming 响应中的 cache_creation 分类。
