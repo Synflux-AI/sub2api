@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log"
 	"log/slog"
+	"math"
 	"net/http"
 	"sort"
 	"strconv"
@@ -865,7 +866,11 @@ func (h *AccountHandler) List(c *gin.Context) {
 				score = s
 			}
 			tier := healthSvc.TierForScore(score)
-			item.HealthScore = &score
+			// 分层用原始分判定；下发的分取整。衰减分是按 time.Now() 连续变化的
+			// 浮点数，原样进 payload 会让列表 ETag 每次轮询都变，把自动刷新的
+			// 304 快路径打空。前端本就只展示 Math.round 后的整数，取整不改观感。
+			displayScore := math.Round(score)
+			item.HealthScore = &displayScore
 			item.HealthTier = &tier
 		}
 

@@ -1433,6 +1433,11 @@ const shouldReplaceAutoRefreshRow = (current: Account, next: Account) => {
     current.rate_limit_reset_at !== next.rate_limit_reset_at ||
     current.overload_until !== next.overload_until ||
     current.temp_unschedulable_until !== next.temp_unschedulable_until ||
+    // 健康分只存在 Redis，变化时不会 bump updated_at；不单独比对的话「健康分」
+    // 列会一直停在页面加载时的值（#235）。ttft 目前本页不渲染，且其 updated_at
+    // 每轮巡检都变，纳入比对会让整表每次自动刷新全量重建，故不比对。
+    current.health_score !== next.health_score ||
+    current.health_tier !== next.health_tier ||
     buildOpenAIUsageRefreshKey(current) !== buildOpenAIUsageRefreshKey(next) ||
     buildGrokUsageRefreshKey(current) !== buildGrokUsageRefreshKey(next)
   )

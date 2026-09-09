@@ -191,6 +191,35 @@ func TestAccountHandlerListLiteHealthKeepsETagStable(t *testing.T) {
 	require.Equal(t, http.StatusNotModified, rec304.Code)
 }
 
+// 衰减中的健康分是按 time.Now() 连续变化的浮点数。若原样进 payload，列表 ETag
+// 每次轮询都会变，自动刷新的 304 快路径对整页所有管理员失效——包括没开健康分列的。
+// 下发前取整即可让 ETag 只在整数位变化时失效。
+func TestAccountHandlerListLiteDecayingHealthKeepsETagStable(t *testing.T) {
+	now := time.Now().UTC()
+	// 半衰期 600s、已过 90s：100 - 58*0.5^0.15 ≈ 47.72，取整 48，离进位边界足够远。
+	entries := map[int64]service.HealthScoreEntry{501: {Score: 42, UpdatedAt: now.Add(-90 * time.Second)}}
+	router, adminSvc := setupAccountListHealthRouter(entries, nil)
+	adminSvc.accounts = accountListHealthAccounts(now)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/accounts?page=1&page_size=20&lite=1", nil)
+	router.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+	etag := rec.Header().Get("ETag")
+	require.NotEmpty(t, etag)
+
+	items := accountListItemsByID(t, rec.Body.Bytes())
+	require.Equal(t, float64(48), items[501]["health_score"], "下发的健康分必须是整数")
+
+	// 同一条 Redis 记录、只是又过了一点时间：衰减值已经变了，但取整后没变，
+	// ETag 必须仍然命中 304。
+	rec304 := httptest.NewRecorder()
+	req304 := httptest.NewRequest(http.MethodGet, "/api/v1/admin/accounts?page=1&page_size=20&lite=1", nil)
+	req304.Header.Set("If-None-Match", etag)
+	router.ServeHTTP(rec304, req304)
+	require.Equal(t, http.StatusNotModified, rec304.Code)
+}
+
 // 健康分变化必须改变 ETag，否则前端会一直拿到 304 而看到过期的分数。
 func TestAccountHandlerListLiteHealthChangeInvalidatesETag(t *testing.T) {
 	now := time.Now().UTC()
