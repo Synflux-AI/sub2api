@@ -279,6 +279,20 @@ func mergeAnthropicUsage(dst *ClaudeUsage, src apicompat.AnthropicUsage) {
 		return
 	}
 
+	// 上游在 billing_usage 里显式声明 OpenAI 口径时，把嵌套的原始用量抄到扁平
+	// 字段，后面沿用同一套还原逻辑。未声明时不动，原生 Anthropic 行为不变。
+	if bu := src.BillingUsage; bu != nil && strings.EqualFold(strings.TrimSpace(bu.Semantic), "openai") &&
+		bu.OpenAIUsage != nil && bu.OpenAIUsage.PromptTokens > 0 {
+		src.PromptTokens = bu.OpenAIUsage.PromptTokens
+		if src.CachedTokens == 0 {
+			src.CachedTokens = bu.OpenAIUsage.CachedTokens
+		}
+		if src.PromptTokensDetails == nil {
+			src.PromptTokensDetails = bu.OpenAIUsage.PromptTokensDetails
+		}
+		dst.OpenAISemanticDeclared = true
+	}
+
 	// Some Anthropic-compatible providers retain OpenAI-style prompt/cache
 	// fields. Prefer those authoritative totals or hit/miss buckets over the
 	// overloaded input_tokens field. This covers Kimi's changing stream
@@ -303,7 +317,9 @@ func mergeAnthropicUsage(dst *ClaudeUsage, src apicompat.AnthropicUsage) {
 		dst.CacheReadInputTokens = cacheReadTokens
 		dst.CacheCreationInputTokens = src.CacheCreationInputTokens
 	} else {
-		if src.InputTokens > 0 {
+		// 已声明 OpenAI 口径后，未自带声明的事件里那个裸 input_tokens 无法判断
+		// 是总量还是净输入，覆盖会把已还原的净输入打回总量。与另外两套解析器同规则。
+		if src.InputTokens > 0 && !dst.OpenAISemanticDeclared {
 			dst.InputTokens = src.InputTokens
 		}
 		if src.CacheReadInputTokens > 0 {

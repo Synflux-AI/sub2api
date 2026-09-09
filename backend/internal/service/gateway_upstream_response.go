@@ -1198,6 +1198,12 @@ type sseUsagePatch struct {
 	hasCacheCreation5m       bool
 	cacheCreation1hTokens    int
 	hasCacheCreation1h       bool
+	// 上游声明的 OpenAI 口径原始值（usage.billing_usage.semantic=openai）。
+	// 只在这里记录，真正的换算放到 mergeSSEUsagePatch —— 那里才拿得到跨事件
+	// 累计的 ClaudeUsage，否则 delta 事件缺 cache_creation/cached_tokens 时会算错。
+	openAISemanticPromptTokens int
+	openAISemanticCachedTokens int
+	hasOpenAISemantic          bool
 }
 
 func (s *GatewayService) extractSSEUsagePatch(event map[string]any) *sseUsagePatch {
@@ -1237,7 +1243,7 @@ func (s *GatewayService) extractSSEUsagePatch(event map[string]any) *sseUsagePat
 				patch.hasCacheCreation1h = true
 			}
 		}
-		applyOpenAISemanticUsagePatch(usageObj, patch)
+		readOpenAISemanticUsagePatch(usageObj, patch)
 		return patch
 
 	case "message_delta":
@@ -1273,20 +1279,21 @@ func (s *GatewayService) extractSSEUsagePatch(event map[string]any) *sseUsagePat
 				patch.hasCacheCreation1h = true
 			}
 		}
-		applyOpenAISemanticUsagePatch(usageObj, patch)
+		readOpenAISemanticUsagePatch(usageObj, patch)
 		return patch
 	}
 
 	return nil
 }
 
-// applyOpenAISemanticUsagePatch 处理「Anthropic 形状 + OpenAI 语义」的上游 usage。
+// readOpenAISemanticUsagePatch 读取「Anthropic 形状 + OpenAI 语义」上游在
+// usage.billing_usage 里显式声明的原始 OpenAI 用量。
 //
-// 这类中转在 usage.billing_usage 里显式声明口径：semantic=openai 表示外层
-// input_tokens 是含缓存的 prompt 总量，同时附带原始 openai_usage。直接采信外层
-// 值会让缓存 token 先按 input 单价计一次、再按 cache read 单价计一次。
-// 未声明或声明为其它口径时不做任何改动，原生 Anthropic 上游行为不变。
-func applyOpenAISemanticUsagePatch(usageObj map[string]any, patch *sseUsagePatch) {
+// semantic=openai 表示外层 input_tokens 是含缓存的 prompt 总量，直接采信会让
+// 缓存 token 先按 input 单价计一次、再按 cache read 单价计一次。这里只把声明
+// 抄进 patch，换算交给 mergeSSEUsagePatch（那里有跨事件累计值）。
+// 未声明或声明为其它口径时不写入任何字段，原生 Anthropic 上游行为不变。
+func readOpenAISemanticUsagePatch(usageObj map[string]any, patch *sseUsagePatch) {
 	if patch == nil {
 		return
 	}
@@ -1307,25 +1314,12 @@ func applyOpenAISemanticUsagePatch(usageObj map[string]any, patch *sseUsagePatch
 		return
 	}
 
-	cacheReadTokens := 0
-	if patch.hasCacheReadInput {
-		cacheReadTokens = patch.cacheReadInputTokens
-	}
+	patch.openAISemanticPromptTokens = promptTokens
+	patch.hasOpenAISemantic = true
 	if details, ok := oaiUsage["prompt_tokens_details"].(map[string]any); ok {
 		if v, exists := parseSSEUsageInt(details["cached_tokens"]); exists && v > 0 {
-			cacheReadTokens = v
+			patch.openAISemanticCachedTokens = v
 		}
-	}
-	cacheCreationTokens := 0
-	if patch.hasCacheCreationInput {
-		cacheCreationTokens = patch.cacheCreationInputTokens
-	}
-
-	patch.inputTokens = max(promptTokens-cacheReadTokens-cacheCreationTokens, 0)
-	patch.hasInputTokens = true
-	if cacheReadTokens > 0 {
-		patch.cacheReadInputTokens = cacheReadTokens
-		patch.hasCacheReadInput = true
 	}
 }
 
@@ -1334,7 +1328,9 @@ func mergeSSEUsagePatch(usage *ClaudeUsage, patch *sseUsagePatch) {
 		return
 	}
 
-	if patch.hasInputTokens {
+	// 上游已声明 OpenAI 口径时，未自带声明的事件里那个裸 input_tokens 无法判断
+	// 是总量还是净输入，覆盖会把已还原的净输入打回总量。与 gjson 路径同规则。
+	if patch.hasInputTokens && (patch.hasOpenAISemantic || !usage.OpenAISemanticDeclared) {
 		usage.InputTokens = patch.inputTokens
 	}
 	if patch.hasCacheCreationInput {
@@ -1351,6 +1347,20 @@ func mergeSSEUsagePatch(usage *ClaudeUsage, patch *sseUsagePatch) {
 	}
 	if patch.hasCacheCreation1h {
 		usage.CacheCreation1hTokens = patch.cacheCreation1hTokens
+	}
+
+	// 声明存在时按 prompt 总量还原净输入。种子必须取合并后的累计值：delta 事件
+	// 常常只回 output，缺 cache_creation / cached_tokens，只看本事件会少扣、
+	// 把缓存重新算进 input。
+	if patch.hasOpenAISemantic {
+		usage.OpenAISemanticDeclared = true
+		if patch.openAISemanticCachedTokens > 0 {
+			usage.CacheReadInputTokens = patch.openAISemanticCachedTokens
+		}
+		usage.InputTokens = max(
+			patch.openAISemanticPromptTokens-usage.CacheReadInputTokens-usage.CacheCreationInputTokens,
+			0,
+		)
 	}
 }
 
@@ -1500,6 +1510,14 @@ func (s *GatewayService) handleNonStreamingResponse(ctx context.Context, resp *h
 	// 上游显式声明 billing_usage.semantic=openai 时，外层 input_tokens 是含缓存的
 	// prompt 总量，按 openai_usage 还原互斥桶，避免缓存 token 再按 input 单价计一次。
 	if oaiNode, ok := openAISemanticUsageNode(gjson.GetBytes(body, "usage")); ok {
+		// 还原要从总量里扣掉 cache_creation，所以先把只给了嵌套 5m/1h 明细、
+		// 没给扁平聚合的情况补齐（与 parseClaudeUsageFromResponseBody 一致）。
+		if response.Usage.CacheCreationInputTokens == 0 {
+			if total := response.Usage.CacheCreation5mTokens + response.Usage.CacheCreation1hTokens; total > 0 {
+				response.Usage.CacheCreationInputTokens = total
+			}
+		}
+		response.Usage.OpenAISemanticDeclared = true
 		normalizeAnthropicCompatiblePromptUsage(oaiNode, &response.Usage)
 	}
 

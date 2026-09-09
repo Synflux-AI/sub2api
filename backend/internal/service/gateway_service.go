@@ -600,6 +600,11 @@ type ClaudeUsage struct {
 	CacheCreation5mTokens    int // 5分钟缓存创建token（来自嵌套 cache_creation 对象）
 	CacheCreation1hTokens    int // 1小时缓存创建token（来自嵌套 cache_creation 对象）
 	ImageOutputTokens        int `json:"image_output_tokens,omitempty"`
+	// OpenAISemanticDeclared 记录本次响应中上游是否声明过 OpenAI 口径
+	// （usage.billing_usage.semantic=openai）。声明过之后，后续未自带声明的
+	// 事件里那个裸 input_tokens 不再覆盖已还原的净输入。仅进程内使用，
+	// json:"-" 保证不出现在任何回给客户端的响应里。
+	OpenAISemanticDeclared bool `json:"-"`
 }
 
 // ForwardResult 转发结果

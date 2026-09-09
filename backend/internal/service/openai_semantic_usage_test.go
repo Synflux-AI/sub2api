@@ -1,8 +1,10 @@
 package service
 
 import (
+	"encoding/json"
 	"testing"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 	"github.com/stretchr/testify/require"
 )
 
@@ -183,4 +185,148 @@ func TestExtractSSEUsagePatchRestoresOpenAISemanticInput(t *testing.T) {
 			require.Equal(t, tt.wantCacheCreation, usage.CacheCreationInputTokens)
 		})
 	}
+}
+
+// ---------------------------------------------------------------------------
+// 多事件流：单事件用例抓不到 message_start → message_delta 的覆盖问题
+// ---------------------------------------------------------------------------
+
+const openAISemanticStartEvent = `{"type":"message_start","message":{"usage":{` +
+	`"input_tokens":50722,"cache_creation_input_tokens":0,"cache_read_input_tokens":50457,` +
+	`"billing_usage":{"semantic":"openai","openai_usage":{"prompt_tokens":50722,` +
+	`"prompt_tokens_details":{"cached_tokens":50457}}}}}}`
+
+func TestParseSSEUsagePassthroughKeepsRestoredInputAcrossDeltas(t *testing.T) {
+	tests := []struct {
+		name  string
+		delta string
+	}{
+		{
+			// 上游在 delta 里重复外层总量、且不带声明——裸值不能覆盖已还原的净输入。
+			name:  "delta 重复总量且无声明",
+			delta: `{"type":"message_delta","usage":{"input_tokens":50722,"output_tokens":316,"cache_read_input_tokens":50457}}`,
+		},
+		{
+			name:  "delta 只回 output",
+			delta: `{"type":"message_delta","usage":{"output_tokens":316}}`,
+		},
+		{
+			name:  "delta 重复声明",
+			delta: `{"type":"message_delta","usage":{"output_tokens":316,"billing_usage":{"semantic":"openai","openai_usage":{"prompt_tokens":50722,"prompt_tokens_details":{"cached_tokens":50457}}}}}`,
+		},
+		{
+			// 声明里 cached_tokens 缺失/为 0 时，种子要取累计的 cache_read。
+			name:  "delta 声明里 cached_tokens 为 0",
+			delta: `{"type":"message_delta","usage":{"output_tokens":316,"billing_usage":{"semantic":"openai","openai_usage":{"prompt_tokens":50722,"prompt_tokens_details":{"cached_tokens":0}}}}}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			usage := &ClaudeUsage{}
+			parseSSEUsagePassthrough(openAISemanticStartEvent, usage)
+			require.Equal(t, 265, usage.InputTokens, "message_start 应已还原净输入")
+			parseSSEUsagePassthrough(tt.delta, usage)
+			require.Equal(t, 265, usage.InputTokens, "delta 不得把净输入打回总量")
+			require.Equal(t, 50457, usage.CacheReadInputTokens)
+		})
+	}
+}
+
+// 原生 Anthropic 的 delta 语义必须保持原样：input_tokens 该覆盖就覆盖。
+func TestParseSSEUsagePassthroughNativeAnthropicDeltaStillOverwrites(t *testing.T) {
+	usage := &ClaudeUsage{}
+	parseSSEUsagePassthrough(`{"type":"message_start","message":{"usage":{"input_tokens":100,"cache_read_input_tokens":50457}}}`, usage)
+	parseSSEUsagePassthrough(`{"type":"message_delta","usage":{"input_tokens":265,"output_tokens":316}}`, usage)
+
+	require.Equal(t, 265, usage.InputTokens, "无声明时 delta 覆盖行为不变")
+	require.Equal(t, 50457, usage.CacheReadInputTokens)
+	require.False(t, usage.OpenAISemanticDeclared)
+}
+
+func TestExtractSSEUsagePatchKeepsRestoredInputAcrossDeltas(t *testing.T) {
+	svc := &GatewayService{}
+	decode := func(raw string) map[string]any {
+		var event map[string]any
+		require.NoError(t, json.Unmarshal([]byte(raw), &event))
+		return event
+	}
+
+	t.Run("delta 缺 cache_creation 时不得少扣", func(t *testing.T) {
+		usage := &ClaudeUsage{}
+		mergeSSEUsagePatch(usage, svc.extractSSEUsagePatch(decode(`{"type":"message_start","message":{"usage":{"input_tokens":50722,"cache_creation_input_tokens":1000,"cache_read_input_tokens":49457,"billing_usage":{"semantic":"openai","openai_usage":{"prompt_tokens":50722,"prompt_tokens_details":{"cached_tokens":49457}}}}}}`)))
+		require.Equal(t, 265, usage.InputTokens)
+		mergeSSEUsagePatch(usage, svc.extractSSEUsagePatch(decode(`{"type":"message_delta","usage":{"output_tokens":316,"billing_usage":{"semantic":"openai","openai_usage":{"prompt_tokens":50722,"prompt_tokens_details":{"cached_tokens":49457}}}}}`)))
+		require.Equal(t, 265, usage.InputTokens, "cache_creation 不得被重复计入 input")
+		require.Equal(t, 1000, usage.CacheCreationInputTokens)
+	})
+
+	t.Run("delta 裸 input_tokens 不得打回总量", func(t *testing.T) {
+		usage := &ClaudeUsage{}
+		mergeSSEUsagePatch(usage, svc.extractSSEUsagePatch(decode(`{"type":"message_start","message":{"usage":{"input_tokens":50722,"cache_read_input_tokens":50457,"billing_usage":{"semantic":"openai","openai_usage":{"prompt_tokens":50722,"prompt_tokens_details":{"cached_tokens":50457}}}}}}`)))
+		mergeSSEUsagePatch(usage, svc.extractSSEUsagePatch(decode(`{"type":"message_delta","usage":{"input_tokens":50722,"output_tokens":316}}`)))
+		require.Equal(t, 265, usage.InputTokens)
+	})
+
+	t.Run("原生 Anthropic delta 覆盖行为不变", func(t *testing.T) {
+		usage := &ClaudeUsage{}
+		mergeSSEUsagePatch(usage, svc.extractSSEUsagePatch(decode(`{"type":"message_start","message":{"usage":{"input_tokens":100,"cache_read_input_tokens":50457}}}`)))
+		mergeSSEUsagePatch(usage, svc.extractSSEUsagePatch(decode(`{"type":"message_delta","usage":{"input_tokens":265,"output_tokens":316}}`)))
+		require.Equal(t, 265, usage.InputTokens)
+		require.Equal(t, 50457, usage.CacheReadInputTokens)
+	})
+}
+
+// ---------------------------------------------------------------------------
+// 第三套解析器：apicompat.AnthropicUsage / mergeAnthropicUsage
+// ---------------------------------------------------------------------------
+
+func TestMergeAnthropicUsageHonorsBillingUsageDeclaration(t *testing.T) {
+	var start apicompat.AnthropicUsage
+	require.NoError(t, json.Unmarshal([]byte(`{"input_tokens":50722,"cache_creation_input_tokens":0,"cache_read_input_tokens":50457,`+
+		`"billing_usage":{"semantic":"openai","openai_usage":{"prompt_tokens":50722,"prompt_tokens_details":{"cached_tokens":50457}}}}`), &start))
+	require.NotNil(t, start.BillingUsage, "billing_usage 必须能反序列化出来")
+
+	usage := &ClaudeUsage{}
+	mergeAnthropicUsage(usage, start)
+	require.Equal(t, 265, usage.InputTokens)
+	require.Equal(t, 50457, usage.CacheReadInputTokens)
+
+	var delta apicompat.AnthropicUsage
+	require.NoError(t, json.Unmarshal([]byte(`{"input_tokens":50722,"output_tokens":316}`), &delta))
+	mergeAnthropicUsage(usage, delta)
+	require.Equal(t, 265, usage.InputTokens, "裸 input_tokens 不得打回总量")
+	require.Equal(t, 316, usage.OutputTokens)
+}
+
+func TestMergeAnthropicUsageLeavesNativeAnthropicUnchanged(t *testing.T) {
+	var native apicompat.AnthropicUsage
+	require.NoError(t, json.Unmarshal([]byte(`{"input_tokens":265,"output_tokens":316,"cache_creation_input_tokens":120,"cache_read_input_tokens":50457}`), &native))
+	require.Nil(t, native.BillingUsage)
+
+	usage := &ClaudeUsage{}
+	mergeAnthropicUsage(usage, native)
+	require.Equal(t, 265, usage.InputTokens)
+	require.Equal(t, 316, usage.OutputTokens)
+	require.Equal(t, 120, usage.CacheCreationInputTokens)
+	require.Equal(t, 50457, usage.CacheReadInputTokens)
+	require.False(t, usage.OpenAISemanticDeclared)
+}
+
+// ---------------------------------------------------------------------------
+// 线上契约：新增字段不得出现在任何回给客户端的 JSON 里
+// ---------------------------------------------------------------------------
+
+func TestUsageStructsDoNotLeakNewFieldsOnTheWire(t *testing.T) {
+	claudeUsage, err := json.Marshal(ClaudeUsage{InputTokens: 265, OutputTokens: 316, OpenAISemanticDeclared: true})
+	require.NoError(t, err)
+	require.NotContains(t, string(claudeUsage), "OpenAISemanticDeclared")
+	require.NotContains(t, string(claudeUsage), "openai_semantic")
+
+	// 各 *_anthropic_native.go 的出站 usage 都是这样的新建字面量。
+	outbound, err := json.Marshal(apicompat.AnthropicUsage{
+		InputTokens: 265, OutputTokens: 316, CacheReadInputTokens: 50457,
+	})
+	require.NoError(t, err)
+	require.NotContains(t, string(outbound), "billing_usage")
 }
