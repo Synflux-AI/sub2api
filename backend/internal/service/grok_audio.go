@@ -96,11 +96,26 @@ func (s *OpenAIGatewayService) ForwardGrokVoice(ctx context.Context, c *gin.Cont
 	resp, err := s.httpUpstream.Do(req, proxyURL, account.ID, account.Concurrency)
 	SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(started).Milliseconds())
 	if err != nil {
-		return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)
+		// ruleEligible=false: Grok Voice (tts/stt/custom-voices) is out of scope for
+		// #228 task-9 (images/videos generation only), same as the HTTP-response
+		// branch below. Without this, the transport-level path would leak into the
+		// rule engine even though the HTTP-response path never does — the generic
+		// wrapper handleOpenAIUpstreamTransportError defaults ruleEligible=true, so
+		// this call site must opt out explicitly via the WithURL variant.
+		return nil, s.handleOpenAIUpstreamTransportErrorWithURL(ctx, c, account, err, false, "", false)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
-		return s.handleGrokMediaErrorResponse(ctx, resp, c, account, resp.Header.Get("x-request-id"), endpoint)
+		// Grok Voice (tts/stt/custom-voices) is not a GrokMediaEndpoint value and is
+		// out of scope for #228 task-9 (images/videos generation only). Casting the
+		// raw endpoint string preserves exact existing behavior: none of "tts",
+		// "stt", or "custom-voices..." match any case in IsGenerationRequest(), so
+		// the error-handling-rule engine is never consulted on the HTTP-response
+		// path here, with zero new constants needed to keep it that way. (The
+		// transport-level path above enforces the same exclusion explicitly via
+		// ruleEligible=false, since that path does not go through
+		// handleGrokMediaErrorResponse's endpoint-based allowlist.)
+		return s.handleGrokMediaErrorResponse(ctx, resp, c, account, GrokMediaEndpoint(endpoint), resp.Header.Get("x-request-id"), endpoint)
 	}
 	data, err := ReadUpstreamResponseBody(resp.Body, s.cfg, c, openAITooLargeError)
 	if err != nil {

@@ -505,6 +505,43 @@ func TestPassthroughStreamEventBufferIsBoundedAcrossLines(t *testing.T) {
 	require.Empty(t, recorder.Body.String())
 }
 
+// FIX 3（#228 终审复补）：missing terminal event 合成的虚拟 502 命中
+// Action=ErrorHandlingActionPassthrough 规则时，走的是
+// writeAnthropicPassthroughStreamRuleError / anthropicPassthroughOpsStatusCode
+// 这个第 7 个消费点——现存的 missing-terminal 用例（
+// TestPassthroughStreamCleanEOFRetriesThroughVirtual502、
+// TestPassthroughStreamCleanEOFAfterLocalKeepaliveCanFailOver 等）全部用
+// Retry 或 Failover，这一种组合（missing terminal event + Passthrough）此前
+// 完全没有测试驱动过。两个断言缺一不可：
+//   - ops_error_logs 顶层列不能被合成状态码污染（否则 upstream_status_code
+//     不再是 NULL，判定"这是传输层失败"的依据被打穿）；
+//   - 客户端仍必须看到这个合成的 502 SSE 错误帧（否则会掉进"为了让 ops 干净而
+//     把客户端可见行为也改掉"这类修法，正是 FIX 3 划的硬约束）。
+func TestPassthroughStreamMissingTerminalPassthroughDoesNotPolluteOpsStatus(t *testing.T) {
+	upstream := &sequencedHTTPUpstream{responses: []sequencedUpstreamResponse{{status: 200, body: ""}}}
+	svc := newErrorHandlingRulePassthroughService(t, upstream, &ErrorHandlingRuleSettings{
+		Enabled: true,
+		Rules: []ErrorHandlingRule{{
+			ID: "early-eof-passthrough", StatusCodes: []int{http.StatusBadGateway}, Keywords: []string{"missing terminal event"},
+			Action: ErrorHandlingActionPassthrough, ExhaustedAction: ErrorHandlingExhaustedActionDefault,
+		}},
+	})
+	c, recorder := newErrorHandlingRuleTestContextWithRecorder()
+	_, err := svc.Forward(context.Background(), c, newErrorHandlingRulePassthroughAccount(), newErrorHandlingRuleStreamParsed(t))
+
+	require.ErrorContains(t, err, "upstream SSE error: 502")
+	require.Equal(t, 1, upstream.calls, "passthrough 是终止性动作，不应触发第二次上游请求")
+
+	// 客户端可见行为不受影响：仍然是合成的 502 SSE 错误帧，原样交付。
+	require.True(t, IsResponseCommitted(c))
+	require.Contains(t, recorder.Body.String(), "event: error")
+	require.Contains(t, recorder.Body.String(), anthropicStreamMissingTerminalMessage)
+
+	// ops_error_logs 顶层列不能被合成状态码污染：这一列必须保持未设置（NULL）。
+	_, ok := c.Get(OpsUpstreamStatusCodeKey)
+	require.False(t, ok, "合成状态码只能用于客户端响应，不得落进 ops_error_logs 顶层列")
+}
+
 func TestStreamRuleRetryIgnoresHTTPRetryElapsedWindow(t *testing.T) {
 	svc := newErrorHandlingRuleService(t, &ErrorHandlingRuleSettings{
 		Enabled: true, Rules: []ErrorHandlingRule{streamErrorRule(ErrorHandlingActionRetry, 1, ErrorHandlingExhaustedActionDefault)},

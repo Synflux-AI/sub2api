@@ -675,6 +675,7 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 	firstChunk := true
 	clientDisconnected := false
 	clientOutputStarted := false
+	semanticEventForwarded := false
 	pendingSSE := make([]string, 0, 4)
 	refusalDetector := newOpenAIChatSilentRefusalDetector(requestBodyLen)
 	var streamFailoverErr *UpstreamFailoverError
@@ -759,6 +760,9 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 				usage = copyOpenAIUsageFromResponsesUsage(event.Response.Usage)
 			}
 		}
+		if !isTerminalEvent && openAIStreamDataStartsClientOutput(payload, event.Type) {
+			semanticEventForwarded = true
+		}
 		if strings.TrimSpace(event.Type) == "response.failed" || strings.TrimSpace(event.Type) == "error" {
 			payloadBytes := []byte(payload)
 			message := extractOpenAISSEErrorMessage(payloadBytes)
@@ -791,6 +795,17 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 					// finalizeStream 的 [DONE] 同样发不出去，统一抑制。
 					clientDisconnected = true
 				}
+				return true
+			}
+			if ruleErr := s.openAIStreamErrorHandlingRuleOverride(c.Request.Context(), c, openAIStreamErrorHandlingRuleInput{
+				Account:                account,
+				Header:                 resp.Header,
+				Payload:                payloadBytes,
+				Message:                message,
+				ReqModel:               upstreamModel,
+				SemanticEventForwarded: semanticEventForwarded,
+			}); ruleErr != nil {
+				streamFailoverErr = ruleErr
 				return true
 			}
 			shouldFailover := openAIStreamFailedEventShouldFailover(payloadBytes, message)
@@ -979,7 +994,37 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 		}
 	}
 	missingTerminalErr := func() (*OpenAIForwardResult, error) {
+		if !clientDisconnected && c.Request.Context().Err() == nil {
+			if ruleErr := s.openAIStreamErrorHandlingRuleOverride(c.Request.Context(), c, openAIStreamErrorHandlingRuleInput{
+				Account:                account,
+				Header:                 resp.Header,
+				Message:                "OpenAI chat completions stream ended before a terminal event",
+				ReqModel:               upstreamModel,
+				SyntheticStatus:        true,
+				SemanticEventForwarded: semanticEventForwarded,
+			}); ruleErr != nil {
+				return resultWithUsage(), ruleErr
+			}
+		}
 		return resultWithUsage(), fmt.Errorf("stream usage incomplete: missing terminal event")
+	}
+	streamReadErr := func(err error) (*OpenAIForwardResult, error) {
+		if !clientDisconnected && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) && c.Request.Context().Err() == nil {
+			if ruleErr := s.openAIStreamErrorHandlingRuleOverride(c.Request.Context(), c, openAIStreamErrorHandlingRuleInput{
+				Account:                account,
+				Header:                 resp.Header,
+				Message:                "OpenAI chat completions stream read error: " + err.Error(),
+				ReqModel:               upstreamModel,
+				SyntheticStatus:        true,
+				SemanticEventForwarded: semanticEventForwarded,
+			}); ruleErr != nil {
+				return resultWithUsage(), ruleErr
+			}
+		}
+		if clientDisconnected || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return resultWithUsage(), fmt.Errorf("stream usage incomplete: %w", err)
+		}
+		return resultWithUsage(), newOpenAIUpstreamStreamReadError(err)
 	}
 	processFrame := func(frame openAICompatSSEFrame) bool {
 		payload := openAICompatPayloadWithEventType(frame.Data, frame.EventType)
@@ -1013,10 +1058,7 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 		}
 		if err := scanner.Err(); err != nil {
 			handleScanErr(err)
-			if clientDisconnected || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				return resultWithUsage(), fmt.Errorf("stream usage incomplete: %w", err)
-			}
-			return resultWithUsage(), newOpenAIUpstreamStreamReadError(err)
+			return streamReadErr(err)
 		}
 		if frame, ok := parser.Finish(); ok {
 			if strings.TrimSpace(frame.Data) == "[DONE]" {
@@ -1088,10 +1130,7 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 			}
 			if ev.err != nil {
 				handleScanErr(ev.err)
-				if clientDisconnected || errors.Is(ev.err, context.Canceled) || errors.Is(ev.err, context.DeadlineExceeded) {
-					return resultWithUsage(), fmt.Errorf("stream usage incomplete: %w", ev.err)
-				}
-				return resultWithUsage(), newOpenAIUpstreamStreamReadError(ev.err)
+				return streamReadErr(ev.err)
 			}
 			lastDataAt = time.Now()
 			line := ev.line
@@ -1119,6 +1158,16 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 				zap.String("model", originalModel),
 				zap.Duration("interval", streamInterval),
 			)
+			if ruleErr := s.openAIStreamErrorHandlingRuleOverride(c.Request.Context(), c, openAIStreamErrorHandlingRuleInput{
+				Account:                account,
+				Header:                 resp.Header,
+				Message:                "OpenAI chat completions stream data interval timeout",
+				ReqModel:               upstreamModel,
+				SyntheticStatus:        true,
+				SemanticEventForwarded: semanticEventForwarded,
+			}); ruleErr != nil {
+				return resultWithUsage(), ruleErr
+			}
 			return resultWithUsage(), fmt.Errorf("stream data interval timeout")
 
 		case <-keepaliveCh:

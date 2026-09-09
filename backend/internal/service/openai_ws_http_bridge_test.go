@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -18,6 +19,51 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 )
+
+func newOpenAIWSHTTPBridgeRuleService(t *testing.T, upstream HTTPUpstream, rules ...ErrorHandlingRule) *OpenAIGatewayService {
+	t.Helper()
+	payload, err := json.Marshal(ErrorHandlingRuleSettings{Enabled: true, DefaultRetryCount: 1, Rules: rules})
+	require.NoError(t, err)
+	return &OpenAIGatewayService{
+		cfg:          &config.Config{},
+		httpUpstream: upstream,
+		settingService: NewSettingService(&gatewayTTLSettingRepo{data: map[string]string{
+			SettingKeyErrorHandlingRules: string(payload),
+		}}, &config.Config{}),
+	}
+}
+
+func openAIWSBridgeStreamRule(statusCode int, platform string) ErrorHandlingRule {
+	return ErrorHandlingRule{
+		ID: "stream-rule", StatusCodes: []int{statusCode}, Action: ErrorHandlingActionFailover,
+		Platforms: []string{platform},
+	}
+}
+
+func openAIWSHTTPBridgeStreamResponse(body string) *http.Response {
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader(body)),
+	}
+}
+
+func newOpenAIWSHTTPBridgeRuleContext() (*gin.Context, *httptest.ResponseRecorder) {
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	return c, rec
+}
+
+type openAIWSHTTPBridgeAccountRepoStub struct {
+	AccountRepository
+	tempUnschedAccountIDs []int64
+}
+
+func (r *openAIWSHTTPBridgeAccountRepoStub) SetTempUnschedulable(_ context.Context, id int64, _ time.Time, _ string) error {
+	r.tempUnschedAccountIDs = append(r.tempUnschedAccountIDs, id)
+	return nil
+}
 
 func TestResolveOpenAIWSClientFirstMessageTimeout(t *testing.T) {
 	defaultTimeout := time.Duration(config.DefaultOpenAIWSClientFirstMessageTimeoutSeconds) * time.Second
@@ -964,6 +1010,159 @@ func TestProxyOpenAIWSHTTPBridgeTurnSSEErrorFailoverSafety(t *testing.T) {
 			require.ErrorAs(t, err, &failoverErr)
 			require.Equal(t, http.StatusTooManyRequests, failoverErr.StatusCode)
 			require.Empty(t, writes)
+		})
+	}
+}
+
+func TestProxyOpenAIWSHTTPBridgeTurnEmbeddedFailureRules(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	failed := "data: {\"type\":\"response.failed\",\"response\":{\"id\":\"resp_failed\",\"status\":\"failed\",\"error\":{\"type\":\"server_error\",\"status_code\":503,\"message\":\"bridge overloaded\"}}}\n\n"
+	payload := []byte(`{"type":"response.create","model":"gpt-5","input":"hi"}`)
+
+	tests := []struct {
+		name       string
+		ruleStatus int
+		wantRuleID string
+	}{
+		{name: "hit", ruleStatus: http.StatusBadGateway, wantRuleID: "stream-rule"},
+		{name: "miss", ruleStatus: http.StatusTooManyRequests},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			upstream := &httpUpstreamRecorder{resp: openAIWSHTTPBridgeStreamResponse(failed)}
+			svc := newOpenAIWSHTTPBridgeRuleService(t, upstream, openAIWSBridgeStreamRule(tt.ruleStatus, PlatformOpenAI))
+			account := &Account{ID: 1010, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Concurrency: 1}
+			c, _ := newOpenAIWSHTTPBridgeRuleContext()
+			var writes [][]byte
+
+			_, err := svc.proxyOpenAIWSHTTPBridgeTurn(
+				context.Background(), c, account, "sk-test", payload, len(payload),
+				"gpt-5", "", "", "", "", 1,
+				func(message []byte) error {
+					writes = append(writes, append([]byte(nil), message...))
+					return nil
+				},
+			)
+
+			var failoverErr *UpstreamFailoverError
+			require.ErrorAs(t, err, &failoverErr)
+			require.Equal(t, tt.wantRuleID, failoverErr.ErrorRuleID)
+			require.Empty(t, writes)
+		})
+	}
+}
+
+func TestProxyOpenAIWSHTTPBridgeTurnDefersBareErrorRuleUntilResponseFailed(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := strings.Join([]string{
+		`data: {"type":"error","error":{"type":"server_error","status_code":502,"message":"intermediate error"}}`,
+		"",
+		`data: {"type":"response.failed","response":{"id":"resp_final","status":"failed","error":{"type":"server_error","status_code":503,"message":"authoritative failure"}}}`,
+		"",
+	}, "\n")
+	upstream := &httpUpstreamRecorder{resp: openAIWSHTTPBridgeStreamResponse(body)}
+	rule := openAIWSBridgeStreamRule(http.StatusBadGateway, PlatformOpenAI)
+	rule.Keywords = []string{"authoritative failure"}
+	svc := newOpenAIWSHTTPBridgeRuleService(t, upstream, rule)
+	account := &Account{ID: 1011, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Concurrency: 1}
+	c, _ := newOpenAIWSHTTPBridgeRuleContext()
+	payload := []byte(`{"type":"response.create","model":"gpt-5","input":"hi"}`)
+	var writes [][]byte
+
+	_, err := svc.proxyOpenAIWSHTTPBridgeTurn(
+		context.Background(), c, account, "sk-test", payload, len(payload),
+		"gpt-5", "", "", "", "", 1,
+		func(message []byte) error {
+			writes = append(writes, append([]byte(nil), message...))
+			return nil
+		},
+	)
+
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.Equal(t, "stream-rule", failoverErr.ErrorRuleID)
+	require.True(t, failoverErr.SafeToFailoverAfterWrite)
+	require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
+	require.Contains(t, failoverErr.SafeErrorMessage, "authoritative failure")
+	require.Empty(t, writes)
+}
+
+func TestProxyOpenAIWSHTTPBridgeTurnSyntheticFailuresPreserveStatusAndWriteSafety(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	payload := []byte(`{"type":"response.create","model":"gpt-5","input":"hi"}`)
+	metadata := "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_incomplete\",\"status\":\"in_progress\"}}\n\n"
+
+	tests := []struct {
+		name           string
+		turn           int
+		body           io.ReadCloser
+		wantSafe       bool
+		wantWriteCount int
+	}{
+		{name: "missing_terminal_before_client_output", turn: 1, body: io.NopCloser(strings.NewReader(metadata)), wantSafe: true},
+		{name: "missing_terminal_after_structural_output", turn: 2, body: io.NopCloser(strings.NewReader(metadata)), wantWriteCount: 1},
+		{name: "read_error_before_client_output", turn: 1, body: &antigravityCompatErrorReader{data: []byte(metadata), err: io.ErrUnexpectedEOF}, wantSafe: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			upstream := &httpUpstreamRecorder{resp: &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: tt.body}}
+			svc := newOpenAIWSHTTPBridgeRuleService(t, upstream, openAIWSBridgeStreamRule(http.StatusBadGateway, PlatformOpenAI))
+			account := &Account{ID: 1012, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Concurrency: 1}
+			c, _ := newOpenAIWSHTTPBridgeRuleContext()
+			var writes [][]byte
+
+			_, err := svc.proxyOpenAIWSHTTPBridgeTurn(
+				context.Background(), c, account, "sk-test", payload, len(payload),
+				"gpt-5", "", "", "", "", tt.turn,
+				func(message []byte) error {
+					writes = append(writes, append([]byte(nil), message...))
+					return nil
+				},
+			)
+
+			var failoverErr *UpstreamFailoverError
+			require.ErrorAs(t, err, &failoverErr)
+			require.Equal(t, "stream-rule", failoverErr.ErrorRuleID)
+			require.Equal(t, tt.wantSafe, failoverErr.SafeToFailoverAfterWrite)
+			require.True(t, failoverErr.SyntheticStatus)
+			_, hasStatus := c.Get(OpsUpstreamStatusCodeKey)
+			require.False(t, hasStatus)
+			require.Len(t, writes, tt.wantWriteCount)
+		})
+	}
+}
+
+func TestProxyOpenAIWSHTTPBridgeTurnGrokFailureAccountSideEffectsOnce(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	payload := []byte(`{"type":"response.create","model":"grok-4.5","input":"hi"}`)
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "error", body: "data: {\"type\":\"error\",\"error\":{\"type\":\"server_error\",\"code\":\"server_error\",\"message\":\"temporary failure\"}}\n\n"},
+		{name: "response_failed", body: "data: {\"type\":\"response.failed\",\"response\":{\"id\":\"resp_failed\",\"status\":\"failed\",\"error\":{\"type\":\"server_error\",\"status_code\":500,\"message\":\"temporary failure\"}}}\n\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			upstream := &httpUpstreamRecorder{resp: openAIWSHTTPBridgeStreamResponse(tt.body)}
+			repo := &openAIWSHTTPBridgeAccountRepoStub{}
+			svc := newOpenAIWSHTTPBridgeRuleService(t, upstream, openAIWSBridgeStreamRule(http.StatusTooManyRequests, PlatformGrok))
+			svc.accountRepo = repo
+			account := &Account{
+				ID: 1013, Platform: PlatformGrok, Type: AccountTypeOAuth, Concurrency: 1,
+				Credentials: map[string]any{"base_url": xai.DefaultCLIBaseURL},
+			}
+			c, _ := newOpenAIWSHTTPBridgeRuleContext()
+
+			_, err := svc.proxyOpenAIWSHTTPBridgeTurn(
+				context.Background(), c, account, "access-token", payload, len(payload),
+				"grok-4.5", "", "", "", "", 1, func([]byte) error { return nil },
+			)
+
+			var failoverErr *UpstreamFailoverError
+			require.ErrorAs(t, err, &failoverErr)
+			require.Empty(t, failoverErr.ErrorRuleID)
+			require.Equal(t, []int64{1013}, repo.tempUnschedAccountIDs)
 		})
 	}
 }

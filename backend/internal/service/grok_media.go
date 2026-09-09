@@ -692,14 +692,19 @@ func (s *OpenAIGatewayService) ForwardGrokMedia(
 	resp, err := s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
 	SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 	if err != nil {
-		return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)
+		// ruleEligible = endpoint.IsGenerationRequest()：这条 HTTP 请求既服务生成端点
+		// 也服务 video_status 查询（GET /v1/videos/{id}，与下面 handleGrokMediaErrorResponse
+		// 里的 endpoint.IsGenerationRequest() 允许清单同一套判据）。video_status 绑定到
+		// 创建任务时选中的原账号（owner binding），传输层失败也不能交给规则引擎，否则
+		// 会出现"规则已接管 failover"的假生效记录。
+		return nil, s.handleOpenAIUpstreamTransportErrorWithURL(ctx, c, account, err, false, "", endpoint.IsGenerationRequest())
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	requestIDHeader := firstNonEmpty(resp.Header.Get("x-request-id"), resp.Header.Get("xai-request-id"))
 	requestModel := requestInfo.Model
 	if resp.StatusCode >= 400 {
-		return s.handleGrokMediaErrorResponse(ctx, resp, c, account, requestIDHeader, requestModel)
+		return s.handleGrokMediaErrorResponse(ctx, resp, c, account, endpoint, requestIDHeader, requestModel)
 	}
 
 	s.updateGrokUsageFromResponse(withGrokTeamRateLimitModel(ctx, requestModel), account, resp.Header, resp.StatusCode)
@@ -795,7 +800,9 @@ func (s *OpenAIGatewayService) forwardGrokMediaVideoContent(
 	statusResp, err := s.httpUpstream.Do(statusReq, proxyURL, account.ID, account.Concurrency)
 	if err != nil {
 		SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
-		return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)
+		// ruleEligible=false：forwardGrokMediaVideoContent 只服务 video_content 查询
+		// （#228 §六例外，owner binding，不能换号），传输层失败同样不得交给规则引擎。
+		return nil, s.handleOpenAIUpstreamTransportErrorWithURL(ctx, c, account, err, false, "", false)
 	}
 	statusRequestID := firstNonEmpty(statusResp.Header.Get("x-request-id"), statusResp.Header.Get("xai-request-id"))
 	if statusResp.StatusCode >= 300 {
@@ -804,7 +811,7 @@ func (s *OpenAIGatewayService) forwardGrokMediaVideoContent(
 		if statusResp.StatusCode < 400 {
 			return nil, fmt.Errorf("grok media status redirect is not allowed")
 		}
-		return s.handleGrokMediaErrorResponse(ctx, statusResp, c, account, statusRequestID, "")
+		return s.handleGrokMediaErrorResponse(ctx, statusResp, c, account, GrokMediaEndpointVideoContent, statusRequestID, "")
 	}
 	statusBody, err := ReadUpstreamResponseBody(statusResp.Body, s.cfg, c, openAITooLargeError)
 	_ = statusResp.Body.Close()
@@ -854,7 +861,8 @@ func (s *OpenAIGatewayService) forwardGrokMediaVideoContent(
 	contentResp, err := s.httpUpstream.Do(contentReq, proxyURL, account.ID, account.Concurrency)
 	SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 	if err != nil {
-		return nil, s.handleOpenAIUpstreamTransportError(ctx, c, account, err, false)
+		// ruleEligible=false：同上，video_content 的内容下载请求也不得交给规则引擎。
+		return nil, s.handleOpenAIUpstreamTransportErrorWithURL(ctx, c, account, err, false, "", false)
 	}
 	defer func() { _ = contentResp.Body.Close() }()
 	contentRequestID := firstNonEmpty(contentResp.Header.Get("x-request-id"), contentResp.Header.Get("xai-request-id"), statusRequestID)
@@ -862,7 +870,7 @@ func (s *OpenAIGatewayService) forwardGrokMediaVideoContent(
 		return nil, fmt.Errorf("grok media signed content redirect is not allowed")
 	}
 	if contentResp.StatusCode >= 400 && contentResp.StatusCode != http.StatusRequestedRangeNotSatisfiable {
-		return s.handleGrokMediaErrorResponse(ctx, contentResp, c, account, contentRequestID, "")
+		return s.handleGrokMediaErrorResponse(ctx, contentResp, c, account, GrokMediaEndpointVideoContent, contentRequestID, "")
 	}
 
 	s.updateGrokUsageFromResponse(withGrokTeamRateLimitModel(ctx, ""), account, contentResp.Header, contentResp.StatusCode)
@@ -1217,6 +1225,7 @@ func (s *OpenAIGatewayService) handleGrokMediaErrorResponse(
 	resp *http.Response,
 	c *gin.Context,
 	account *Account,
+	endpoint GrokMediaEndpoint,
 	requestIDHeader string,
 	requestedModel string,
 ) (*OpenAIForwardResult, error) {
@@ -1257,6 +1266,43 @@ func (s *OpenAIGatewayService) handleGrokMediaErrorResponse(
 		return nil, fmt.Errorf("grok content policy rejection: %s", clientMsg)
 	}
 
+	// #228 §六：video_status / video_content 查询绑定到创建任务时选中的原账号
+	// （owner binding，见 internal/handler/grok_media.go 里 ResolveGrokMediaVideoRequestAccount
+	// 的强制校验），任何情况下都不能切换账号。如果这里对这两类查询也接错误处理规则，
+	// 一条配了 failover 的规则会让 ops_error_logs 记下"规则已接管换号"，而 owner binding
+	// 实际上仍然会阻止真正换号（handler 层对 endpoint.IsVideoLookupRequest() 有独立的
+	// 立即终止分支）——规则看起来生效了，实际什么都没做，这正是 #228 评审修订 §六要
+	// 消灭的"假生效"。只有生成端点（images/videos 的 generations/edits/extensions，
+	// 即 endpoint.IsGenerationRequest()==true）不绑定原账号、可以正常换号，才允许接线；
+	// 新增的 GrokMediaEndpoint 常量默认不进这个允许清单，除非显式加进
+	// IsGenerationRequest()。
+	//
+	// 这个函数还有第四个调用方：ForwardGrokVoice（grok_audio.go，tts/stt/custom-voices）
+	// 把它自己的原始 endpoint 字符串转成 GrokMediaEndpoint 传进来——那些字符串不匹配
+	// IsGenerationRequest() 的任何分支，天然落在允许清单外，本任务不接线 Grok Voice
+	// （#228 task-9 范围只是图片/视频生成）。
+	//
+	// 2026-09-08 起本块排在下面的 applyErrorPassthroughRule 之前：项目所有者决定
+	// 错误处理规则引擎全链优先于错误透传规则（反转 #228 非目标），与
+	// Gemini/Antigravity/OpenAI 各自"先问规则引擎、未命中才落到共享的错误透传规则
+	// 写出点"的次序保持一致。之前是反过来（先查透传规则、命中就物理 return，规则
+	// 引擎连被问到的机会都没有）——那是唯一一处passthrough 在结构上抢在规则引擎
+	// 之前的平台，Task 12.5 一并纠正。
+	if endpoint.IsGenerationRequest() {
+		if failoverErr, handled := s.grokMediaErrorHandlingRuleOverride(ctx, c, grokMediaErrorHandlingRuleInput{
+			Account:             account,
+			StatusCode:          resp.StatusCode,
+			Header:              resp.Header,
+			Body:                body,
+			ReqModel:            requestedModel,
+			BuiltinWillFailover: s.shouldFailoverGrokUpstreamError(resp.StatusCode, body),
+		}); handled {
+			return nil, failoverErr
+		}
+	}
+
+	// 错误透传规则：只在上面的规则引擎未命中（未开启/未配置匹配规则/命中的是
+	// video_status/video_content 这类不允许接线的查询端点）时才轮到这里生效。
 	if status, errType, errMsg, matched := applyErrorPassthroughRule(
 		c,
 		account.Platform,

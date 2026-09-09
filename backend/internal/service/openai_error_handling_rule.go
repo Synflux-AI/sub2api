@@ -34,10 +34,14 @@ const openAITransportRuleSyntheticStatus = http.StatusBadGateway
 // openAIBuiltinOwnsError 判断这条上游错误是否归内置逻辑独占，规则不得抢走。
 //
 // 判据是「规则动作对这类错误是否必然错误或有害」：
+//
 //   - cyber_policy：request-scoped，换号/重试都是空耗，还误伤凭据；
+//
 //   - context window：确定性错误，换任何号都复现；
+//
 //   - OAuth 账号的 429：ShouldStopOpenAIOAuth429Failover 是跨 switch 的计数状态机，
 //     规则插进去会把计数算乱；
+//
 //   - body-too-large / access-state / request-scoped 容量削峰：这三类由
 //     newOpenAIUpstreamFailoverError 算出 Reason / Scope / Stage / ClientStatusCode /
 //     ClientMessage / RequestScopedTransient 等**带类型的**字段，下游的
@@ -45,6 +49,13 @@ const openAITransportRuleSyntheticStatus = http.StatusBadGateway
 //     ShouldReportAccountScheduleFailure() 全靠它们分流。规则版错误是另起一个
 //     UpstreamFailoverError，带不出这些字段，一条宽泛规则（如「413 → 换号」）会把
 //     413 的专用文案、凭据失败的归因、容量削峰的「不扣账号健康分」一起清零。
+//
+//   - Grok 内容策略拒绝（isGrokContentPolicyRejection）：确定性错误，同一 prompt 在
+//     账号池里任何账号上都复现，换号只是空耗上游请求；grok_media.go 侧
+//     （grokMediaBuiltinOwnsError）已经把这类错误判给内置独占，文本推理走的是
+//     OpenAIGatewayService，早前因为平台闸门挡住 Platform=grok 而从未触达这里，三道
+//     闸门打开后必须在这里补一份同样的独占，否则一条宽泛的「403 → 换号」规则会把
+//     grokContentPolicyClientMessage 这条专用文案换成规则版的通用耗尽错误。
 //
 // 其余（通用 4xx/5xx、transient processing、传输层错误）一律允许规则覆盖。
 func openAIBuiltinOwnsError(statusCode int, upstreamMsg string, upstreamBody []byte, account *Account) bool {
@@ -64,6 +75,9 @@ func openAIBuiltinOwnsError(statusCode int, upstreamMsg string, upstreamBody []b
 		return true
 	}
 	if isOpenAIRequestScopedCapacityShed(upstreamMsg, upstreamBody) {
+		return true
+	}
+	if account != nil && account.Platform == PlatformGrok && isGrokContentPolicyRejection(statusCode, upstreamBody) {
 		return true
 	}
 	return false
@@ -93,15 +107,17 @@ func safeOpenAIError(body []byte) (string, string) {
 	return "upstream_error", message
 }
 
-// openAIErrorHandlingRulesActive 是热路径早退出：没配规则、没勾 openai、账号不是
-// OpenAI 平台时，一次配置读取以外什么都不做。
+// openAIErrorHandlingRulesActive 是热路径早退出：没配规则、没勾对应平台、账号不是
+// isConcreteRequestPlatform 认可的具体平台时，一次配置读取以外什么都不做。
+// OpenAIGatewayService 是 openai / grok / kimi / zhipu / deepseek 文本推理的共同
+// 宿主，这里放行的是这一整组具体平台，不再只认 PlatformOpenAI。
 //
-// 与 Anthropic 侧不同，这里**不卡账号类型**：isErrorHandlingRuleAccount 除平台外还
-// 要求 Type == AccountTypeAPIKey，那是当年用账号类型给 OAuth 做的粗粒度兜底。
-// OAuth 的真正风险点是 429 状态机，已经列进 openAIBuiltinOwnsError 独占，不必再用
-// 账号类型二次设限。
+// 与 Anthropic 侧不同，这里**不卡账号类型**：isErrorHandlingRuleAccount 对
+// PlatformAnthropic 额外要求 Type == AccountTypeAPIKey，那是当年用账号类型给 OAuth
+// 做的粗粒度兜底。OAuth 的真正风险点是各平台的 429 状态机，已经列进各自的
+// BuiltinOwns 独占，不必再用账号类型二次设限。
 func (s *OpenAIGatewayService) openAIErrorHandlingRulesActive(ctx context.Context, account *Account) (ErrorHandlingRuleSettings, bool) {
-	if s == nil || s.settingService == nil || account == nil || account.Platform != PlatformOpenAI {
+	if s == nil || s.settingService == nil || account == nil || !isConcreteRequestPlatform(account.Platform) {
 		return ErrorHandlingRuleSettings{}, false
 	}
 	settings := s.settingService.GetErrorHandlingRuleSettingsCached(ctx)
@@ -123,7 +139,10 @@ type openAIErrorHandlingRuleInput struct {
 	// BuiltinWillFailover 是内置分类的结论（shouldFailoverOpenAIUpstreamResponse 的
 	// 最终值）。不参与匹配，只决定「规则接管时要替内置补跑什么」：内置判定不换号时，
 	// 调用方拿到非 nil 错误就会早退，从而跳过 handleErrorResponse /
-	// handleOpenAIImagesErrorResponse 这条链 —— 那条链里有两件不能丢的事，见下。
+	// handleOpenAIImagesErrorResponse 这条链 —— 那条链里唯一必须补的是账号侧记账
+	// （executor 层 AccountAccounting 消费点）。2026-09-08 起规则引擎全链优先于错误
+	// 透传规则，这条链里的透传规则查询不再需要补——规则引擎胜出时它本来就不该被
+	// 问到。
 	BuiltinWillFailover bool
 
 	// SyntheticStatus 表示 StatusCode 是合成的（传输层错误没有 HTTP 响应，喂给引擎
@@ -131,6 +150,10 @@ type openAIErrorHandlingRuleInput struct {
 	// upstream_status_code：那一列为 NULL 正是「这是传输层失败、根本没有 HTTP 响应」
 	// 的判定依据（#189 就是靠 `upstream_status_code IS NULL` 把那 128 条捞出来的）。
 	SyntheticStatus bool
+
+	// SemanticEventForwarded 表示当前流已经向客户端写出语义内容。共享执行层据此
+	// 把 retry / failover 降级成安全的 passthrough 终态。
+	SemanticEventForwarded bool
 }
 
 // openAIErrorHandlingRuleOverride 问一次规则引擎，命中就返回规则版的 failover 错误。
@@ -154,74 +177,28 @@ func (s *OpenAIGatewayService) openAIErrorHandlingRuleOverride(
 		return nil, false
 	}
 
-	// 「错误透传规则」优先。内置判定不换号时，本来是由 handleErrorResponse 一类的链
-	// 去问 applyErrorPassthroughRule 并直接写响应的；错误处理规则一旦接管就再也走不到
-	// 那里，等于把另一个管理台功能无声关掉。两个功能语义重叠（都能「原样返回上游错误」），
-	// 且透传规则是更专用、更早存在的那个，所以它匹配上时本引擎让路。
-	// 内置要换号的分支不受影响：那条分支上本来就问不到透传规则。
-	if !in.BuiltinWillFailover && openAIErrorPassthroughRuleMatches(c, account.Platform, statusCode, respBody) {
-		return nil, false
-	}
-
-	upstreamMsg := sanitizeUpstreamErrorMessage(strings.TrimSpace(extractUpstreamErrorMessage(respBody)))
-	decision := decideErrorHandlingRuleFrom(errorHandlingRuleDeciderInput{
-		Settings:   settings,
-		StatusCode: statusCode,
-		Body:       respBody,
-		Platform:   account.Platform,
-		Opts: errorHandlingRuleDecisionOptions{
-			UpstreamLatencyMs: opsUpstreamLatencyMs(c),
+	return executeErrorHandlingRule(c, errorHandlingRuleExecInput{
+		Settings:               settings,
+		Account:                account,
+		StatusCode:             statusCode,
+		Header:                 respHeader,
+		Body:                   respBody,
+		BuiltinOwns:            openAIBuiltinOwnsError(statusCode, sanitizeUpstreamErrorMessage(strings.TrimSpace(extractUpstreamErrorMessage(respBody))), respBody, account),
+		BuiltinWillFailover:    in.BuiltinWillFailover,
+		SyntheticStatus:        in.SyntheticStatus,
+		SemanticEventForwarded: in.SemanticEventForwarded,
+		SafeError:              safeOpenAIError,
+		AccountAccounting: func() {
+			if account.Platform == PlatformGrok {
+				s.handleGrokAccountUpstreamError(withGrokTeamRateLimitModel(ctx, in.ReqModel), account, statusCode, respHeader, respBody)
+				return
+			}
+			s.handleOpenAIAccountUpstreamError(ctx, account, statusCode, respHeader, respBody, in.ReqModel)
 		},
-		BuiltinOwns: openAIBuiltinOwnsError(statusCode, upstreamMsg, respBody, account),
-		// Tracker 为 nil：OpenAI 侧的重试预算按账号计，由 handler 的
-		// sameAccountRetryCount 消耗，不走 request-scoped tracker。决策层看到 nil
-		// tracker 会把 retry 降级成 failover，所以 retry 分支在下面单独落地，
-		// 用 ConfiguredAction 而不是 EffectiveAction 判断。
-		Tracker: nil,
+		LogDecision: func(decision errorHandlingRuleDecision, effectiveAction string) {
+			s.logOpenAIErrorHandlingRuleDecision(ctx, c, account, in, decision, effectiveAction)
+		},
 	})
-	if !decision.Matched {
-		return nil, false
-	}
-
-	// 账号侧记账：内置要换号时由调用方在规则之前跑完（handleFailoverSideEffects /
-	// handleOpenAIAccountUpstreamError），规则只接管动作；内置不换号时那条记账在
-	// 被跳过的 handleErrorResponse 链里，必须在这里补，否则一个稳定报错的账号
-	// 永远不会进入冷却，会被一直调度。
-	if !in.BuiltinWillFailover {
-		s.handleOpenAIAccountUpstreamError(ctx, account, statusCode, respHeader, respBody, in.ReqModel)
-	}
-
-	failoverErr := &UpstreamFailoverError{
-		StatusCode:      statusCode,
-		ResponseBody:    respBody,
-		ResponseHeaders: respHeader.Clone(),
-		ErrorRuleID:     decision.RuleID,
-		ExhaustedAction: decision.ExhaustedAction,
-	}
-	// SafeErrorType/Message 三个动作都要填，不能只填 passthrough：
-	// exhausted_action=passthrough 的消费点（两个 handleFailoverExhausted）要求这两个
-	// 字段非空才认，只在 passthrough 动作上填的话，「换号 + 耗尽后原样返回」这条配置
-	// 会静默退化成通用 502。Anthropic 侧的 errorHandlingRuleFailover 本来就是无条件填的。
-	failoverErr.SafeErrorType, failoverErr.SafeErrorMessage = safeOpenAIError(respBody)
-	switch decision.ConfiguredAction {
-	case ErrorHandlingActionRetry:
-		// 同账号重试，预算按账号计。RuleRetryLimit 必须显式带出来：
-		// effectiveSameAccountRetryLimit 的基数是 account.GetPoolModeRetryCount()，
-		// 非 pool-mode 账号是 0，不带这个字段的话 retry 会静默退化成换号。
-		limit := decision.RetryLimit
-		failoverErr.RetryableOnSameAccount = true
-		failoverErr.RuleRetryLimit = &limit
-		failoverErr.NextAccountAction = NextAccountRetry
-	case ErrorHandlingActionPassthrough:
-		// 立刻把上游错误返回客户端：不重试、不换号。
-		failoverErr.NextAccountAction = NextAccountStop
-		failoverErr.ExhaustedAction = ErrorHandlingExhaustedActionPassthrough
-	default: // ErrorHandlingActionFailover
-		failoverErr.NextAccountAction = NextAccountRetry
-	}
-
-	s.logOpenAIErrorHandlingRuleDecision(ctx, c, account, in, decision)
-	return failoverErr, true
 }
 
 // openAITransportErrorRuleOverride 把没有完整可用 HTTP 响应的传输层错误合成成
@@ -232,13 +209,8 @@ func (s *OpenAIGatewayService) openAITransportErrorRuleOverride(
 	account *Account,
 	safeErr string,
 ) *UpstreamFailoverError {
-	body, err := json.Marshal(map[string]any{
-		"error": map[string]any{
-			"type":    "upstream_error",
-			"message": "upstream request failed: " + safeErr,
-		},
-	})
-	if err != nil {
+	body := syntheticTransportRuleBody(safeErr)
+	if body == nil {
 		return nil
 	}
 	failoverErr, handled := s.openAIErrorHandlingRuleOverride(ctx, c, openAIErrorHandlingRuleInput{
@@ -247,8 +219,9 @@ func (s *OpenAIGatewayService) openAITransportErrorRuleOverride(
 		Header:     http.Header{},
 		Body:       body,
 		// 传输层失败上，内置只有「一律 failover」一种意见，没有「本地写响应」那条链，
-		// 所以按 BuiltinWillFailover=true 传：不必替内置补记账，也不该给透传规则让路
-		// （透传规则匹配的是真实的上游响应，这里的 502 是合成的）。
+		// 所以按 BuiltinWillFailover=true 传：不必替内置补记账。错误透传规则在这条
+		// 路径上也问不到：透传规则匹配的是真实的上游响应，这里的 502 是合成的（与
+		// "规则引擎优先于透传规则"的口径无关）。
 		BuiltinWillFailover: true,
 		SyntheticStatus:     true,
 	})
@@ -258,21 +231,57 @@ func (s *OpenAIGatewayService) openAITransportErrorRuleOverride(
 	return failoverErr
 }
 
-// openAIErrorHandlingRuleEffectiveAction 是 OpenAI 执行层**实际执行**的动作。
-//
-// 不能直接用 decision.EffectiveAction：OpenAI 侧传 Tracker=nil（重试预算按账号计，
-// 由 handler 的 sameAccountRetryCount 消耗），决策层看到 nil tracker 会把 retry 恒
-// 降级成 failover 并打上 retry_tracker_missing。那个降级对 Anthropic 才成立，在这里
-// 是假的 —— 直接拿来当 outcome 会让 OpenObserve 里查不到任何 OpenAI 的规则重试。
-//
-// 于是这里按执行层真正落下的动作重算：三个动作原样执行，没有降级。
-func openAIErrorHandlingRuleEffectiveAction(decision errorHandlingRuleDecision) string {
-	switch decision.ConfiguredAction {
-	case ErrorHandlingActionRetry, ErrorHandlingActionPassthrough:
-		return decision.ConfiguredAction
-	default:
-		return ErrorHandlingActionFailover
+type openAIStreamErrorHandlingRuleInput struct {
+	Account                *Account
+	Header                 http.Header
+	Payload                []byte
+	Message                string
+	ReqModel               string
+	StatusCode             int
+	SyntheticStatus        bool
+	SemanticEventForwarded bool
+}
+
+func (s *OpenAIGatewayService) openAIStreamErrorHandlingRuleOverride(
+	ctx context.Context,
+	c *gin.Context,
+	in openAIStreamErrorHandlingRuleInput,
+) *UpstreamFailoverError {
+	message := sanitizeUpstreamErrorMessage(strings.TrimSpace(in.Message))
+	if message == "" {
+		message = "OpenAI stream failed"
 	}
+	body := in.Payload
+	statusCode := in.StatusCode
+	if in.SyntheticStatus {
+		statusCode = openAITransportRuleSyntheticStatus
+		body = syntheticTransportRuleBody(message)
+	} else if statusCode == 0 {
+		statusCode = openAIStreamFailedEventSemanticStatus(body, message)
+	}
+	if len(body) == 0 {
+		body = syntheticTransportRuleBody(message)
+	}
+	failoverErr, handled := s.openAIErrorHandlingRuleOverride(ctx, c, openAIErrorHandlingRuleInput{
+		Account:                in.Account,
+		StatusCode:             statusCode,
+		Header:                 in.Header,
+		Body:                   body,
+		ReqModel:               in.ReqModel,
+		BuiltinWillFailover:    false,
+		SyntheticStatus:        in.SyntheticStatus,
+		SemanticEventForwarded: in.SemanticEventForwarded,
+	})
+	if !handled {
+		return nil
+	}
+	failoverErr.SafeToFailoverAfterWrite = !in.SemanticEventForwarded
+	failoverErr.SafeErrorType = "upstream_error"
+	if statusCode == http.StatusTooManyRequests {
+		failoverErr.SafeErrorType = "rate_limit_error"
+	}
+	failoverErr.SafeErrorMessage = message
+	return failoverErr
 }
 
 // logOpenAIErrorHandlingRuleDecision 与 Anthropic 侧的 logErrorHandlingRuleDecision
@@ -285,6 +294,7 @@ func (s *OpenAIGatewayService) logOpenAIErrorHandlingRuleDecision(
 	account *Account,
 	in openAIErrorHandlingRuleInput,
 	decision errorHandlingRuleDecision,
+	effectiveAction string,
 ) {
 	statusCode := in.StatusCode
 	respBody := in.Body
@@ -292,7 +302,6 @@ func (s *OpenAIGatewayService) logOpenAIErrorHandlingRuleDecision(
 	if respHeader == nil {
 		respHeader = http.Header{}
 	}
-	effectiveAction := openAIErrorHandlingRuleEffectiveAction(decision)
 	upstreamMsg := extractUpstreamErrorMessage(respBody)
 	upstreamDetail := ""
 	if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {

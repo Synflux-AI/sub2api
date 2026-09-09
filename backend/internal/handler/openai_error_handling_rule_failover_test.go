@@ -15,8 +15,10 @@ import (
 //
 // 1. ExhaustedAction=passthrough 在 OpenAI 侧原先完全没人看：全仓只有 GatewayHandler
 //    的两处消费它，OpenAIGatewayHandler.handleFailoverExhausted 从头到尾没有这个分支。
-// 2. 规则的 retry 预算要能覆盖账号的 pool-mode 预算，否则非 pool-mode 账号上
-//    界面给了「原地重试 N 次」而行为是直接换号。
+// 2. 规则的 retry 预算要能覆盖账号的 pool-mode 预算，否则会被账号基数顶掉——
+//    非 pool-mode 或未显式配置时基数是默认值 3，规则配的次数比它大就只会重试
+//    3 次；管理员把 pool_mode_retry_count 显式设成 0 时，界面给了「原地重试
+//    N 次」而行为会直接换号。
 
 func TestOpenAIFailoverExhausted_RulePassthroughReturnsUpstreamError(t *testing.T) {
 	gin.SetMode(gin.TestMode)
@@ -61,6 +63,33 @@ func TestOpenAIFailoverExhausted_RulePassthroughWithoutSafeErrorFallsBack(t *tes
 	require.NotContains(t, rec.Body.String(), "must-not-leak")
 }
 
+// FIX 3（#228 最终评审）：耗尽后走 passthrough 时，如果 StatusCode 是传输层失败
+// 合成的虚拟 502（SyntheticStatus=true），不能把它写进 ops_error_logs 顶层的
+// upstream_status_code——那一列为 NULL 正是"这是传输层失败、根本没有 HTTP 响应"
+// 的判定依据。客户端仍然要拿到这个合成状态码（这是既有行为，FIX 3 不改）。
+func TestOpenAIFailoverExhausted_SyntheticStatusNotRecordedAsUpstreamStatus(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/images/edits", nil)
+
+	(&OpenAIGatewayHandler{}).handleFailoverExhausted(c, &service.UpstreamFailoverError{
+		StatusCode:       http.StatusBadGateway,
+		ResponseBody:     []byte(`{"error":{"type":"upstream_error","message":"upstream request failed: connection reset"}}`),
+		ExhaustedAction:  service.ErrorHandlingExhaustedActionPassthrough,
+		SafeErrorType:    "upstream_error",
+		SafeErrorMessage: "upstream request failed: connection reset",
+		SyntheticStatus:  true,
+	}, false)
+
+	// 客户端响应状态码不受影响：仍是合成的 502。
+	require.Equal(t, http.StatusBadGateway, rec.Code)
+	require.Contains(t, rec.Body.String(), "connection reset")
+
+	_, ok := c.Get(service.OpsUpstreamStatusCodeKey)
+	require.False(t, ok, "合成状态码只能用于客户端响应，不得落进 ops_error_logs 顶层列")
+}
+
 func TestEffectiveSameAccountRetryLimit_RuleBudgetOverridesPoolMode(t *testing.T) {
 	account := &service.Account{ID: 60, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey}
 	// 没有规则预算时沿用账号侧的 pool-mode 预算（非 pool-mode 账号取默认值）。
@@ -87,6 +116,42 @@ func TestSameAccountRetryAllowed_RuleBudget(t *testing.T) {
 	require.True(t, sameAccountRetryAllowed(failoverErr, 0, limit))
 	require.True(t, sameAccountRetryAllowed(failoverErr, 1, limit))
 	require.False(t, sameAccountRetryAllowed(failoverErr, 2, limit), "预算耗尽后必须换号")
+}
+
+func TestOpenAIWSSameAccountRetryAllowed_RuleBudget(t *testing.T) {
+	account := &service.Account{ID: 61, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey}
+	limit := 2
+	failoverErr := &service.UpstreamFailoverError{
+		StatusCode: http.StatusServiceUnavailable, RetryableOnSameAccount: true,
+		RuleRetryLimit: &limit, ErrorRuleID: "rule-ws",
+	}
+
+	require.True(t, openAIWSSameAccountRetryAllowed(account, failoverErr, 0))
+	require.True(t, openAIWSSameAccountRetryAllowed(account, failoverErr, 1))
+	require.False(t, openAIWSSameAccountRetryAllowed(account, failoverErr, 2))
+	require.False(t, openAIWSSameAccountRetryAllowed(account, &service.UpstreamFailoverError{StatusCode: http.StatusServiceUnavailable}, 0))
+}
+
+func TestOpenAIWSFailoverExhausted_RulePassthroughPreservesSyntheticStatus(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+
+	closeOpenAIWSFailoverExhausted(c, nil, &service.UpstreamFailoverError{
+		StatusCode:       http.StatusBadGateway,
+		ExhaustedAction:  service.ErrorHandlingExhaustedActionPassthrough,
+		SafeErrorType:    "upstream_error",
+		SafeErrorMessage: "upstream stream interrupted",
+		SyntheticStatus:  true,
+	})
+
+	streamErr, ok := service.GetOpsStreamError(c)
+	require.True(t, ok)
+	require.Equal(t, "upstream_error", streamErr.ErrType)
+	require.Equal(t, "upstream stream interrupted", streamErr.Message)
+	require.Zero(t, streamErr.IntendedStatus, "合成 502 不得伪装成真实上游状态")
+	require.True(t, streamErr.CountTowardsSLA)
 }
 
 // ==================== PR #194 评审后的补丁覆盖 ====================
@@ -129,4 +194,28 @@ func TestAnthropicFailoverExhausted_RulePassthroughWithoutSafeErrorFallsBack(t *
 	}, false)
 
 	require.NotContains(t, rec.Body.String(), "must-not-leak")
+}
+
+// FIX 3（#228 最终评审）：handleAnthropicFailoverExhausted 与 handleFailoverExhausted
+// 是同一份 SyntheticStatus 处理逻辑各自的一份拷贝，必须分别钉住。
+func TestAnthropicFailoverExhausted_SyntheticStatusNotRecordedAsUpstreamStatus(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+
+	(&OpenAIGatewayHandler{}).handleAnthropicFailoverExhausted(c, &service.UpstreamFailoverError{
+		StatusCode:       http.StatusBadGateway,
+		ResponseBody:     []byte(`{"error":{"type":"upstream_error","message":"upstream request failed: connection reset"}}`),
+		ExhaustedAction:  service.ErrorHandlingExhaustedActionPassthrough,
+		SafeErrorType:    "upstream_error",
+		SafeErrorMessage: "upstream request failed: connection reset",
+		SyntheticStatus:  true,
+	}, false)
+
+	require.Equal(t, http.StatusBadGateway, rec.Code)
+	require.Contains(t, rec.Body.String(), "connection reset")
+
+	_, ok := c.Get(service.OpsUpstreamStatusCodeKey)
+	require.False(t, ok, "合成状态码只能用于客户端响应，不得落进 ops_error_logs 顶层列")
 }

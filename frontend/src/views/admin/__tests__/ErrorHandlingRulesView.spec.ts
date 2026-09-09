@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { defineComponent, h } from "vue";
 import { flushPromises, mount } from "@vue/test-utils";
 
+import { CONCRETE_PLATFORM_OPTIONS } from "@/constants/platforms";
 import ErrorHandlingRulesView from "../ErrorHandlingRulesView.vue";
 
 const {
@@ -834,6 +835,32 @@ describe("admin ErrorHandlingRulesView", () => {
         .get('[data-testid="error-handling-rule-dialog-error"]')
         .text(),
     ).toContain("platformsRequired");
+  });
+
+  // #228 task-13：适用平台清单从「只有 anthropic/openai 接线了」放开到全部 8 个
+  // 具体平台，改用 CONCRETE_PLATFORM_OPTIONS——这条测试断言复选框的数量、value 与
+  // 顺序都跟共享清单完全一致，防止两份清单再次漂移。
+  it("renders one checkbox per concrete platform, matching CONCRETE_PLATFORM_OPTIONS in order", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+
+    await wrapper
+      .get('[data-testid="error-handling-rule-add"]')
+      .trigger("click");
+
+    const checkboxes = dialog(wrapper).findAll(
+      '[data-testid^="error-handling-rule-platform-"]',
+    );
+    expect(checkboxes).toHaveLength(CONCRETE_PLATFORM_OPTIONS.length);
+    checkboxes.forEach((checkbox, index) => {
+      const expected = CONCRETE_PLATFORM_OPTIONS[index];
+      expect(checkbox.attributes("data-testid")).toBe(
+        `error-handling-rule-platform-${expected.value}`,
+      );
+      expect((checkbox.element as HTMLInputElement).value).toBe(
+        expected.value,
+      );
+    });
   });
 
   it("round-trips platforms and the upstream latency ceiling through the dialog", async () => {

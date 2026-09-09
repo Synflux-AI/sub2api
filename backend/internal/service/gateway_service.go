@@ -708,11 +708,20 @@ type UpstreamFailoverError struct {
 	ExhaustedAction          string // 账号池耗尽后的规则终态策略
 	// RuleRetryLimit 是错误处理规则给出的同账号重试上限，非 nil 时**覆盖**账号的
 	// pool-mode 预算（而不是像 SameAccountRetryMax 那样只能往下夹）。
-	// 必须能覆盖：effectiveSameAccountRetryLimit 的基数是 GetPoolModeRetryCount()，
-	// 非 pool-mode 账号是 0，只往下夹的话规则配的 retry 会静默退化成换号。
+	// 必须能覆盖：账号基数不管是非 pool-mode/未显式配置时的默认值 3，还是管理员把
+	// pool_mode_retry_count 显式设成 0，只往下夹都会让规则配的 retry 要么少重试、
+	// 要么静默退化成换号。
 	RuleRetryLimit   *int
 	SafeErrorType    string // 可安全返回给 Anthropic 客户端的错误类型
 	SafeErrorMessage string // 可安全返回给 Anthropic 客户端的错误消息
+	// SyntheticStatus 表示 StatusCode 是合成的（传输层错误/流中断没有真实 HTTP
+	// 响应，为了喂错误处理规则引擎才编出一个 502）。合成状态码只能用于**客户端
+	// 响应**（这一点从今天起保持不变——这从来就是传输层失败的既有兜底状态码），
+	// 绝不能写进 ops_error_logs 顶层的 upstream_status_code 列：那一列为 NULL 正是
+	// 「这是传输层失败」的判定依据。exhausted_action=passthrough 消费点在调用
+	// service.SetOpsUpstreamError 时必须查这个字段、传 0 让该列保持 NULL，而不能动
+	// 传给客户端的状态码。
+	SyntheticStatus bool
 }
 
 func (e *UpstreamFailoverError) Error() string {

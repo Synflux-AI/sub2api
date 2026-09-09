@@ -197,7 +197,7 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 				return
 			default:
 				if fs.LastFailoverErr != nil {
-					h.handleCCFailoverExhausted(c, fs.LastFailoverErr, streamStarted)
+					h.handleCCFailoverExhausted(c, fs.LastFailoverErr, groupPlatform, streamStarted)
 				} else {
 					h.chatCompletionsErrorResponse(c, http.StatusBadGateway, "server_error", "All available accounts exhausted")
 				}
@@ -305,16 +305,25 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 		if err != nil {
 			var failoverErr *service.UpstreamFailoverError
 			if errors.As(err, &failoverErr) {
-				if c.Writer.Size() != writerSizeBeforeForward {
-					h.handleCCFailoverExhausted(c, failoverErr, true)
+				if !gatewayForwardMayFailover(c, writerSizeBeforeForward, failoverErr) {
+					h.handleCCFailoverExhausted(c, failoverErr, groupPlatform, true)
 					return
 				}
-				action := fs.HandleFailoverError(c.Request.Context(), h.gatewayService, account.ID, account.Platform, account.GetPoolModeRetryCount(), failoverErr)
+				if failoverErr.SafeToFailoverAfterWrite && c.Writer.Written() {
+					streamStarted = true
+				}
+				// 走 effectiveSameAccountRetryLimit 而不是裸的 GetPoolModeRetryCount()：
+				// 裸调用会让账号基数顶掉规则显式配的 RuleRetryLimit，两种基数取值
+				// 都会错——账号非 pool-mode 或未显式配置时基数是默认值 3，规则配了
+				// 5 次也只会重试 3 次；管理员把 pool_mode_retry_count 显式设成 0 时，
+				// 规则重试会静默退化成换号。RuleRetryLimit 必须覆盖账号基数，不管
+				// 那个基数是 3 还是 0。
+				action := fs.HandleFailoverError(c.Request.Context(), h.gatewayService, account.ID, account.Platform, effectiveSameAccountRetryLimit(failoverErr, account), failoverErr)
 				switch action {
 				case FailoverContinue:
 					continue
 				case FailoverExhausted:
-					h.handleCCFailoverExhausted(c, fs.LastFailoverErr, streamStarted)
+					h.handleCCFailoverExhausted(c, fs.LastFailoverErr, groupPlatform, streamStarted)
 					return
 				case FailoverCanceled:
 					failoverClientGone(c)
@@ -386,13 +395,65 @@ func (h *GatewayHandler) chatCompletionsErrorResponse(c *gin.Context, status int
 }
 
 // handleCCFailoverExhausted writes a failover-exhausted error in CC format.
-func (h *GatewayHandler) handleCCFailoverExhausted(c *gin.Context, lastErr *service.UpstreamFailoverError, streamStarted bool) {
+//
+// platform 是本次请求的有效目标平台（由调用方按 groupPlatform 传入，composite
+// 分组已在 ChatCompletions 顶部解析为具体平台），用于错误透传规则匹配 ——
+// CC 端点可服务多个平台，不能像 Gemini 专用入口那样硬编码。
+func (h *GatewayHandler) handleCCFailoverExhausted(c *gin.Context, lastErr *service.UpstreamFailoverError, platform string, streamStarted bool) {
 	if streamStarted {
 		return
 	}
 	if lastErr != nil {
 		copyFailoverRetryAfter(c, lastErr.ResponseHeaders)
 	}
+
+	statusCode := http.StatusBadGateway
+	if lastErr != nil && lastErr.StatusCode > 0 {
+		statusCode = lastErr.StatusCode
+	}
+
+	// 错误处理规则引擎的 exhausted_action=passthrough 优先于下面的错误透传规则：
+	// 2026-09-08 项目所有者决定规则引擎全链优先于透传规则（反转 #228 非目标），
+	// 与 gateway_handler.go:1924→:1943 / openai_gateway_handler.go 的既有次序
+	// 一致 —— 不要把这两块顺序再"修"回去。SafeErrorType/Message 缺一不可：
+	// 那是脱敏过的安全文本，缺了就退回内置映射，不能把可能含凭据片段的原始
+	// 上游文案透出去。
+	if lastErr != nil &&
+		lastErr.ExhaustedAction == service.ErrorHandlingExhaustedActionPassthrough &&
+		lastErr.SafeErrorType != "" && lastErr.SafeErrorMessage != "" {
+		// lastErr.SyntheticStatus 为真时 statusCode 是传输层/流中断合成的虚拟 502，
+		// 没有真实上游响应：传 0 让 ops_error_logs.upstream_status_code 保持 NULL，
+		// 不动下面 chatCompletionsErrorResponse 用的客户端响应 statusCode。
+		opsStatusCode := statusCode
+		if lastErr.SyntheticStatus {
+			opsStatusCode = 0
+		}
+		service.SetOpsUpstreamError(c, opsStatusCode, lastErr.SafeErrorMessage, "")
+		h.chatCompletionsErrorResponse(c, statusCode, lastErr.SafeErrorType, lastErr.SafeErrorMessage)
+		return
+	}
+
+	// 错误透传规则：只在上面的规则引擎未命中 exhausted_action=passthrough 时才
+	// 轮到这里生效（没有任何错误处理规则命中，或命中的动作不是 passthrough）。
+	if lastErr != nil && h.errorPassthroughService != nil && len(lastErr.ResponseBody) > 0 {
+		if rule := h.errorPassthroughService.MatchRule(platform, statusCode, lastErr.ResponseBody); rule != nil {
+			respCode := statusCode
+			if !rule.PassthroughCode && rule.ResponseCode != nil {
+				respCode = *rule.ResponseCode
+			}
+			msg := service.ExtractUpstreamErrorMessage(lastErr.ResponseBody)
+			if !rule.PassthroughBody && rule.CustomMessage != nil {
+				msg = *rule.CustomMessage
+			}
+			if rule.SkipMonitoring {
+				c.Set(service.OpsSkipPassthroughKey, true)
+			}
+			service.SetOpsUpstreamError(c, statusCode, msg, "")
+			h.chatCompletionsErrorResponse(c, respCode, "upstream_error", msg)
+			return
+		}
+	}
+
 	if lastErr != nil && lastErr.IsCredentialFailure() {
 		status, message := credentialFailoverClientResponse(lastErr)
 		h.chatCompletionsErrorResponse(c, status, "server_error", message)
@@ -405,10 +466,6 @@ func (h *GatewayHandler) handleCCFailoverExhausted(c *gin.Context, lastErr *serv
 		}
 		h.chatCompletionsErrorResponse(c, status, "server_error", lastErr.ClientMessage)
 		return
-	}
-	statusCode := http.StatusBadGateway
-	if lastErr != nil && lastErr.StatusCode > 0 {
-		statusCode = lastErr.StatusCode
 	}
 	if lastErr != nil && service.IsOpenAISilentRefusalErrorBody(lastErr.ResponseBody) {
 		service.SetOpsUpstreamError(c, statusCode, service.OpenAISilentRefusalClientMessage(), "")

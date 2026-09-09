@@ -515,7 +515,13 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 					if failoverErr.SafeToFailoverAfterWrite && c.Writer.Written() {
 						streamStarted = true
 					}
-					action := fs.HandleFailoverError(c.Request.Context(), h.gatewayService, account.ID, account.Platform, account.GetPoolModeRetryCount(), failoverErr)
+					// 走 effectiveSameAccountRetryLimit 而不是裸的 GetPoolModeRetryCount()：
+					// 裸调用会让账号基数顶掉规则显式配的 RuleRetryLimit，两种基数取值
+					// 都会错——账号非 pool-mode 或未显式配置时基数是默认值 3，规则配了
+					// 5 次也只会重试 3 次；管理员把 pool_mode_retry_count 显式设成 0 时，
+					// 规则重试会静默退化成换号。RuleRetryLimit 必须覆盖账号基数，不管
+					// 那个基数是 3 还是 0。
+					action := fs.HandleFailoverError(c.Request.Context(), h.gatewayService, account.ID, account.Platform, effectiveSameAccountRetryLimit(failoverErr, account), failoverErr)
 					switch action {
 					case FailoverContinue:
 						continue
@@ -1067,7 +1073,13 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 					if failoverErr.SafeToFailoverAfterWrite && c.Writer.Written() {
 						streamStarted = true
 					}
-					action := fs.HandleFailoverError(c.Request.Context(), h.gatewayService, account.ID, account.Platform, account.GetPoolModeRetryCount(), failoverErr)
+					// 走 effectiveSameAccountRetryLimit 而不是裸的 GetPoolModeRetryCount()：
+					// 裸调用会让账号基数顶掉规则显式配的 RuleRetryLimit，两种基数取值
+					// 都会错——账号非 pool-mode 或未显式配置时基数是默认值 3，规则配了
+					// 5 次也只会重试 3 次；管理员把 pool_mode_retry_count 显式设成 0 时，
+					// 规则重试会静默退化成换号。RuleRetryLimit 必须覆盖账号基数，不管
+					// 那个基数是 3 还是 0。
+					action := fs.HandleFailoverError(c.Request.Context(), h.gatewayService, account.ID, account.Platform, effectiveSameAccountRetryLimit(failoverErr, account), failoverErr)
 					switch action {
 					case FailoverContinue:
 						// 本次尝试已确定性失败，立即释放该账号的会话注册
@@ -1911,7 +1923,14 @@ func (h *GatewayHandler) handleFailoverExhausted(c *gin.Context, failoverErr *se
 	responseBody := failoverErr.ResponseBody
 	if failoverErr.ExhaustedAction == service.ErrorHandlingExhaustedActionPassthrough &&
 		failoverErr.SafeErrorType != "" && failoverErr.SafeErrorMessage != "" {
-		service.SetOpsUpstreamError(c, statusCode, failoverErr.SafeErrorMessage, "")
+		// failoverErr.SyntheticStatus 为真时 statusCode 是传输层/流中断合成的虚拟
+		// 502，没有真实上游响应：传 0 让 ops_error_logs.upstream_status_code 保持
+		// NULL，不动下面客户端响应用的 statusCode。
+		opsStatusCode := statusCode
+		if failoverErr.SyntheticStatus {
+			opsStatusCode = 0
+		}
+		service.SetOpsUpstreamError(c, opsStatusCode, failoverErr.SafeErrorMessage, "")
 		h.handleStreamingAwareError(
 			c,
 			statusCode,

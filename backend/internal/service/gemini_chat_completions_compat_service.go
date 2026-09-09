@@ -126,7 +126,7 @@ func (s *GeminiMessagesCompatService) forwardClaudeBodyAsChatCompletions(
 		// 全链路 trace：buildReq 是各账号类型的唯一构造出口，每次重试都重新注入
 		injectTraceHeader(ctx, upstreamReq, account)
 
-		resp, err = s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
+		resp, err = timedUpstreamDo(c, s.httpUpstream, upstreamReq, proxyURL, account.ID, account.Concurrency)
 		if err != nil {
 			safeErr := sanitizeUpstreamErrorMessage(err.Error())
 			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
@@ -139,6 +139,11 @@ func (s *GeminiMessagesCompatService) forwardClaudeBodyAsChatCompletions(
 				Kind:               "request_error",
 				Message:            safeErr,
 			})
+			if ctx.Err() == nil {
+				if ruleErr := s.geminiTransportErrorRuleOverride(ctx, c, account, safeErr); ruleErr != nil {
+					return nil, ruleErr
+				}
+			}
 			if attempt < geminiMaxRetries {
 				logger.LegacyPrintf("service.gemini_chat_completions", "Gemini account %d: upstream request failed, retry %d/%d: %v", account.ID, attempt, geminiMaxRetries, err)
 				sleepGeminiBackoff(attempt)
@@ -168,6 +173,19 @@ func (s *GeminiMessagesCompatService) forwardClaudeBodyAsChatCompletions(
 			}
 			if resp.StatusCode == http.StatusTooManyRequests {
 				s.handleGeminiUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody)
+			}
+			if failoverErr, handled := s.geminiErrorHandlingRuleOverride(ctx, c, geminiErrorHandlingRuleInput{
+				Account:             account,
+				StatusCode:          resp.StatusCode,
+				Header:              resp.Header,
+				Body:                unwrapIfNeeded(account.Type == AccountTypeOAuth, respBody),
+				ReqModel:            mappedModel,
+				BuiltinWillFailover: s.shouldFailoverGeminiUpstreamError(resp.StatusCode),
+			}); handled {
+				if resp.StatusCode != http.StatusTooManyRequests {
+					s.handleGeminiUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody)
+				}
+				return nil, failoverErr
 			}
 			if attempt < geminiMaxRetries {
 				upstreamReqID := resp.Header.Get(requestIDHeader)
@@ -229,6 +247,26 @@ func (s *GeminiMessagesCompatService) forwardClaudeBodyAsChatCompletions(
 		}
 		evBody := unwrapIfNeeded(account.Type == AccountTypeOAuth, respBody)
 
+		// 错误处理规则：内置独占特例（错误策略里 handleGeminiUpstreamError 的记账）都已
+		// 在上面跑完，此处开始由管理员配置说话。放在 shouldFailoverGemini... 之前，
+		// 使规则既能覆盖内置会换号的错误，也能覆盖普通非 failover 4xx。
+		//
+		// 与 Forward/ForwardNative 不同：本链没有 CheckErrorPolicy 早退 switch，也没有
+		// isGoogleProjectConfigError 400 特判——Skipped/TempUnscheduled 两种策略只是
+		// 跳过 handleGeminiUpstreamError 记账（该记的账已经在 CheckErrorPolicy 内部记
+		// 完），随后仍会流到这里参与 shouldFailoverGemini... 判断，所以 AccountAccounting
+		// 同样传 nil：无论哪种策略，到这一行时该记的账都已经记完。
+		if failoverErr, handled := s.geminiErrorHandlingRuleOverride(ctx, c, geminiErrorHandlingRuleInput{
+			Account:             account,
+			StatusCode:          resp.StatusCode,
+			Header:              resp.Header,
+			Body:                evBody,
+			ReqModel:            mappedModel,
+			BuiltinWillFailover: s.shouldFailoverGeminiUpstreamError(resp.StatusCode),
+		}); handled {
+			return nil, failoverErr
+		}
+
 		if s.shouldFailoverGeminiUpstreamError(resp.StatusCode) {
 			upstreamMsg := sanitizeUpstreamErrorMessage(strings.TrimSpace(extractUpstreamErrorMessage(evBody)))
 			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
@@ -260,7 +298,7 @@ func (s *GeminiMessagesCompatService) forwardClaudeBodyAsChatCompletions(
 	var usage *ClaudeUsage
 	var firstTokenMs *int
 	if clientStream {
-		streamRes, err := s.handleChatCompletionsStreamingResponseFromGemini(c, resp, startTime, originalModel, account.Type == AccountTypeOAuth, includeUsage)
+		streamRes, err := s.handleChatCompletionsStreamingResponseFromGemini(ctx, c, resp, account, startTime, originalModel, mappedModel, account.Type == AccountTypeOAuth, includeUsage)
 		if err != nil {
 			return nil, err
 		}
@@ -517,10 +555,13 @@ func geminiResponseToChatCompletions(
 }
 
 func (s *GeminiMessagesCompatService) handleChatCompletionsStreamingResponseFromGemini(
+	ctx context.Context,
 	c *gin.Context,
 	resp *http.Response,
+	account *Account,
 	startTime time.Time,
 	originalModel string,
+	mappedModel string,
 	isOAuth bool,
 	includeUsage bool,
 ) (*geminiStreamResult, error) {
@@ -531,7 +572,6 @@ func (s *GeminiMessagesCompatService) handleChatCompletionsStreamingResponseFrom
 	c.Writer.Header().Set("Cache-Control", "no-cache")
 	c.Writer.Header().Set("Connection", "keep-alive")
 	c.Writer.Header().Set("X-Accel-Buffering", "no")
-	c.Writer.WriteHeader(http.StatusOK)
 
 	flusher, ok := c.Writer.(http.Flusher)
 	if !ok {
@@ -547,8 +587,11 @@ func (s *GeminiMessagesCompatService) handleChatCompletionsStreamingResponseFrom
 	var usage ClaudeUsage
 	var firstTokenMs *int
 	firstChunk := true
+	semanticEventForwarded := false
+	sawTerminalEvent := false
+	responseStarted := false
 
-	writeChatChunk := func(chunk apicompat.ChatCompletionsChunk) bool {
+	writeChatChunk := func(chunk apicompat.ChatCompletionsChunk, semantic bool) bool {
 		sse, err := apicompat.ChatChunkToSSE(chunk)
 		if err != nil {
 			return false
@@ -556,15 +599,18 @@ func (s *GeminiMessagesCompatService) handleChatCompletionsStreamingResponseFrom
 		if _, err := io.WriteString(c.Writer, sse); err != nil {
 			return true
 		}
+		if semantic {
+			semanticEventForwarded = true
+		}
 		return false
 	}
 
-	emitAnthropicEvent := func(evt *apicompat.AnthropicStreamEvent) bool {
+	emitAnthropicEvent := func(evt *apicompat.AnthropicStreamEvent, semantic bool) bool {
 		responsesEvents := apicompat.AnthropicEventToResponsesEvents(evt, anthState)
 		for _, resEvt := range responsesEvents {
 			chunks := apicompat.ResponsesEventToChatChunks(&resEvt, ccState)
 			for _, chunk := range chunks {
-				if disconnected := writeChatChunk(chunk); disconnected {
+				if disconnected := writeChatChunk(chunk, semantic); disconnected {
 					return true
 				}
 			}
@@ -574,19 +620,23 @@ func (s *GeminiMessagesCompatService) handleChatCompletionsStreamingResponseFrom
 	}
 
 	messageID := generateAnthropicMsgID()
-	if emitAnthropicEvent(&apicompat.AnthropicStreamEvent{
-		Type: "message_start",
-		Message: &apicompat.AnthropicResponse{
-			ID:         messageID,
-			Type:       "message",
-			Role:       "assistant",
-			Model:      originalModel,
-			Content:    []apicompat.AnthropicContentBlock{},
-			StopReason: nil, // JSON null
-			Usage:      apicompat.AnthropicUsage{},
-		},
-	}) {
-		return &geminiStreamResult{usage: &usage, firstTokenMs: firstTokenMs}, nil
+	startResponse := func() bool {
+		if responseStarted {
+			return false
+		}
+		responseStarted = true
+		return emitAnthropicEvent(&apicompat.AnthropicStreamEvent{
+			Type: "message_start",
+			Message: &apicompat.AnthropicResponse{
+				ID:         messageID,
+				Type:       "message",
+				Role:       "assistant",
+				Model:      originalModel,
+				Content:    []apicompat.AnthropicContentBlock{},
+				StopReason: nil,
+				Usage:      apicompat.AnthropicUsage{},
+			},
+		}, false)
 	}
 
 	finishReason := ""
@@ -603,7 +653,7 @@ func (s *GeminiMessagesCompatService) handleChatCompletionsStreamingResponseFrom
 		if openBlockIndex < 0 {
 			return false
 		}
-		disconnected := emitAnthropicEvent(&apicompat.AnthropicStreamEvent{Type: "content_block_stop"})
+		disconnected := emitAnthropicEvent(&apicompat.AnthropicStreamEvent{Type: "content_block_stop"}, false)
 		openBlockIndex = -1
 		openBlockType = ""
 		return disconnected
@@ -612,7 +662,7 @@ func (s *GeminiMessagesCompatService) handleChatCompletionsStreamingResponseFrom
 		if openToolIndex < 0 {
 			return false
 		}
-		disconnected := emitAnthropicEvent(&apicompat.AnthropicStreamEvent{Type: "content_block_stop"})
+		disconnected := emitAnthropicEvent(&apicompat.AnthropicStreamEvent{Type: "content_block_stop"}, false)
 		openToolIndex = -1
 		openToolName = ""
 		seenToolJSON = ""
@@ -633,6 +683,17 @@ func (s *GeminiMessagesCompatService) handleChatCompletionsStreamingResponseFrom
 							rawBytes = innerBytes
 						}
 					}
+					if statusCode, errorBody, isError := geminiStreamErrorPayload(rawBytes); isError {
+						message := extractUpstreamErrorMessage(errorBody)
+						if ruleErr := s.geminiStreamErrorHandlingRuleOverride(
+							ctx, c, account, resp.Header, statusCode, errorBody, mappedModel,
+							message, false, semanticEventForwarded,
+						); ruleErr != nil {
+							return &geminiStreamResult{usage: &usage, firstTokenMs: firstTokenMs}, ruleErr
+						}
+						writeChatCompletionsStreamTerminalError(c, statusCode, message)
+						return &geminiStreamResult{usage: &usage, firstTokenMs: firstTokenMs}, fmt.Errorf("upstream response failed: %s", message)
+					}
 
 					var geminiResp map[string]any
 					if err := json.Unmarshal(rawBytes, &geminiResp); err == nil {
@@ -643,6 +704,7 @@ func (s *GeminiMessagesCompatService) handleChatCompletionsStreamingResponseFrom
 						}
 						if fr := extractGeminiFinishReason(geminiResp); fr != "" {
 							finishReason = fr
+							sawTerminalEvent = true
 						}
 						if u := extractGeminiUsage(rawBytes); u != nil {
 							usage = *u
@@ -660,6 +722,9 @@ func (s *GeminiMessagesCompatService) handleChatCompletionsStreamingResponseFrom
 								if delta == "" {
 									continue
 								}
+								if startResponse() {
+									return &geminiStreamResult{usage: &usage, firstTokenMs: firstTokenMs}, nil
+								}
 								if openBlockType != "text" {
 									if closeOpenBlock() {
 										return &geminiStreamResult{usage: &usage, firstTokenMs: firstTokenMs}, nil
@@ -675,7 +740,7 @@ func (s *GeminiMessagesCompatService) handleChatCompletionsStreamingResponseFrom
 											Type: "text",
 											Text: "",
 										},
-									}) {
+									}, false) {
 										return &geminiStreamResult{usage: &usage, firstTokenMs: firstTokenMs}, nil
 									}
 								}
@@ -685,13 +750,16 @@ func (s *GeminiMessagesCompatService) handleChatCompletionsStreamingResponseFrom
 										Type: "text_delta",
 										Text: delta,
 									},
-								}) {
+								}, true) {
 									return &geminiStreamResult{usage: &usage, firstTokenMs: firstTokenMs}, nil
 								}
 								continue
 							}
 
 							if fc, ok := part["functionCall"].(map[string]any); ok && fc != nil {
+								if startResponse() {
+									return &geminiStreamResult{usage: &usage, firstTokenMs: firstTokenMs}, nil
+								}
 								name, _ := fc["name"].(string)
 								if strings.TrimSpace(name) == "" {
 									name = "tool"
@@ -719,7 +787,7 @@ func (s *GeminiMessagesCompatService) handleChatCompletionsStreamingResponseFrom
 											Name:  name,
 											Input: json.RawMessage(`{}`),
 										},
-									}) {
+									}, true) {
 										return &geminiStreamResult{usage: &usage, firstTokenMs: firstTokenMs}, nil
 									}
 								}
@@ -745,7 +813,7 @@ func (s *GeminiMessagesCompatService) handleChatCompletionsStreamingResponseFrom
 											Type:        "input_json_delta",
 											PartialJSON: delta,
 										},
-									}) {
+									}, true) {
 										return &geminiStreamResult{usage: &usage, firstTokenMs: firstTokenMs}, nil
 									}
 								}
@@ -760,8 +828,30 @@ func (s *GeminiMessagesCompatService) handleChatCompletionsStreamingResponseFrom
 			break
 		}
 		if err != nil {
+			if ctx.Err() == nil {
+				if ruleErr := s.geminiStreamErrorHandlingRuleOverride(
+					ctx, c, account, resp.Header, 0, nil, mappedModel,
+					"Gemini chat completions stream read error: "+err.Error(), true, semanticEventForwarded,
+				); ruleErr != nil {
+					return &geminiStreamResult{usage: &usage, firstTokenMs: firstTokenMs}, ruleErr
+				}
+			}
 			return nil, fmt.Errorf("stream read error: %w", err)
 		}
+	}
+	if !sawTerminalEvent {
+		message := "Gemini chat completions stream ended before a terminal event"
+		if ruleErr := s.geminiStreamErrorHandlingRuleOverride(
+			ctx, c, account, resp.Header, 0, nil, mappedModel,
+			message, true, semanticEventForwarded,
+		); ruleErr != nil {
+			return &geminiStreamResult{usage: &usage, firstTokenMs: firstTokenMs}, ruleErr
+		}
+		writeChatCompletionsStreamTerminalError(c, http.StatusBadGateway, message)
+		return &geminiStreamResult{usage: &usage, firstTokenMs: firstTokenMs}, errors.New("stream usage incomplete: missing terminal event")
+	}
+	if startResponse() {
+		return &geminiStreamResult{usage: &usage, firstTokenMs: firstTokenMs}, nil
 	}
 
 	if closeOpenBlock() {
@@ -788,23 +878,23 @@ func (s *GeminiMessagesCompatService) handleChatCompletionsStreamingResponseFrom
 			OutputTokens:         usage.OutputTokens,
 			CacheReadInputTokens: usage.CacheReadInputTokens,
 		},
-	}) {
+	}, false) {
 		return &geminiStreamResult{usage: &usage, firstTokenMs: firstTokenMs}, nil
 	}
-	if emitAnthropicEvent(&apicompat.AnthropicStreamEvent{Type: "message_stop"}) {
+	if emitAnthropicEvent(&apicompat.AnthropicStreamEvent{Type: "message_stop"}, false) {
 		return &geminiStreamResult{usage: &usage, firstTokenMs: firstTokenMs}, nil
 	}
 
 	for _, resEvt := range apicompat.FinalizeAnthropicResponsesStream(anthState) {
 		chunks := apicompat.ResponsesEventToChatChunks(&resEvt, ccState)
 		for _, chunk := range chunks {
-			if disconnected := writeChatChunk(chunk); disconnected {
+			if disconnected := writeChatChunk(chunk, false); disconnected {
 				return &geminiStreamResult{usage: &usage, firstTokenMs: firstTokenMs}, nil
 			}
 		}
 	}
 	for _, chunk := range apicompat.FinalizeResponsesChatStream(ccState) {
-		if disconnected := writeChatChunk(chunk); disconnected {
+		if disconnected := writeChatChunk(chunk, false); disconnected {
 			return &geminiStreamResult{usage: &usage, firstTokenMs: firstTokenMs}, nil
 		}
 	}
@@ -813,6 +903,28 @@ func (s *GeminiMessagesCompatService) handleChatCompletionsStreamingResponseFrom
 	flusher.Flush()
 
 	return &geminiStreamResult{usage: &usage, firstTokenMs: firstTokenMs}, nil
+}
+
+func writeChatCompletionsStreamTerminalError(c *gin.Context, statusCode int, message string) {
+	if c == nil || c.Writer == nil {
+		return
+	}
+	message = sanitizeUpstreamErrorMessage(strings.TrimSpace(message))
+	if message == "" {
+		message = "Upstream stream failed"
+	}
+	errorType := "upstream_error"
+	if statusCode == http.StatusTooManyRequests {
+		errorType = "rate_limit_error"
+	}
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("X-Accel-Buffering", "no")
+	payload, _ := json.Marshal(map[string]any{"error": map[string]any{"type": errorType, "message": message}})
+	_, _ = fmt.Fprintf(c.Writer, "data: %s\n\ndata: [DONE]\n\n", payload)
+	c.Writer.Flush()
+	MarkResponseCommitted(c)
 }
 
 func (s *GeminiMessagesCompatService) writeGeminiChatCompletionsMappedError(

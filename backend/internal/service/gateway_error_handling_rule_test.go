@@ -148,11 +148,12 @@ func TestErrorHandlingRuleFailoverMetadataIsScopedToStreamRules(t *testing.T) {
 
 	t.Run("HTTP rule preserves legacy pool retry metadata", func(t *testing.T) {
 		resp := &http.Response{StatusCode: http.StatusTooManyRequests, Header: http.Header{}, Body: http.NoBody}
-		err := (&GatewayService{}).errorHandlingRuleFailover(context.Background(), resp, body, account, "claude", decision, false)
+		err := (&GatewayService{}).errorHandlingRuleFailover(context.Background(), resp, body, account, "claude", decision, false, false)
 		failoverErr, ok := err.(*UpstreamFailoverError)
 		require.True(t, ok)
 		require.True(t, failoverErr.RetryableOnSameAccount)
 		require.Equal(t, NextAccountLegacyRetry, failoverErr.NextAccountAction)
+		require.False(t, failoverErr.SyntheticStatus, "真实上游响应，不是合成状态码")
 
 		restored, readErr := io.ReadAll(resp.Body)
 		require.NoError(t, readErr)
@@ -161,10 +162,29 @@ func TestErrorHandlingRuleFailoverMetadataIsScopedToStreamRules(t *testing.T) {
 
 	t.Run("stream rule owns retry budget", func(t *testing.T) {
 		resp := &http.Response{StatusCode: http.StatusTooManyRequests, Header: http.Header{}, Body: http.NoBody}
-		err := (&GatewayService{}).errorHandlingRuleFailover(context.Background(), resp, body, account, "claude", decision, true)
+		err := (&GatewayService{}).errorHandlingRuleFailover(context.Background(), resp, body, account, "claude", decision, true, false)
 		failoverErr, ok := err.(*UpstreamFailoverError)
 		require.True(t, ok)
 		require.False(t, failoverErr.RetryableOnSameAccount)
 		require.Equal(t, NextAccountRetry, failoverErr.NextAccountAction)
 	})
+}
+
+// FIX 3（#228 最终评审）：errorHandlingRuleFailover 的 synthetic 参数必须原样落到
+// 返回的 UpstreamFailoverError.SyntheticStatus 上——Anthropic 流中断（缺失 terminal
+// 事件等）合成虚拟 502 喂规则引擎时，resp.StatusCode 不是真实上游响应，调用方
+// （gateway_forward.go / gateway_anthropic_passthrough.go）必须能借这个字段告诉
+// handler 层耗尽兜底函数：这个状态码只能用于客户端响应，不能写进
+// ops_error_logs.upstream_status_code。
+func TestErrorHandlingRuleFailoverPropagatesSyntheticStatus(t *testing.T) {
+	account := &Account{Platform: PlatformAnthropic, Type: AccountTypeAPIKey}
+	body := []byte(anthropicStreamMissingTerminalBody)
+	decision := errorHandlingRuleDecision{Matched: true, RuleID: "r1", ExhaustedAction: ErrorHandlingExhaustedActionPassthrough}
+
+	virtualResp := &http.Response{StatusCode: http.StatusBadGateway, Header: http.Header{}, Body: http.NoBody}
+	err := (&GatewayService{}).errorHandlingRuleFailover(context.Background(), virtualResp, body, account, "claude", decision, true, true)
+	failoverErr, ok := err.(*UpstreamFailoverError)
+	require.True(t, ok)
+	require.True(t, failoverErr.SyntheticStatus, "缺失 terminal 事件合成的虚拟 502 必须标记为 synthetic")
+	require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode, "客户端响应状态码不受影响")
 }

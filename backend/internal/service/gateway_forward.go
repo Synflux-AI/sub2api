@@ -988,7 +988,9 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 						switch decision.EffectiveAction {
 						case ErrorHandlingActionFailover:
 							virtualResp := &http.Response{StatusCode: http.StatusBadGateway, Header: resp.Header.Clone(), Body: http.NoBody}
-							ruleErr := s.errorHandlingRuleFailover(ctx, virtualResp, body, account, reqModel, decision, true)
+							// synthetic=true：virtualResp.StatusCode 是流中断合成的虚拟 502，
+							// 不是真实上游响应，绝不能流进 ops_error_logs.upstream_status_code。
+							ruleErr := s.errorHandlingRuleFailover(ctx, virtualResp, body, account, reqModel, decision, true, true)
 							if failoverErr, ok := ruleErr.(*UpstreamFailoverError); ok {
 								// 本机注入的 keepalive 心跳会把 Writer.Size() 推离
 								// handler 的 writerSizeBeforeForward 基线，令

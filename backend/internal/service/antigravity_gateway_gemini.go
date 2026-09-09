@@ -159,8 +159,17 @@ func (s *AntigravityGatewayService) ForwardGemini(ctx context.Context, c *gin.Co
 		isStickySession: isStickySession, // ForwardGemini 由上层判断粘性会话
 		groupID:         forwardOpts.groupID,
 		sessionHash:     forwardOpts.sessionHash,
+		// #228 task-8：普通 429/5xx 首次失败时先问一次错误处理规则引擎，短路内置的
+		// 3 次通用重试。只挂主调用：signature 纠错子调用的请求体已经被改写，属于内置
+		// 独占的纠错重试，不接这个钩子。
+		ruleOverride: s.antigravityEarlyRuleOverrideHook(ctx, c, account, originalModel),
 	})
 	if err != nil {
+		// 规则引擎在 antigravityRetryLoop 内部提前命中：直接把规则版的 failover 错误
+		// 交给 Handler，不再走下面的账号切换信号判断。
+		if failoverErr, ok := err.(*UpstreamFailoverError); ok {
+			return nil, failoverErr
+		}
 		// 检查是否是账号切换信号，转换为 UpstreamFailoverError 让 Handler 切换账号
 		if switchErr, ok := IsAntigravityAccountSwitchError(err); ok {
 			return nil, &UpstreamFailoverError{
@@ -203,7 +212,7 @@ func (s *AntigravityGatewayService) ForwardGemini(ctx context.Context, c *gin.Co
 						// 模型兜底重试重建了 req，需单独注入链路 ID
 						injectTraceHeader(ctx, fallbackReq, account)
 						account.ApplyCustomHeaders(fallbackReq)
-						fallbackResp, err := s.httpUpstream.Do(fallbackReq, proxyURL, account.ID, account.Concurrency)
+						fallbackResp, err := timedUpstreamDo(c, s.httpUpstream, fallbackReq, proxyURL, account.ID, account.Concurrency)
 						if err == nil && fallbackResp.StatusCode < 400 {
 							_ = resp.Body.Close()
 							resp = fallbackResp
@@ -371,6 +380,23 @@ func (s *AntigravityGatewayService) ForwardGemini(ctx context.Context, c *gin.Co
 			return nil, &UpstreamFailoverError{StatusCode: resp.StatusCode, ResponseBody: unwrappedForOps, RetryableOnSameAccount: true}
 		}
 
+		// #228 task-8：错误处理规则引擎接线点。isGoogleProjectConfigError 的 400
+		// 特判已经在上面 return 掉了确定性的配置错误，规则引擎压根碰不到那类错误；
+		// 这里问的是剩下的所有错误。Body 用 unwrappedForOps（与本链自己构造
+		// UpstreamFailoverError.ResponseBody 及 upstreamMsg 时用的同一份 unwrap 后的
+		// 消息体），不是原始 respBody——这条链在 v1internal 包装层之外还有一层
+		// unwrap，用错会导致 antigravityBuiltinOwnsError 的判定口径与本链其余部分不一致。
+		if failoverErr, handled := s.antigravityErrorHandlingRuleOverride(ctx, c, antigravityErrorHandlingRuleInput{
+			Account:             account,
+			StatusCode:          resp.StatusCode,
+			Header:              resp.Header,
+			Body:                unwrappedForOps,
+			ReqModel:            originalModel,
+			BuiltinWillFailover: s.shouldFailoverUpstreamError(resp.StatusCode),
+		}); handled {
+			return nil, failoverErr
+		}
+
 		if s.shouldFailoverUpstreamError(resp.StatusCode) {
 			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 				ProxyID:            opsUpstreamProxyID(account),
@@ -419,7 +445,7 @@ handleSuccess:
 
 	if stream {
 		// 客户端要求流式，直接透传
-		streamRes, err := s.handleGeminiStreamingResponse(c, resp, startTime)
+		streamRes, err := s.handleGeminiStreamingResponse(c, resp, startTime, antigravityStreamRuleOptions{ctx: ctx, account: account, reqModel: mappedModel})
 		if err != nil {
 			logger.LegacyPrintf("service.antigravity_gateway", "%s status=stream_error error=%v", prefix, err)
 			return nil, err

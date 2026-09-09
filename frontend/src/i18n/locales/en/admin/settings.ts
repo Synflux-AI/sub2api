@@ -1068,7 +1068,7 @@ export default {
       errorHandlingRule: {
         title: 'Error Handling Rules',
         description:
-          'Match upstream error responses by status code and/or keyword, then apply the configured action. Each rule applies to the platforms you tick; Anthropic and OpenAI are supported today. For deterministic errors that reproduce on any account (prompt is too long, max_tokens over limit), prefer "Return to client" so they do not burn the retry budget and drain the account pool.',
+          'Match upstream error responses by status code and/or keyword, then apply the configured action. Each rule applies to the platforms you tick below. For deterministic errors that reproduce on any account (prompt is too long, max_tokens over limit), prefer "Return to client" so they do not burn the retry budget and drain the account pool.',
         platforms: 'Applies To',
         platformsHint:
           'Tick at least one. "All platforms" means ticking every platform. Legacy rules without this field are treated as Anthropic-only.',

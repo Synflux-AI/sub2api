@@ -3,9 +3,11 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"testing"
 
@@ -113,7 +115,8 @@ func TestOpenAIErrorHandlingRule_RetryActionSetsSameAccountBudget(t *testing.T) 
 	require.True(t, errors.As(err, &failoverErr))
 	require.True(t, failoverErr.RetryableOnSameAccount)
 	require.NotNil(t, failoverErr.RuleRetryLimit, "规则驱动的重试预算必须显式带出来，"+
-		"否则非 pool-mode 账号的 effectiveSameAccountRetryLimit 是 0，retry 会静默退化成换号")
+		"否则 effectiveSameAccountRetryLimit 会裸用账号的 GetPoolModeRetryCount() 兜底"+
+		"（非 pool-mode 或未显式配置时是默认值 3），跟规则配的次数不一致时会被顶掉")
 	require.Equal(t, 2, *failoverErr.RuleRetryLimit)
 }
 
@@ -260,6 +263,93 @@ func TestOpenAIBuiltinOwnsError(t *testing.T) {
 	}
 }
 
+// Grok 内容策略拒绝同样归内置：文本推理走 OpenAIGatewayService（openai / grok /
+// kimi / zhipu / deepseek 共同宿主），三道平台闸门打开之前 Platform=grok 从未到达
+// 这里，isGrokContentPolicyRejection 这一条独占分支因此补在 openAIBuiltinOwnsError
+// 里而不是在更早的物理 return——grok media 侧的 grokMediaBuiltinOwnsError 已经有
+// 同一条判据，这里是"双保险"两端对齐，不是重复。
+func TestOpenAIBuiltinOwnsError_GrokContentPolicyRejection(t *testing.T) {
+	grokAccount := grokMediaRuleAccount()
+	contentPolicyBody := []byte(`{"error":{"code":"new_sensitive","message":"image is sensitive"}}`)
+
+	require.True(t, openAIBuiltinOwnsError(http.StatusForbidden, "image is sensitive", contentPolicyBody, grokAccount),
+		"Grok 内容策略拒绝必须归内置独占，否则一条宽泛的 403 规则会把它接管")
+
+	// 同样的 403，但 body 不是内容策略拒绝时规则仍可覆盖——不能把整个 Grok 403 都锁死。
+	notContentPolicyBody := []byte(`{"error":{"code":"forbidden","message":"some other reason"}}`)
+	require.False(t, openAIBuiltinOwnsError(http.StatusForbidden, "some other reason", notContentPolicyBody, grokAccount))
+
+	// 非 Grok 账号即便 body 长得像内容策略拒绝也不受影响：判据里显式挂了平台条件。
+	require.False(t, openAIBuiltinOwnsError(http.StatusForbidden, "image is sensitive", contentPolicyBody, openAIRuleAccount()))
+}
+
+// 端到端钉住测试：一条完全合理的「403 → 换号」规则（管理员视角，403 通常意味着鉴权
+// 失败）打到 Grok 平台上时，不得接管内容策略拒绝——否则每一条被拒的用户 prompt 都会
+// 扫空整个 Grok 账号池（同一个确定性错误在任何账号上都复现），客户端还会丢失专用的
+// 403 invalid_request_error + grokContentPolicyClientMessage 文案，换成规则引擎的
+// 通用耗尽错误。这条测试驱动的是真实调用序列
+// （failoverOpenAIUpstreamHTTPError → handleErrorResponse，见
+// openai_gateway_chat_completions.go:389-391 的实际接线），而不是单独调用
+// openAIBuiltinOwnsError，用来证明"没有更早的物理 return 能救它"这条结论在集成层面
+// 同样成立。
+func TestOpenAIErrorHandlingRule_GrokContentPolicyRejectionBypassesEngine(t *testing.T) {
+	svc := newOpenAIRuleService(t, nil, ErrorHandlingRule{
+		ID: "broad-403-failover", Name: "403 换号",
+		StatusCodes: []int{403}, Action: ErrorHandlingActionFailover,
+		Platforms: []string{PlatformGrok},
+	})
+	svc.accountRepo = &grokQuotaAccountRepo{}
+	account := grokMediaRuleAccount()
+	body := []byte(`{"error":{"code":"new_sensitive","message":"image is sensitive"}}`)
+	c, rec := newGrokMediaRuleTestContext()
+
+	resp := &http.Response{
+		StatusCode: http.StatusForbidden,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(bytes.NewReader(body)),
+	}
+
+	// 第一步：failoverOpenAIUpstreamHTTPError 是规则引擎在文本推理路径上的接线点。
+	// 内置结论是不换号（isGrokContentPolicyRejection → shouldFailoverGrokUpstreamError
+	// 恒 false），规则引擎必须尊重 BuiltinOwns、报告未命中，调用方才会继续走到
+	// handleErrorResponse 的专用分支。
+	foErr := svc.failoverOpenAIUpstreamHTTPError(context.Background(), c, account, resp,
+		body, "image is sensitive", "grok-imagine")
+	require.Nil(t, foErr, "内容策略拒绝不得被规则引擎接管为 failover 错误")
+	events := opsUpstreamErrorEvents(t, c)
+	for _, ev := range events {
+		require.NotEqual(t, "error_handling_rule_failover", ev.Kind,
+			"不该出现规则接管的事件——内容策略拒绝必须由内置兜底处理")
+	}
+
+	// 第二步：调用方在 foErr==nil 时会继续走 handleErrorResponse（真实序列里紧接着的
+	// 下一行），断言最终交付给客户端的确实是专用文案，不是规则引擎的产物。
+	resp2 := &http.Response{
+		StatusCode: http.StatusForbidden,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(bytes.NewReader(body)),
+	}
+	result, err := svc.handleErrorResponse(context.Background(), resp2, c, account, body, "grok-imagine")
+	require.Nil(t, result)
+	require.Error(t, err)
+
+	var failoverErr *UpstreamFailoverError
+	require.False(t, errors.As(err, &failoverErr),
+		"规则引擎产出的错误是 *UpstreamFailoverError；这里必须不是")
+
+	require.Equal(t, http.StatusForbidden, rec.Code)
+	var payload struct {
+		Error struct {
+			Type    string `json:"type"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &payload))
+	require.Equal(t, "invalid_request_error", payload.Error.Type)
+	require.Equal(t, grokContentPolicyClientMessage(body), payload.Error.Message,
+		"客户端必须拿到专用的内容策略拒绝文案，不是规则引擎/通用错误处理链改写过的消息")
+}
+
 // access-state 与 request-scoped 容量削峰同样归内置。用各自的判定函数取真实样本，
 // 避免把 marker 表硬编码进测试。
 func TestOpenAIBuiltinOwnsError_TypedClassificationsReserved(t *testing.T) {
@@ -321,6 +411,11 @@ func newMatchAllErrorPassthroughService(t *testing.T) *ErrorPassthroughService {
 		MatchMode:    model.MatchModeAll,
 		Platforms:    []string{PlatformOpenAI},
 		ResponseCode: &respCode, CustomMessage: &customMessage,
+		// SkipMonitoring: true 与 Gemini/Antigravity/Grok media 侧的同名 helper
+		// （newGeminiMatchAllErrorPassthroughService 等）保持一致：#228 task-12
+		// 复核发现本测试此前没设这个字段，导致 OpsSkipPassthroughKey 这条断言在
+		// OpenAI 侧从来没被真正驱动过——加上才能让下面新增的end-to-end断言成立。
+		SkipMonitoring: true,
 	}})
 	return svc
 }
@@ -425,10 +520,17 @@ func TestOpenAIErrorHandlingRule_SyntheticStatusNotRecordedAsUpstreamStatus(t *t
 	require.Zero(t, last.UpstreamStatusCode)
 }
 
-// 「错误透传规则」优先。内置判定不换号时，原本是由 handleErrorResponse 一类的链去问
-// applyErrorPassthroughRule 并直接写响应；错误处理规则一旦接管就再也走不到那里，
-// 等于把另一个管理台功能无声关掉。
-func TestOpenAIErrorHandlingRule_YieldsToErrorPassthroughRule(t *testing.T) {
+// 「错误处理规则」优先（2026-09-08 项目所有者反转 #228 非目标，旧名
+// TestOpenAIErrorHandlingRule_YieldsToErrorPassthroughRule）。两个机制同时命中
+// 同一个错误时规则引擎胜出：openai_gateway_forward.go 里 ruleHandled=true 会
+// 直接 return ruleErr，生产路径上根本不会再调用 handleErrorResponse——所以这里
+// 不能再像旧版那样直接调用 handleErrorResponse 来模拟"真实写路径"，那条调用在
+// 规则命中后已经是生产不可达路径了。改为断言 openAIErrorHandlingRuleOverride
+// 返回的 *UpstreamFailoverError 本身：ExhaustedAction/SafeErrorType/
+// SafeErrorMessage/NextAccountAction 都是规则引擎自己算出来的，而不是透传规则
+// 改写过的 CustomMessage；并确认 OpsSkipPassthroughKey 未被置位，证明
+// applyErrorPassthroughRule 从未被调用到。
+func TestOpenAIErrorHandlingRule_WinsOverErrorPassthroughRule(t *testing.T) {
 	svc := newOpenAIRuleService(t, nil, ErrorHandlingRule{
 		ID: "broad-400", StatusCodes: []int{400}, Action: ErrorHandlingActionPassthrough,
 		Platforms: []string{PlatformOpenAI},
@@ -436,13 +538,28 @@ func TestOpenAIErrorHandlingRule_YieldsToErrorPassthroughRule(t *testing.T) {
 	body := []byte(`{"error":{"message":"invalid request"}}`)
 
 	c, _ := newOpenAITransportErrTestContext()
+	// 错误透传规则也命中同一个 400——用来证明两者同时命中时规则引擎胜出。
 	BindErrorPassthroughService(c, newMatchAllErrorPassthroughService(t))
-	_, handled := svc.openAIErrorHandlingRuleOverride(context.Background(), c, openAIErrorHandlingRuleInput{
+	failoverErr, handled := svc.openAIErrorHandlingRuleOverride(context.Background(), c, openAIErrorHandlingRuleInput{
 		Account: openAIRuleAccount(), StatusCode: http.StatusBadRequest, Body: body, ReqModel: "gpt-4o",
 	})
-	require.False(t, handled, "内置不换号 + 透传规则命中 ⇒ 错误处理规则让路")
+	require.True(t, handled, "两个机制同时命中时错误处理规则引擎胜出（2026-09-08 反转 #228 非目标）")
+	require.NotNil(t, failoverErr)
+	require.Equal(t, "broad-400", failoverErr.ErrorRuleID)
+	require.Equal(t, ErrorHandlingExhaustedActionPassthrough, failoverErr.ExhaustedAction)
+	require.Equal(t, NextAccountStop, failoverErr.NextAccountAction)
+	// SafeErrorType/Message 来自规则引擎自己的 safeOpenAIError（从原始上游 body 里
+	// 取），不是透传规则改写后的 CustomMessage："上游请求失败"——证明命中的确实是
+	// 规则引擎的结果，透传规则连改写的机会都没有。
+	require.Equal(t, "upstream_error", failoverErr.SafeErrorType)
+	require.Equal(t, "invalid request", failoverErr.SafeErrorMessage)
 
-	// 内置要换号的分支不受影响：那条分支上本来就问不到透传规则。
+	// OpsSkipPassthroughKey 只由 applyErrorPassthroughRule 置位；规则引擎胜出这条
+	// 路径从未调用它，这里必须是未置位——否则说明透传规则偷偷跑过了。
+	_, skipSet := c.Get(OpsSkipPassthroughKey)
+	require.False(t, skipSet, "规则引擎胜出时不应该经过 applyErrorPassthroughRule")
+
+	// 内置要换号的分支不受影响：不管透传规则命不命中，规则引擎该赢还是赢。
 	c2, _ := newOpenAITransportErrTestContext()
 	BindErrorPassthroughService(c2, newMatchAllErrorPassthroughService(t))
 	_, handled2 := svc.openAIErrorHandlingRuleOverride(context.Background(), c2, openAIErrorHandlingRuleInput{
@@ -450,4 +567,40 @@ func TestOpenAIErrorHandlingRule_YieldsToErrorPassthroughRule(t *testing.T) {
 		BuiltinWillFailover: true,
 	})
 	require.True(t, handled2)
+}
+
+// TestOpenAIHandleErrorResponse_PassthroughRuleAloneStillApplies 是"透传规则单独
+// 命中仍然生效"的守护测试：svc 没有绑定 settingService，错误处理规则引擎结构性
+// 不可能命中（openAIErrorHandlingRulesActive 早退出），handleErrorResponse 的
+// applyErrorPassthroughRule 调用是唯一活跃的机制。上面的反转只改变"两者同时命中"
+// 这一种碰撞，这条覆盖率原本隐含在旧版 Yields 测试的 end-to-end 部分里，反转后
+// 单独补一个，避免连带丢掉。
+func TestOpenAIHandleErrorResponse_PassthroughRuleAloneStillApplies(t *testing.T) {
+	svc := &OpenAIGatewayService{}
+	body := []byte(`{"error":{"message":"invalid request"}}`)
+
+	c, rec := newOpenAITransportErrTestContext()
+	BindErrorPassthroughService(c, newMatchAllErrorPassthroughService(t))
+
+	resp := &http.Response{
+		StatusCode: http.StatusBadRequest,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(bytes.NewReader(body)),
+	}
+	_, err := svc.handleErrorResponse(context.Background(), resp, c, openAIRuleAccount(), nil)
+	require.Error(t, err)
+
+	require.Equal(t, http.StatusTeapot, rec.Code)
+	var payload struct {
+		Error struct {
+			Message string `json:"message"`
+			Type    string `json:"type"`
+		} `json:"error"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &payload))
+	require.Equal(t, "上游请求失败", payload.Error.Message)
+
+	skip, ok := c.Get(OpsSkipPassthroughKey)
+	require.True(t, ok, "OpsSkipPassthroughKey 必须被置位，避免下游重复应用透传规则")
+	require.Equal(t, true, skip)
 }

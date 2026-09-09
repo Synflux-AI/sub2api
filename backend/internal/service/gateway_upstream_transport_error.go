@@ -63,10 +63,75 @@ func (s *GatewayService) handleUpstreamTransportError(ctx context.Context, c *gi
 		s.tempUnscheduleTransportError(ctx, account, safeErr)
 	}
 
+	if ruleErr := s.anthropicTransportErrorRuleOverride(ctx, c, account, safeErr); ruleErr != nil {
+		return ruleErr
+	}
+
 	return &UpstreamFailoverError{
 		StatusCode:   http.StatusBadGateway,
 		ResponseBody: gatewayTransportFailoverBody,
 	}
+}
+
+func (s *GatewayService) anthropicTransportErrorRuleOverride(
+	ctx context.Context,
+	c *gin.Context,
+	account *Account,
+	safeErr string,
+) *UpstreamFailoverError {
+	if s == nil || s.settingService == nil || !isErrorHandlingRuleAccount(account) {
+		return nil
+	}
+	settings := s.settingService.GetErrorHandlingRuleSettingsCached(ctx)
+	if !settings.Enabled || !HasEnabledErrorHandlingRuleForPlatform(settings.Rules, account.Platform) {
+		return nil
+	}
+	body := syntheticTransportRuleBody(safeErr)
+	if body == nil {
+		return nil
+	}
+	failoverErr, handled := executeErrorHandlingRule(c, errorHandlingRuleExecInput{
+		Settings:            settings,
+		Account:             account,
+		StatusCode:          http.StatusBadGateway,
+		Header:              http.Header{},
+		Body:                body,
+		BuiltinWillFailover: true,
+		SyntheticStatus:     true,
+		SafeError:           safeAnthropicError,
+		LogDecision: func(decision errorHandlingRuleDecision, effectiveAction string) {
+			setOpsUpstreamError(c, 0, safeErr, "")
+			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+				ProxyID:            opsUpstreamProxyID(account),
+				ProxyName:          opsUpstreamProxyName(account),
+				Platform:           account.Platform,
+				AccountID:          account.ID,
+				AccountName:        account.Name,
+				UpstreamStatusCode: 0,
+				Kind:               "error_handling_rule_" + effectiveAction,
+				Message:            safeErr,
+			})
+			gatewayLog(ctx).Warn("error_handling_rule_matched",
+				zap.String("rule_id", decision.RuleID),
+				zap.String("rule_name", decision.RuleName),
+				zap.String("rule_action", decision.ConfiguredAction),
+				zap.String("outcome", effectiveAction),
+				zap.String("exhausted_action", decision.ExhaustedAction),
+				zap.Int("upstream_status_code", 0),
+				zap.Bool("synthetic_status", true),
+				zap.Int("matched_status_code", http.StatusBadGateway),
+				zap.Int64("account_id", account.ID),
+				zap.String("account_name", account.Name),
+				zap.String("platform", account.Platform),
+				zap.Int("rule_retry_limit", decision.RetryLimit),
+				zap.String("upstream_message", truncateString(safeErr, 256)),
+			)
+		},
+	})
+	if !handled {
+		return nil
+	}
+	return failoverErr
 }
 
 // tempUnscheduleTransportError marks an account temporarily unschedulable

@@ -95,8 +95,20 @@ func safeAnthropicError(body []byte) (string, string) {
 	return "upstream_error", message
 }
 
+// isErrorHandlingRuleAccount 报告该账号是否适用错误处理规则。
+//
+// Anthropic 保留 Type == AccountTypeAPIKey 的要求，纯为「存量行为零变化」：那是当年
+// 用账号类型给 OAuth 做的粗粒度兜底，放开会改变已上线规则在 OAuth 账号上的行为。
+// 其余具体平台不卡账号类型（按 OpenAI 侧做法）：OAuth 的真正风险点是各平台的 429
+// 状态机，已经列进各自的 BuiltinOwns 独占，不必再用账号类型二次设限。
 func isErrorHandlingRuleAccount(account *Account) bool {
-	return account != nil && account.Platform == PlatformAnthropic && account.Type == AccountTypeAPIKey
+	if account == nil || !isConcreteRequestPlatform(account.Platform) {
+		return false
+	}
+	if account.Platform == PlatformAnthropic {
+		return account.Type == AccountTypeAPIKey
+	}
+	return true
 }
 
 func (s *GatewayService) errorHandlingRulesActive(ctx context.Context, account *Account) bool {
@@ -196,7 +208,8 @@ func (s *GatewayService) applyErrorHandlingRule(
 	case ErrorHandlingActionPassthrough:
 		return errorHandlingRuleOutcomeDone, nil, s.writeErrorHandlingRulePassthrough(ctx, c, resp, respBody, account, reqModel)
 	case ErrorHandlingActionFailover:
-		return errorHandlingRuleOutcomeDone, nil, s.errorHandlingRuleFailover(ctx, resp, respBody, account, reqModel, decision, false)
+		// synthetic=false：resp 是这条 HTTP 响应级接线点上的真实上游响应。
+		return errorHandlingRuleOutcomeDone, nil, s.errorHandlingRuleFailover(ctx, resp, respBody, account, reqModel, decision, false, false)
 	case ErrorHandlingActionRetry:
 		if decision.RetryDelay > 0 {
 			if err := sleepWithContext(ctx, decision.RetryDelay); err != nil {
@@ -310,6 +323,12 @@ func (s *GatewayService) writeErrorHandlingRulePassthrough(ctx context.Context, 
 	return fmt.Errorf("upstream error: %d (error handling rule passthrough) message=%s", resp.StatusCode, message)
 }
 
+// synthetic 表示 resp.StatusCode 是合成的（没有真实上游 HTTP 响应，为了喂规则引擎
+// 才编出一个虚拟状态码——流中断/缺失 terminal 事件走的都是这条路）。必须是独立于
+// streamRule 的显式参数：两者语义不重合——同为流式规则命中（streamRule=true）时，
+// 真实的 SSE error 事件（如 429/400）与缺失 terminal 事件合成的 502 都会走到这里，
+// 前者 synthetic 必须是 false（那是上游给的真实状态码），后者才是 true。调用方必须
+// 按错误的真实来源传值，不能用 streamRule 兜底推断。
 func (s *GatewayService) errorHandlingRuleFailover(
 	ctx context.Context,
 	resp *http.Response,
@@ -318,6 +337,7 @@ func (s *GatewayService) errorHandlingRuleFailover(
 	reqModel string,
 	decision errorHandlingRuleDecision,
 	streamRule bool,
+	synthetic bool,
 ) error {
 	restoreErrorHandlingRuleBody(resp, respBody)
 	s.handleFailoverSideEffects(ctx, resp, account, reqModel)
@@ -340,5 +360,6 @@ func (s *GatewayService) errorHandlingRuleFailover(
 		ExhaustedAction:        decision.ExhaustedAction,
 		SafeErrorType:          errType,
 		SafeErrorMessage:       errMessage,
+		SyntheticStatus:        synthetic,
 	}
 }

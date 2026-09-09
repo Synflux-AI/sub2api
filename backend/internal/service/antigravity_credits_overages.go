@@ -195,7 +195,7 @@ func (s *AntigravityGatewayService) attemptCreditsOveragesRetry(
 	// 积分重试是独立重建的请求，需单独注入链路 ID
 	injectTraceHeader(p.ctx, creditsReq, p.account)
 	p.account.ApplyCustomHeaders(creditsReq)
-	creditsResp, err := p.httpUpstream.Do(creditsReq, p.proxyURL, p.account.ID, p.account.Concurrency)
+	creditsResp, err := timedUpstreamDo(p.c, p.httpUpstream, creditsReq, p.proxyURL, p.account.ID, p.account.Concurrency)
 	if err == nil && creditsResp != nil && creditsResp.StatusCode < 400 {
 		s.clearCreditsExhausted(p.ctx, p.account)
 		logger.LegacyPrintf("service.antigravity_gateway", "%s status=%d credit_overages_success model=%s account=%d",

@@ -571,6 +571,7 @@ import EmptyState from "@/components/common/EmptyState.vue";
 import HelpTooltip from "@/components/common/HelpTooltip.vue";
 import type { Column } from "@/components/common/types";
 import { adminAPI } from "@/api";
+import { CONCRETE_PLATFORM_OPTIONS } from "@/constants/platforms";
 import type {
   ErrorHandlingRule,
   ErrorHandlingRuleAction,
@@ -624,12 +625,13 @@ type ErrorHandlingRuleDialogForm = {
 };
 
 /**
- * 只列出规则引擎真正接线了的平台。后端 validate 也只放行这两个：勾一个引擎没接线的
- * 平台，管理员会以为规则在跑，实际什么都不会发生。
+ * 平台勾选清单复用 CONCRETE_PLATFORM_OPTIONS：那是账号页、错误透传规则、Ops
+ * 看板共用的「具体平台」单一权威清单，顺序与标签都一致。第二份清单必然漂移，
+ * 而漂移的后果是新加的上游平台在这个界面上静默消失。
+ * composite 不收：它是分组层的虚拟平台，account.Platform 永远是具体平台。
  */
 const ERROR_HANDLING_RULE_PLATFORM_OPTIONS = [
-  { value: "anthropic", label: "Anthropic" },
-  { value: "openai", label: "OpenAI" },
+  ...CONCRETE_PLATFORM_OPTIONS,
 ] as const;
 
 const ERROR_HANDLING_RULE_MAX_UPSTREAM_LATENCY_MS = 3_600_000;

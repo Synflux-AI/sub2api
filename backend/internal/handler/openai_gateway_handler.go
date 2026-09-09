@@ -1577,7 +1577,14 @@ func (h *OpenAIGatewayHandler) handleAnthropicFailoverExhausted(c *gin.Context, 
 	if failoverErr != nil &&
 		failoverErr.ExhaustedAction == service.ErrorHandlingExhaustedActionPassthrough &&
 		failoverErr.SafeErrorType != "" && failoverErr.SafeErrorMessage != "" {
-		service.SetOpsUpstreamError(c, failoverErr.StatusCode, failoverErr.SafeErrorMessage, "")
+		// failoverErr.SyntheticStatus 为真时 failoverErr.StatusCode 是传输层/流中断
+		// 合成的虚拟 502，没有真实上游响应：传 0 让 ops_error_logs.upstream_status_code
+		// 保持 NULL，不动下面 anthropicStreamingAwareError 用的客户端响应状态码。
+		opsStatusCode := failoverErr.StatusCode
+		if failoverErr.SyntheticStatus {
+			opsStatusCode = 0
+		}
+		service.SetOpsUpstreamError(c, opsStatusCode, failoverErr.SafeErrorMessage, "")
 		h.anthropicStreamingAwareError(
 			c,
 			failoverErr.StatusCode,
@@ -2525,11 +2532,11 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	var oauth429FailoverState service.OpenAIOAuth429FailoverState
 	wsAttemptMessage := append([]byte(nil), firstMessage...)
 	waitForWSSameAccountRetry := func(account *service.Account, failoverErr *service.UpstreamFailoverError) bool {
-		if account == nil || failoverErr == nil || failoverErr.StatusCode != http.StatusTooManyRequests || failoverErr.SameAccountRetryDeadline.IsZero() {
-			return false
+		count := 0
+		if account != nil {
+			count = sameAccountRetryCount[account.ID]
 		}
-		retryLimit := effectiveSameAccountRetryLimit(failoverErr, account)
-		if !sameAccountRetryAllowed(failoverErr, sameAccountRetryCount[account.ID], retryLimit) {
+		if !openAIWSSameAccountRetryAllowed(account, failoverErr, count) {
 			return false
 		}
 		sameAccountRetryCount[account.ID]++
@@ -3331,7 +3338,14 @@ func (h *OpenAIGatewayHandler) handleFailoverExhausted(c *gin.Context, failoverE
 	// 绝不把裸上游响应体吐给客户端。
 	if failoverErr.ExhaustedAction == service.ErrorHandlingExhaustedActionPassthrough &&
 		failoverErr.SafeErrorType != "" && failoverErr.SafeErrorMessage != "" {
-		service.SetOpsUpstreamError(c, failoverErr.StatusCode, failoverErr.SafeErrorMessage, "")
+		// failoverErr.SyntheticStatus 为真时 failoverErr.StatusCode 是传输层/流中断
+		// 合成的虚拟 502，没有真实上游响应：传 0 让 ops_error_logs.upstream_status_code
+		// 保持 NULL，不动下面 handleStreamingAwareError 用的客户端响应状态码。
+		opsStatusCode := failoverErr.StatusCode
+		if failoverErr.SyntheticStatus {
+			opsStatusCode = 0
+		}
+		service.SetOpsUpstreamError(c, opsStatusCode, failoverErr.SafeErrorMessage, "")
 		h.handleStreamingAwareError(
 			c,
 			failoverErr.StatusCode,
@@ -3778,6 +3792,18 @@ func openAIWSNextAttemptMessage(current, retryPayload []byte, retryCurrentTurn b
 	return append([]byte(nil), retryPayload...), true
 }
 
+func openAIWSSameAccountRetryAllowed(account *service.Account, failoverErr *service.UpstreamFailoverError, retryCount int) bool {
+	if account == nil || failoverErr == nil {
+		return false
+	}
+	ruleRetry := failoverErr.RuleRetryLimit != nil
+	legacyOAuthRetry := failoverErr.StatusCode == http.StatusTooManyRequests && !failoverErr.SameAccountRetryDeadline.IsZero()
+	if !ruleRetry && !legacyOAuthRetry {
+		return false
+	}
+	return sameAccountRetryAllowed(failoverErr, retryCount, effectiveSameAccountRetryLimit(failoverErr, account))
+}
+
 func closeOpenAIWSFailoverExhausted(c *gin.Context, conn *coderws.Conn, failoverErr *service.UpstreamFailoverError) {
 	intendedStatus := http.StatusBadGateway
 	errorType := "upstream_error"
@@ -3786,15 +3812,29 @@ func closeOpenAIWSFailoverExhausted(c *gin.Context, conn *coderws.Conn, failover
 	closeStatus := coderws.StatusInternalError
 
 	if failoverErr != nil {
-		if reason := strings.TrimSpace(string(failoverErr.Reason)); reason != "" {
+		if failoverErr.ExhaustedAction == service.ErrorHandlingExhaustedActionPassthrough &&
+			failoverErr.SafeErrorType != "" && failoverErr.SafeErrorMessage != "" {
+			if failoverErr.StatusCode > 0 {
+				intendedStatus = failoverErr.StatusCode
+			}
+			errorType = failoverErr.SafeErrorType
+			errorCode = failoverErr.SafeErrorType
+			message = failoverErr.SafeErrorMessage
+			switch intendedStatus {
+			case http.StatusTooManyRequests, 529, http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+				closeStatus = coderws.StatusTryAgainLater
+			case http.StatusUnauthorized, http.StatusForbidden:
+				closeStatus = coderws.StatusPolicyViolation
+			}
+		} else if reason := strings.TrimSpace(string(failoverErr.Reason)); reason != "" {
 			errorCode = reason
 		}
-		if failoverErr.Stage == service.GatewayFailureStageAccountAuth {
+		if failoverErr.ExhaustedAction != service.ErrorHandlingExhaustedActionPassthrough && failoverErr.Stage == service.GatewayFailureStageAccountAuth {
 			intendedStatus = http.StatusServiceUnavailable
 			errorType = "api_error"
 			message = service.GrokCredentialUnavailableClientMessage
 			closeStatus = coderws.StatusTryAgainLater
-		} else {
+		} else if failoverErr.ExhaustedAction != service.ErrorHandlingExhaustedActionPassthrough {
 			switch failoverErr.StatusCode {
 			case http.StatusTooManyRequests:
 				intendedStatus = http.StatusTooManyRequests
@@ -3814,7 +3854,11 @@ func closeOpenAIWSFailoverExhausted(c *gin.Context, conn *coderws.Conn, failover
 		}
 	}
 
-	service.MarkOpsStreamFailure(c, errorType, errorCode, message, intendedStatus)
+	opsIntendedStatus := intendedStatus
+	if failoverErr != nil && failoverErr.SyntheticStatus {
+		opsIntendedStatus = 0
+	}
+	service.MarkOpsStreamFailure(c, errorType, errorCode, message, opsIntendedStatus)
 	closeOpenAIClientWS(conn, closeStatus, message)
 }
 

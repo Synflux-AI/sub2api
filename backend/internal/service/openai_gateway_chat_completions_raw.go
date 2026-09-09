@@ -297,6 +297,7 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 	pendingLines := make([]string, 0, 8)
 	refusalDetector := newOpenAIChatSilentRefusalDetector(requestBodyLen)
 	var terminal openAIRawStreamTerminalState
+	var streamRuleErr *UpstreamFailoverError
 
 	writeLine := func(line string) {
 		if clientDisconnected {
@@ -337,7 +338,8 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 			trimmedPayload := strings.TrimSpace(payload)
 			terminal.ObserveDataLine(trimmedPayload)
 			if trimmedPayload != "[DONE]" {
-				observer.ObserveOpenAI([]byte(payload), strings.TrimSpace(gjson.Get(payload, "type").String()))
+				eventType := strings.TrimSpace(gjson.Get(payload, "type").String())
+				observer.ObserveOpenAI([]byte(payload), eventType)
 				usageOnlyChunk := isOpenAIChatUsageOnlyStreamChunk(payload)
 				if u := extractCCStreamUsage(payload); u != nil {
 					usage = *u
@@ -345,6 +347,23 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 				if firstTokenMs == nil && !usageOnlyChunk {
 					elapsed := int(time.Since(startTime).Milliseconds())
 					firstTokenMs = &elapsed
+				}
+				payloadBytes := []byte(payload)
+				cyberHit, _, _ := detectOpenAICyberPolicy(payloadBytes)
+				isFailurePayload := eventType == "error" || eventType == "response.failed" || gjson.Get(payload, "error").Exists()
+				if isFailurePayload && !cyberHit {
+					message := extractOpenAISSEErrorMessage(payloadBytes)
+					streamRuleErr = s.openAIStreamErrorHandlingRuleOverride(ctx, c, openAIStreamErrorHandlingRuleInput{
+						Account:                account,
+						Header:                 resp.Header,
+						Payload:                payloadBytes,
+						Message:                message,
+						ReqModel:               upstreamModel,
+						SemanticEventForwarded: clientOutputStarted,
+					})
+					if streamRuleErr != nil {
+						break
+					}
 				}
 			}
 		}
@@ -381,6 +400,9 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 			FirstTokenMs:                  firstTokenMs,
 		}
 	}
+	if streamRuleErr != nil {
+		return resultWithUsage(), streamRuleErr
+	}
 
 	scanErr := scanner.Err()
 	if scanErr != nil && !errors.Is(scanErr, context.Canceled) && !errors.Is(scanErr, context.DeadlineExceeded) {
@@ -412,6 +434,20 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 			zap.Bool("saw_sse_data", terminal.sawDataLine),
 			zap.Bool("client_output_started", clientOutputStarted),
 		)
+		message := "OpenAI raw chat completions stream ended before a terminal event"
+		if scanErr != nil {
+			message = "OpenAI raw chat completions stream read error: " + scanErr.Error()
+		}
+		if ruleErr := s.openAIStreamErrorHandlingRuleOverride(ctx, c, openAIStreamErrorHandlingRuleInput{
+			Account:                account,
+			Header:                 resp.Header,
+			Message:                message,
+			ReqModel:               upstreamModel,
+			SyntheticStatus:        true,
+			SemanticEventForwarded: clientOutputStarted,
+		}); ruleErr != nil {
+			return resultWithUsage(), ruleErr
+		}
 		if !clientOutputStarted {
 			// 响应头尚未提交：可以透明换号重试，客户端不会看到半截流。
 			return nil, newOpenAIRawStreamTruncatedFailoverError(c, account, requestID, cause)

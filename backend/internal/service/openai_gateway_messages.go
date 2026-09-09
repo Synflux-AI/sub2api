@@ -927,6 +927,7 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 	firstChunk := true
 	clientDisconnected := false
 	clientOutputStarted := false
+	semanticEventForwarded := false
 	var streamFailoverErr error
 	var streamNonFailoverErr error
 	terminalEventType := ""
@@ -1044,6 +1045,17 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 					return true
 				}
 				message := extractOpenAISSEErrorMessage(payloadBytes)
+				if ruleErr := s.openAIStreamErrorHandlingRuleOverride(c.Request.Context(), c, openAIStreamErrorHandlingRuleInput{
+					Account:                account,
+					Header:                 resp.Header,
+					Payload:                payloadBytes,
+					Message:                message,
+					ReqModel:               upstreamModel,
+					SemanticEventForwarded: semanticEventForwarded,
+				}); ruleErr != nil {
+					streamFailoverErr = ruleErr
+					return true
+				}
 				// Once Anthropic output has started, switching accounts would splice
 				// two model streams together. Surface a proper Anthropic error event
 				// instead of returning a failover error that the handler cannot retry.
@@ -1082,6 +1094,9 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 				streamNonFailoverErr = fmt.Errorf("upstream response failed: %s", errMsg)
 				return true
 			}
+		}
+		if !isTerminalEvent && openAIStreamDataStartsClientOutput(payload, eventType) {
+			semanticEventForwarded = true
 		}
 
 		// Convert to Anthropic events
@@ -1160,11 +1175,39 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 			return result, fmt.Errorf("stream usage incomplete: missing terminal event")
 		}
 		message := "OpenAI messages stream ended before a terminal event"
+		if c.Request.Context().Err() == nil {
+			if ruleErr := s.openAIStreamErrorHandlingRuleOverride(c.Request.Context(), c, openAIStreamErrorHandlingRuleInput{
+				Account:                account,
+				Header:                 resp.Header,
+				Message:                message,
+				ReqModel:               upstreamModel,
+				SyntheticStatus:        true,
+				SemanticEventForwarded: semanticEventForwarded,
+			}); ruleErr != nil {
+				return result, ruleErr
+			}
+		}
 		if !clientOutputStarted {
 			return result, s.newOpenAIStreamFailoverError(c, account, false, requestID, nil, message)
 		}
 		s.recordOpenAIMessagesStreamUpstreamError(c, account, requestID, "stream_missing_terminal", message)
 		return result, fmt.Errorf("stream usage incomplete: missing terminal event")
+	}
+	streamReadErr := func(err error) (*OpenAIForwardResult, error) {
+		result := resultWithUsage()
+		if !clientDisconnected && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) && c.Request.Context().Err() == nil {
+			if ruleErr := s.openAIStreamErrorHandlingRuleOverride(c.Request.Context(), c, openAIStreamErrorHandlingRuleInput{
+				Account:                account,
+				Header:                 resp.Header,
+				Message:                "OpenAI messages stream read error: " + err.Error(),
+				ReqModel:               upstreamModel,
+				SyntheticStatus:        true,
+				SemanticEventForwarded: semanticEventForwarded,
+			}); ruleErr != nil {
+				return result, ruleErr
+			}
+		}
+		return result, fmt.Errorf("stream usage incomplete: %w", err)
 	}
 	processFrame := func(frame openAICompatSSEFrame) bool {
 		payload := openAICompatPayloadWithEventType(frame.Data, frame.EventType)
@@ -1195,7 +1238,7 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 		}
 		if err := scanner.Err(); err != nil {
 			handleScanErr(err)
-			return resultWithUsage(), fmt.Errorf("stream usage incomplete: %w", err)
+			return streamReadErr(err)
 		}
 		if frame, ok := parser.Finish(); ok {
 			if strings.TrimSpace(frame.Data) == "[DONE]" {
@@ -1268,7 +1311,7 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 			}
 			if ev.err != nil {
 				handleScanErr(ev.err)
-				return resultWithUsage(), fmt.Errorf("stream usage incomplete: %w", ev.err)
+				return streamReadErr(ev.err)
 			}
 			lastDataAt = time.Now()
 			line := ev.line
@@ -1296,6 +1339,16 @@ func (s *OpenAIGatewayService) handleAnthropicStreamingResponse(
 				zap.String("model", originalModel),
 				zap.Duration("interval", streamInterval),
 			)
+			if ruleErr := s.openAIStreamErrorHandlingRuleOverride(c.Request.Context(), c, openAIStreamErrorHandlingRuleInput{
+				Account:                account,
+				Header:                 resp.Header,
+				Message:                "OpenAI messages stream data interval timeout",
+				ReqModel:               upstreamModel,
+				SyntheticStatus:        true,
+				SemanticEventForwarded: semanticEventForwarded,
+			}); ruleErr != nil {
+				return resultWithUsage(), ruleErr
+			}
 			return resultWithUsage(), fmt.Errorf("stream data interval timeout")
 
 		case <-keepaliveCh:

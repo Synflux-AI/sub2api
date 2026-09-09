@@ -232,7 +232,13 @@ func (h *OpenAIGatewayHandler) AlphaSearch(c *gin.Context) {
 		if failoverErr.RetryableOnSameAccount {
 			// 走 effectiveSameAccountRetryLimit 而不是裸的 GetPoolModeRetryCount()：
 			// 规则给的 RuleRetryLimit 要能覆盖账号的 pool-mode 基数，否则非 pool-mode
-			// 账号上规则配的 retry 会静默退化成换号。
+			// 账号上规则配的 retry 会静默退化成换号。这里的"基数"不是 0——
+			// GetPoolModeRetryCount() 对非 pool-mode 账号（IsPoolMode() 恒为 false）
+			// 与未显式配置 pool_mode_retry_count 的账号一样都兜底走
+			// defaultPoolModeRetryCount，实测值是 3；只有管理员把某个 pool-mode 账号的
+			// pool_mode_retry_count 显式设成 ≤0 时基数才会真的是 0。管理台配的
+			// RuleRetryLimit 必须能覆盖这个 3（含往上放宽），否则规则配 5 次也只会
+			// 重试 3 次就换号。
 			retryLimit := effectiveSameAccountRetryLimit(failoverErr, account)
 			if sameAccountRetryAllowed(failoverErr, sameAccountRetryCount[account.ID], retryLimit) {
 				sameAccountRetryCount[account.ID]++

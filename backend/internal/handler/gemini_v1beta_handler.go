@@ -578,6 +578,7 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 
 		// 5) forward (根据平台分流)
 		var result *service.ForwardResult
+		writerSizeBeforeForward := c.Writer.Size()
 		requestCtx := c.Request.Context()
 		if fs.SwitchCount > 0 {
 			requestCtx = service.WithAccountSwitchCount(requestCtx, fs.SwitchCount, h.metadataBridgeEnabled())
@@ -604,7 +605,17 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 		if err != nil {
 			var failoverErr *service.UpstreamFailoverError
 			if errors.As(err, &failoverErr) {
-				failoverAction := fs.HandleFailoverError(c.Request.Context(), h.gatewayService, account.ID, account.Platform, account.GetPoolModeRetryCount(), failoverErr)
+				if !gatewayForwardMayFailover(c, writerSizeBeforeForward, failoverErr) {
+					h.handleGeminiFailoverExhausted(c, failoverErr)
+					return
+				}
+				// 走 effectiveSameAccountRetryLimit 而不是裸的 GetPoolModeRetryCount()：
+				// 裸调用会让账号基数顶掉规则显式配的 RuleRetryLimit，两种基数取值
+				// 都会错——账号非 pool-mode 或未显式配置时基数是默认值 3，规则配了
+				// 5 次也只会重试 3 次；管理员把 pool_mode_retry_count 显式设成 0 时，
+				// 规则重试会静默退化成换号。RuleRetryLimit 必须覆盖账号基数，不管
+				// 那个基数是 3 还是 0。
+				failoverAction := fs.HandleFailoverError(c.Request.Context(), h.gatewayService, account.ID, account.Platform, effectiveSameAccountRetryLimit(failoverErr, account), failoverErr)
 				switch failoverAction {
 				case FailoverContinue:
 					continue
@@ -716,7 +727,34 @@ func (h *GatewayHandler) handleGeminiFailoverExhausted(c *gin.Context, failoverE
 	statusCode := failoverErr.StatusCode
 	responseBody := failoverErr.ResponseBody
 
-	// 先检查透传规则
+	// 错误处理规则引擎的 exhausted_action=passthrough 优先于下面的错误透传规则：
+	// 2026-09-08 项目所有者决定规则引擎全链优先于透传规则（反转 #228 非目标），
+	// 与 gateway_handler.go:1924→:1943 / gateway_handler_chat_completions.go /
+	// openai_gateway_handler.go 的既有次序一致 —— 不要把这两块顺序再"修"回去。
+	// SafeErrorType 不出现在 Gemini 线格式里——googleError 没有错误类型参数，
+	// 只能带 message；SafeErrorType 仍作为「规则引擎已填充」的前置判据之一。
+	// SafeErrorType/Message 缺一不可，缺了就退回内置映射，不能把可能含凭据
+	// 片段的原始上游文案透出去。
+	if failoverErr.ExhaustedAction == service.ErrorHandlingExhaustedActionPassthrough &&
+		failoverErr.SafeErrorType != "" && failoverErr.SafeErrorMessage != "" {
+		passthroughStatus := http.StatusBadGateway
+		if statusCode > 0 {
+			passthroughStatus = statusCode
+		}
+		// failoverErr.SyntheticStatus 为真时 statusCode 是传输层/流中断合成的虚拟
+		// 502，没有真实上游响应：传 0 让 ops_error_logs.upstream_status_code 保持
+		// NULL，不动下面 googleError 用的客户端响应 passthroughStatus。
+		opsStatusCode := statusCode
+		if failoverErr.SyntheticStatus {
+			opsStatusCode = 0
+		}
+		service.SetOpsUpstreamError(c, opsStatusCode, failoverErr.SafeErrorMessage, "")
+		googleError(c, passthroughStatus, failoverErr.SafeErrorMessage)
+		return
+	}
+
+	// 错误透传规则：只在上面的规则引擎未命中 exhausted_action=passthrough 时才
+	// 轮到这里生效（没有任何错误处理规则命中，或命中的动作不是 passthrough）。
 	if h.errorPassthroughService != nil && len(responseBody) > 0 {
 		if rule := h.errorPassthroughService.MatchRule(service.PlatformGemini, statusCode, responseBody); rule != nil {
 			// 确定响应状态码

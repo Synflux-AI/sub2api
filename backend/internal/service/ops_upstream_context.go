@@ -725,3 +725,30 @@ func (s *GatewayService) timedGatewayUpstreamDoWithTLS(
 	SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 	return resp, err
 }
+
+// timedUpstreamDo 是 HTTPUpstream.Do 加「把本次上游耗时落进 gin.Context」。
+//
+// 与 timedGatewayUpstreamDoWithTLS / timedDoOpenAIUpstream 同一套路，但不绑任何
+// service 接收者：gemini 在 s.httpUpstream 上调，antigravity 的重试循环在
+// p.httpUpstream 上调，一个自由函数能同时覆盖两侧的 7 个出口。
+//
+// 加它是因为错误处理规则的「上游耗时上限」条件读的就是 OpsUpstreamLatencyMsKey，
+// 而耗时未知是 fail-closed（不满足任何已配置的阈值）—— 没插桩的路径上，那个界面
+// 开关会永远不生效（#228）。副产品是补上这两个平台在
+// ops_error_logs.upstream_latency_ms 里的空洞。
+//
+// 沿用既有口径：一次请求内的多次上游尝试互相覆盖，最终留最后一次的数字；流式路径上
+// 该值是「拿到响应头」为止的耗时（TTFB），不是整段流的时长。
+func timedUpstreamDo(
+	c *gin.Context,
+	up HTTPUpstream,
+	req *http.Request,
+	proxyURL string,
+	accountID int64,
+	accountConcurrency int,
+) (*http.Response, error) {
+	upstreamStart := time.Now()
+	resp, err := up.Do(req, proxyURL, accountID, accountConcurrency)
+	SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
+	return resp, err
+}

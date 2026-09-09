@@ -649,7 +649,7 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 		// 一次重试一次换号都没有地吐给客户端的。ops 记录由 helper 统一负责，这里
 		// 不再本地记一遍（会在 upstream_errors 里对同一次失败记两条）。
 		return nil, s.handleOpenAIUpstreamTransportErrorWithURL(
-			upstreamCtx, c, account, err, false, safeUpstreamURL(upstreamReq.URL.String()))
+			upstreamCtx, c, account, err, false, safeUpstreamURL(upstreamReq.URL.String()), true)
 	}
 	if resp.StatusCode >= 400 {
 		respBody := s.readUpstreamErrorBody(resp)

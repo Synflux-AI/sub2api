@@ -1,3 +1,5 @@
+//go:build unit
+
 package service
 
 import (
@@ -149,9 +151,14 @@ func TestValidateErrorHandlingRulePlatformsAndLatency(t *testing.T) {
 			Platforms: []string{PlatformOpenAI}}, false},
 		{"合法：两个都勾（= 全平台）", ErrorHandlingRule{ID: "a", StatusCodes: []int{429}, Action: ErrorHandlingActionRetry,
 			Platforms: []string{PlatformAnthropic, PlatformOpenAI}}, false},
-		// 引擎只接线了 anthropic / openai，别的平台勾了也不会生效，勾了等于骗人。
-		{"非法：引擎未接线的平台", ErrorHandlingRule{ID: "a", StatusCodes: []int{429}, Action: ErrorHandlingActionRetry,
-			Platforms: []string{PlatformGemini}}, true},
+		// #228 task-13 打开写入白名单后，8 个具体平台都能勾：改用 isConcreteRequestPlatform
+		// 而不是固定的两平台 map，Gemini 不再是"引擎未接线的平台"。
+		{"合法：gemini（task-13 打开白名单后）", ErrorHandlingRule{ID: "a", StatusCodes: []int{429}, Action: ErrorHandlingActionRetry,
+			Platforms: []string{PlatformGemini}}, false},
+		// composite 是分组层虚拟平台，account.Platform 永远是具体平台，收进来只会多一个
+		// 永不命中的框，必须继续拒绝。
+		{"非法：composite（虚拟平台）", ErrorHandlingRule{ID: "a", StatusCodes: []int{429}, Action: ErrorHandlingActionRetry,
+			Platforms: []string{PlatformComposite}}, true},
 		{"非法：不存在的平台名", ErrorHandlingRule{ID: "a", StatusCodes: []int{429}, Action: ErrorHandlingActionRetry,
 			Platforms: []string{"banana"}}, true},
 		{"合法：耗时门限 0", ErrorHandlingRule{ID: "a", StatusCodes: []int{429}, Action: ErrorHandlingActionRetry,
@@ -202,4 +209,47 @@ func TestHasEnabledErrorHandlingRuleForPlatform(t *testing.T) {
 	require.True(t, HasEnabledErrorHandlingRuleForPlatform(rules, PlatformOpenAI))
 	require.False(t, HasEnabledErrorHandlingRuleForPlatform(rules, PlatformAnthropic),
 		"没有一条规则勾了 anthropic 时，热路径不该为了 decide 一遍去读错误响应体")
+}
+
+// #228 task-13：写入白名单从「只认 anthropic/openai」的固定 map 换成
+// isConcreteRequestPlatform（本仓库「具体请求平台」的单一权威清单）。
+
+// 8 平台 × 勾选组合。写入白名单必须与 isConcreteRequestPlatform 完全一致：
+// 两份清单会漂移，而漂移的后果是管理台出现「勾了却存不下」或「存下了却不生效」。
+func TestErrorHandlingRuleValidateAcceptsAllConcretePlatforms(t *testing.T) {
+	for _, platform := range []string{
+		PlatformAnthropic, PlatformOpenAI, PlatformGemini, PlatformAntigravity,
+		PlatformGrok, PlatformKimi, PlatformZhipu, PlatformDeepseek,
+	} {
+		t.Run(platform, func(t *testing.T) {
+			settings := execTestSettings(ErrorHandlingActionFailover, 1, "", []string{platform})
+			if err := validateErrorHandlingRuleSettings(&settings); err != nil {
+				t.Fatalf("platform %q must be accepted, got %v", platform, err)
+			}
+		})
+	}
+}
+
+// composite 不该被接受：account.Platform 永远是具体平台，收进来只会多一个永不命中的框。
+func TestErrorHandlingRuleValidateRejectsCompositePlatform(t *testing.T) {
+	settings := execTestSettings(ErrorHandlingActionFailover, 1, "", []string{PlatformComposite})
+	if err := validateErrorHandlingRuleSettings(&settings); err == nil {
+		t.Fatal("composite must be rejected: it is a group-level virtual platform")
+	}
+}
+
+// 白名单与 isConcreteRequestPlatform 不得漂移。
+func TestErrorHandlingRulePlatformWhitelistMatchesConcretePlatforms(t *testing.T) {
+	for _, platform := range []string{
+		PlatformAnthropic, PlatformOpenAI, PlatformGemini, PlatformAntigravity,
+		PlatformGrok, PlatformKimi, PlatformZhipu, PlatformDeepseek,
+		PlatformComposite, "nonsense",
+	} {
+		settings := execTestSettings(ErrorHandlingActionFailover, 1, "", []string{platform})
+		accepted := validateErrorHandlingRuleSettings(&settings) == nil
+		if accepted != isConcreteRequestPlatform(platform) {
+			t.Errorf("platform %q: validate accepted=%v but isConcreteRequestPlatform=%v",
+				platform, accepted, isConcreteRequestPlatform(platform))
+		}
+	}
 }

@@ -291,12 +291,20 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 		if err != nil {
 			var failoverErr *service.UpstreamFailoverError
 			if errors.As(err, &failoverErr) {
-				// Can't failover if streaming content already sent
-				if c.Writer.Size() != writerSizeBeforeForward {
+				if !gatewayForwardMayFailover(c, writerSizeBeforeForward, failoverErr) {
 					h.handleResponsesFailoverExhausted(c, failoverErr, true)
 					return
 				}
-				action := fs.HandleFailoverError(requestCtx, h.gatewayService, account.ID, account.Platform, account.GetPoolModeRetryCount(), failoverErr)
+				if failoverErr.SafeToFailoverAfterWrite && c.Writer.Written() {
+					streamStarted = true
+				}
+				// 走 effectiveSameAccountRetryLimit 而不是裸的 GetPoolModeRetryCount()：
+				// 裸调用会让账号基数顶掉规则显式配的 RuleRetryLimit，两种基数取值
+				// 都会错——账号非 pool-mode 或未显式配置时基数是默认值 3，规则配了
+				// 5 次也只会重试 3 次；管理员把 pool_mode_retry_count 显式设成 0 时，
+				// 规则重试会静默退化成换号。RuleRetryLimit 必须覆盖账号基数，不管
+				// 那个基数是 3 还是 0。
+				action := fs.HandleFailoverError(requestCtx, h.gatewayService, account.ID, account.Platform, effectiveSameAccountRetryLimit(failoverErr, account), failoverErr)
 				switch action {
 				case FailoverContinue:
 					continue
@@ -386,7 +394,14 @@ func (h *GatewayHandler) handleResponsesFailoverExhausted(c *gin.Context, lastEr
 		lastErr.ExhaustedAction == service.ErrorHandlingExhaustedActionPassthrough &&
 		lastErr.SafeErrorType != "" && lastErr.SafeErrorMessage != "" {
 		code, message = lastErr.SafeErrorType, lastErr.SafeErrorMessage
-		service.SetOpsUpstreamError(c, status, message, "")
+		// lastErr.SyntheticStatus 为真时 status 是传输层/流中断合成的虚拟 502，没有
+		// 真实上游响应：传 0 让 ops_error_logs.upstream_status_code 保持 NULL，不动
+		// 下面客户端响应用的 status。
+		opsStatusCode := status
+		if lastErr.SyntheticStatus {
+			opsStatusCode = 0
+		}
+		service.SetOpsUpstreamError(c, opsStatusCode, message, "")
 	} else if lastErr != nil && lastErr.IsCredentialFailure() {
 		status, message = credentialFailoverClientResponse(lastErr)
 	} else if lastErr != nil && lastErr.IsOpenAICapacityShed() && strings.TrimSpace(lastErr.ClientMessage) != "" {

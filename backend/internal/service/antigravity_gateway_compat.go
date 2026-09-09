@@ -193,8 +193,12 @@ func (s *AntigravityGatewayService) forwardAntigravityCompat(
 		isStickySession: false,
 		groupID:         0,
 		sessionHash:     "",
+		ruleOverride:    s.antigravityEarlyRuleOverrideHook(ctx, c, account, request.originalModel),
 	})
 	if err != nil {
+		if failoverErr, ok := err.(*UpstreamFailoverError); ok {
+			return nil, failoverErr
+		}
 		return nil, s.handleAntigravityCompatTransportError(c, err)
 	}
 
@@ -354,7 +358,7 @@ func (s *AntigravityGatewayService) consumeAntigravityCompatResponse(
 	if requestID != "" {
 		c.Header("x-request-id", requestID)
 	}
-	streamResult, err := s.consumeAntigravityCompatSuccess(c, call, resp)
+	streamResult, err := s.consumeAntigravityCompatSuccess(ctx, c, account, call, resp)
 	if err != nil {
 		return nil, err
 	}
@@ -379,7 +383,9 @@ func (s *AntigravityGatewayService) consumeAntigravityCompatResponse(
 }
 
 func (s *AntigravityGatewayService) consumeAntigravityCompatSuccess(
+	ctx context.Context,
 	c *gin.Context,
+	account *Account,
 	call *antigravityCompatUpstreamCall,
 	resp *http.Response,
 ) (*antigravityStreamResult, error) {
@@ -391,9 +397,11 @@ func (s *AntigravityGatewayService) consumeAntigravityCompatSuccess(
 				call.request.startTime,
 				call.request.originalModel,
 				call.request.includeUsage,
+				antigravityStreamRuleOptions{ctx: ctx, account: account, reqModel: call.billingModel},
 			)
 		}
-		return s.handleResponsesStreamingFromAntigravity(c, resp, call.request.startTime, call.request.originalModel)
+		return s.handleResponsesStreamingFromAntigravity(c, resp, call.request.startTime, call.request.originalModel,
+			antigravityStreamRuleOptions{ctx: ctx, account: account, reqModel: call.billingModel})
 	}
 
 	if call.request.protocol == antigravityCompatChatCompletions {
@@ -422,6 +430,21 @@ func (s *AntigravityGatewayService) handleAntigravityCompatHTTPError(
 		"",
 		false,
 	)
+
+	// #228 task-8：错误处理规则引擎接线点。这条链（chat completions / responses）
+	// 没有任何早退分支，也没有 isGoogleProjectConfigError 特判——antigravityBuiltinOwnsError
+	// 在这里是承重的，不是双重保险（见 antigravity_error_handling_rule.go 顶部注释）。
+	if failoverErr, handled := s.antigravityErrorHandlingRuleOverride(ctx, c, antigravityErrorHandlingRuleInput{
+		Account:             account,
+		StatusCode:          resp.StatusCode,
+		Header:              resp.Header,
+		Body:                body,
+		ReqModel:            call.request.originalModel,
+		BuiltinWillFailover: s.shouldFailoverUpstreamError(resp.StatusCode),
+	}); handled {
+		return failoverErr
+	}
+
 	if s.shouldFailoverUpstreamError(resp.StatusCode) {
 		message := sanitizeUpstreamErrorMessage(strings.TrimSpace(extractAntigravityErrorMessage(body)))
 		event := OpsUpstreamErrorEvent{
@@ -506,9 +529,32 @@ func (s *AntigravityGatewayService) writeMappedAntigravityCompatError(
 		Kind:               "http_error",
 		Message:            message,
 	})
-	c.JSON(mapUpstreamStatusCode(upstreamStatus), gin.H{
+
+	defaultStatus := mapUpstreamStatusCode(upstreamStatus)
+	defaultMessage := getPassthroughOrDefault(message, "Upstream request failed")
+
+	// 错误处理规则在标准接线点已经问过一次（forwardAntigravityCompat 等调用方，
+	// 命中就直接返回，走不到这里）。这里只在规则未命中时执行——错误透传规则优先于
+	// 内置映射，2026-09-08 起规则引擎全链优先于透传规则（反转 #228 §五），不再有
+	// "让路"这个中间态：两者同时命中时规则引擎在上面的标准接线点就已经赢了。
+	if ptStatus, ptErrType, ptErrMsg, matched := applyErrorPassthroughRule(
+		c, account.Platform, upstreamStatus, body,
+		defaultStatus, "upstream_error", defaultMessage,
+	); matched {
+		c.JSON(ptStatus, gin.H{
+			"error": gin.H{
+				"message": ptErrMsg,
+				"type":    ptErrType,
+				"param":   nil,
+				"code":    nil,
+			},
+		})
+		return fmt.Errorf("upstream error: %d %s", upstreamStatus, message)
+	}
+
+	c.JSON(defaultStatus, gin.H{
 		"error": gin.H{
-			"message": getPassthroughOrDefault(message, "Upstream request failed"),
+			"message": defaultMessage,
 			"type":    "upstream_error",
 			"param":   nil,
 			"code":    nil,
