@@ -175,6 +175,24 @@ type AnthropicUsage struct {
 	PromptTokensDetails   *AnthropicPromptTokensDetails `json:"prompt_tokens_details,omitempty"`
 	PromptCacheHitTokens  *int                          `json:"prompt_cache_hit_tokens,omitempty"`
 	PromptCacheMissTokens *int                          `json:"prompt_cache_miss_tokens,omitempty"`
+	// 部分中转把原始 OpenAI 用量嵌在 billing_usage 里并显式声明口径。
+	// 不保留就会在 Unmarshal 阶段丢失，无法还原净输入。出站响应用的是新建
+	// 字面量（各 *_anthropic_native.go 的 finalResp.Usage），该字段为 nil，
+	// omitempty 保证不会多出一个 billing_usage 字段。
+	BillingUsage *AnthropicBillingUsage `json:"billing_usage,omitempty"`
+}
+
+// AnthropicBillingUsage 是上游对本次用量口径的显式声明。
+type AnthropicBillingUsage struct {
+	Semantic    string                       `json:"semantic,omitempty"`
+	OpenAIUsage *AnthropicBillingOpenAIUsage `json:"openai_usage,omitempty"`
+}
+
+// AnthropicBillingOpenAIUsage 是 semantic=openai 时上游附带的原始 OpenAI 用量。
+type AnthropicBillingOpenAIUsage struct {
+	PromptTokens        int                           `json:"prompt_tokens,omitempty"`
+	CachedTokens        int                           `json:"cached_tokens,omitempty"`
+	PromptTokensDetails *AnthropicPromptTokensDetails `json:"prompt_tokens_details,omitempty"`
 }
 
 // ---------------------------------------------------------------------------

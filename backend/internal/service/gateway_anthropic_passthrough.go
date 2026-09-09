@@ -1068,7 +1068,17 @@ func parseSSEUsagePassthrough(data string, usage *ClaudeUsage) {
 	}
 
 	parsed := gjson.Parse(data)
-	switch parsed.Get("type").String() {
+	eventType := parsed.Get("type").String()
+
+	// 先判定本事件是否自带 OpenAI 口径声明：delta 分支要靠它决定能不能用裸
+	// input_tokens 覆盖 message_start 已还原的净输入。
+	usageNode := parsed.Get("usage")
+	if eventType == "message_start" {
+		usageNode = parsed.Get("message.usage")
+	}
+	oaiNode, declaresOpenAISemantic := openAISemanticUsageNode(usageNode)
+
+	switch eventType {
 	case "message_start":
 		msgUsage := parsed.Get("message.usage")
 		if msgUsage.Exists() {
@@ -1087,7 +1097,12 @@ func parseSSEUsagePassthrough(data string, usage *ClaudeUsage) {
 	case "message_delta":
 		deltaUsage := parsed.Get("usage")
 		if deltaUsage.Exists() {
-			if v := deltaUsage.Get("input_tokens").Int(); v > 0 {
+			// 上游已声明 OpenAI 口径时，本事件若没有自带声明就无法判断这个裸
+			// input_tokens 是总量还是净输入，覆盖会把已还原的净输入打回总量
+			// （缓存 token 重新按 input 单价计一次）。保留已还原值即可：上游回
+			// 总量时忽略是对的，回净输入时值本来相同。
+			canTrustDeltaInputTokens := declaresOpenAISemantic || !usage.OpenAISemanticDeclared
+			if v := deltaUsage.Get("input_tokens").Int(); v > 0 && canTrustDeltaInputTokens {
 				usage.InputTokens = int(v)
 			}
 			if v := deltaUsage.Get("output_tokens").Int(); v > 0 {
@@ -1137,11 +1152,35 @@ func parseSSEUsagePassthrough(data string, usage *ClaudeUsage) {
 	// uncached input. prompt_tokens remains the total in both events. Normalize
 	// to ClaudeUsage's mutually-exclusive buckets so downstream billing does not
 	// subtract cache tokens from an already-uncached value.
-	usageNode := parsed.Get("usage")
-	if parsed.Get("type").String() == "message_start" {
-		usageNode = parsed.Get("message.usage")
+	if declaresOpenAISemantic {
+		usage.OpenAISemanticDeclared = true
+		usageNode = oaiNode
 	}
 	normalizeAnthropicCompatiblePromptUsage(usageNode, usage)
+}
+
+// openAISemanticUsageNode 返回上游显式声明为 OpenAI 口径的原始 usage 节点。
+//
+// 部分 Anthropic 兼容中转回的是「Anthropic 形状 + OpenAI 语义」：字段名叫
+// input_tokens，值却是含缓存的 prompt 总量。这类上游在 usage.billing_usage 里
+// 声明口径（semantic）并附带原始 openai_usage，据此才能还原净输入；直接采信
+// 外层 input_tokens 会把缓存 token 按 input 单价再计一次。
+//
+// semantic 缺失、为 anthropic、或没有可用的 openai_usage 时返回 false，调用方
+// 维持原有的 Anthropic 语义解析不变。
+func openAISemanticUsageNode(usageNode gjson.Result) (gjson.Result, bool) {
+	if !usageNode.Exists() {
+		return gjson.Result{}, false
+	}
+	billing := usageNode.Get("billing_usage")
+	if !billing.Exists() || !strings.EqualFold(strings.TrimSpace(billing.Get("semantic").String()), "openai") {
+		return gjson.Result{}, false
+	}
+	oaiNode := billing.Get("openai_usage")
+	if !oaiNode.Exists() || oaiNode.Get("prompt_tokens").Int() <= 0 {
+		return gjson.Result{}, false
+	}
+	return oaiNode, true
 }
 
 // normalizeAnthropicCompatiblePromptUsage converts provider-native OpenAI-style
@@ -1229,6 +1268,10 @@ func parseClaudeUsageFromResponseBody(body []byte) *ClaudeUsage {
 		if cached := usageNode.Get("cached_tokens").Int(); cached > 0 {
 			usage.CacheReadInputTokens = int(cached)
 		}
+	}
+	if oaiNode, ok := openAISemanticUsageNode(usageNode); ok {
+		usage.OpenAISemanticDeclared = true
+		usageNode = oaiNode
 	}
 	normalizeAnthropicCompatiblePromptUsage(usageNode, usage)
 	return usage
