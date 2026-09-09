@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log"
 	"log/slog"
+	"math"
 	"net/http"
 	"sort"
 	"strconv"
@@ -227,6 +228,11 @@ type AccountListItemWithConcurrency struct {
 	CurrentWindowCost  *float64                     `json:"current_window_cost,omitempty"`
 	ActiveSessions     *int                         `json:"active_sessions,omitempty"`
 	CurrentRPM         *int                         `json:"current_rpm,omitempty"`
+	// 账号管理页只用 lite=1 拉列表，健康分/分层/TTFT 必须跟着精简 DTO 一起下发，
+	// 语义与 AccountWithConcurrency 上的同名字段完全一致。
+	HealthScore *float64                     `json:"health_score,omitempty"`
+	HealthTier  *int                         `json:"health_tier,omitempty"`
+	TTFT        *service.AccountTTFTSnapshot `json:"ttft,omitempty"`
 }
 
 type simpleModeGroupReference struct {
@@ -860,7 +866,11 @@ func (h *AccountHandler) List(c *gin.Context) {
 				score = s
 			}
 			tier := healthSvc.TierForScore(score)
-			item.HealthScore = &score
+			// 分层用原始分判定；下发的分取整。衰减分是按 time.Now() 连续变化的
+			// 浮点数，原样进 payload 会让列表 ETag 每次轮询都变，把自动刷新的
+			// 304 快路径打空。前端本就只展示 Math.round 后的整数，取整不改观感。
+			displayScore := math.Round(score)
+			item.HealthScore = &displayScore
 			item.HealthTier = &tier
 		}
 
@@ -885,6 +895,9 @@ func (h *AccountHandler) List(c *gin.Context) {
 				CurrentWindowCost:  item.CurrentWindowCost,
 				ActiveSessions:     item.ActiveSessions,
 				CurrentRPM:         item.CurrentRPM,
+				HealthScore:        item.HealthScore,
+				HealthTier:         item.HealthTier,
+				TTFT:               item.TTFT,
 			}
 		}
 		etag := buildAccountsListETag(compact, total, page, pageSize, platform, accountType, status, search, true)
