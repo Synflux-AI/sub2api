@@ -227,6 +227,11 @@ type AccountListItemWithConcurrency struct {
 	CurrentWindowCost  *float64                     `json:"current_window_cost,omitempty"`
 	ActiveSessions     *int                         `json:"active_sessions,omitempty"`
 	CurrentRPM         *int                         `json:"current_rpm,omitempty"`
+	// 账号管理页只用 lite=1 拉列表，健康分/分层/TTFT 必须跟着精简 DTO 一起下发，
+	// 语义与 AccountWithConcurrency 上的同名字段完全一致。
+	HealthScore *float64                     `json:"health_score,omitempty"`
+	HealthTier  *int                         `json:"health_tier,omitempty"`
+	TTFT        *service.AccountTTFTSnapshot `json:"ttft,omitempty"`
 }
 
 type simpleModeGroupReference struct {
@@ -885,6 +890,9 @@ func (h *AccountHandler) List(c *gin.Context) {
 				CurrentWindowCost:  item.CurrentWindowCost,
 				ActiveSessions:     item.ActiveSessions,
 				CurrentRPM:         item.CurrentRPM,
+				HealthScore:        item.HealthScore,
+				HealthTier:         item.HealthTier,
+				TTFT:               item.TTFT,
 			}
 		}
 		etag := buildAccountsListETag(compact, total, page, pageSize, platform, accountType, status, search, true)
