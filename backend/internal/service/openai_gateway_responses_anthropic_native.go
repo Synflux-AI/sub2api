@@ -138,9 +138,9 @@ func (s *OpenAIGatewayService) forwardResponsesViaNativeAnthropic(
 	}
 
 	if clientStream {
-		return s.handleResponsesStreamingFromNativeAnthropic(resp, c, originalModel, billingModel, upstreamModel, reasoningEffort, startTime, clientToolMapping)
+		return s.handleResponsesStreamingFromNativeAnthropic(resp, c, originalModel, billingModel, upstreamModel, reasoningEffort, startTime, clientToolMapping, account.IsUpstreamUsageOpenAISemantic())
 	}
-	return s.handleResponsesBufferedFromNativeAnthropic(resp, c, originalModel, billingModel, upstreamModel, reasoningEffort, startTime, clientToolMapping)
+	return s.handleResponsesBufferedFromNativeAnthropic(resp, c, originalModel, billingModel, upstreamModel, reasoningEffort, startTime, clientToolMapping, account.IsUpstreamUsageOpenAISemantic())
 }
 
 // handleResponsesBufferedFromNativeAnthropic reads Anthropic SSE events, assembles
@@ -154,6 +154,7 @@ func (s *OpenAIGatewayService) handleResponsesBufferedFromNativeAnthropic(
 	reasoningEffort *string,
 	startTime time.Time,
 	clientToolMapping apicompat.ResponsesClientToolMapping,
+	forceOpenAISemanticUsage bool,
 ) (*OpenAIForwardResult, error) {
 	requestID := resp.Header.Get("x-request-id")
 
@@ -224,11 +225,11 @@ func (s *OpenAIGatewayService) handleResponsesBufferedFromNativeAnthropic(
 
 		if event.Type == "message_start" && event.Message != nil {
 			finalResp = event.Message
-			mergeAnthropicUsage(&usage, event.Message.Usage)
+			mergeAnthropicUsage(&usage, event.Message.Usage, forceOpenAISemanticUsage)
 		}
 		if event.Type == "message_delta" {
 			if event.Usage != nil {
-				mergeAnthropicUsage(&usage, *event.Usage)
+				mergeAnthropicUsage(&usage, *event.Usage, forceOpenAISemanticUsage)
 			}
 			if event.Delta != nil && event.Delta.StopReason != "" && finalResp != nil {
 				finalResp.StopReason = apicompat.AnthropicStopReasonPtr(event.Delta.StopReason)
@@ -310,6 +311,7 @@ func (s *OpenAIGatewayService) handleResponsesStreamingFromNativeAnthropic(
 	reasoningEffort *string,
 	startTime time.Time,
 	clientToolMapping apicompat.ResponsesClientToolMapping,
+	forceOpenAISemanticUsage bool,
 ) (*OpenAIForwardResult, error) {
 	requestID := resp.Header.Get("x-request-id")
 
@@ -391,10 +393,10 @@ func (s *OpenAIGatewayService) handleResponsesStreamingFromNativeAnthropic(
 		}
 
 		if event.Type == "message_delta" && event.Usage != nil {
-			mergeAnthropicUsage(&usage, *event.Usage)
+			mergeAnthropicUsage(&usage, *event.Usage, forceOpenAISemanticUsage)
 		}
 		if event.Type == "message_start" && event.Message != nil {
-			mergeAnthropicUsage(&usage, event.Message.Usage)
+			mergeAnthropicUsage(&usage, event.Message.Usage, forceOpenAISemanticUsage)
 		}
 
 		events := apicompat.AnthropicEventToResponsesEvents(event, state)

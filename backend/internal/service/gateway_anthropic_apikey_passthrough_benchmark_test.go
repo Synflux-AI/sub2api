@@ -9,7 +9,7 @@ func BenchmarkGatewayService_ParseSSEUsage_MessageStart(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		usage := &ClaudeUsage{}
-		svc.parseSSEUsage(data, usage)
+		svc.parseSSEUsage(data, usage, false)
 	}
 }
 
@@ -19,7 +19,7 @@ func BenchmarkGatewayService_ParseSSEUsagePassthrough_MessageStart(b *testing.B)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		usage := &ClaudeUsage{}
-		parseSSEUsagePassthrough(data, usage)
+		parseSSEUsagePassthrough(data, usage, false)
 	}
 }
 
@@ -30,7 +30,7 @@ func BenchmarkGatewayService_ParseSSEUsage_MessageDelta(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		usage := &ClaudeUsage{}
-		svc.parseSSEUsage(data, usage)
+		svc.parseSSEUsage(data, usage, false)
 	}
 }
 
@@ -40,7 +40,7 @@ func BenchmarkGatewayService_ParseSSEUsagePassthrough_MessageDelta(b *testing.B)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		usage := &ClaudeUsage{}
-		parseSSEUsagePassthrough(data, usage)
+		parseSSEUsagePassthrough(data, usage, false)
 	}
 }
 
@@ -49,6 +49,6 @@ func BenchmarkParseClaudeUsageFromResponseBody(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = parseClaudeUsageFromResponseBody(body)
+		_ = parseClaudeUsageFromResponseBody(body, false)
 	}
 }

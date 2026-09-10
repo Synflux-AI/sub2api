@@ -281,6 +281,11 @@ type Account struct {
 	CacheTTLOverrideEnabled *bool   `json:"cache_ttl_override_enabled,omitempty"`
 	CacheTTLOverrideTarget  *string `json:"cache_ttl_override_target,omitempty"`
 
+	// 上游 usage 口径标注：上游回「Anthropic 形状 + OpenAI 语义」的 usage
+	// （input_tokens 是含缓存的 prompt 总量）且不在 billing_usage 里声明时，
+	// 由管理员显式标注，计费才能把缓存 token 从输入里扣出来
+	UpstreamUsageOpenAISemantic *bool `json:"upstream_usage_openai_semantic,omitempty"`
+
 	// 自定义 Base URL 中继转发（仅 Anthropic OAuth/SetupToken 账号有效）
 	CustomBaseURLEnabled *bool   `json:"custom_base_url_enabled,omitempty"`
 	CustomBaseURL        *string `json:"custom_base_url,omitempty"`
@@ -387,8 +392,10 @@ type AccountListItem struct {
 	EnableSessionIDMasking  *bool    `json:"session_id_masking_enabled,omitempty"`
 	CacheTTLOverrideEnabled *bool    `json:"cache_ttl_override_enabled,omitempty"`
 	CacheTTLOverrideTarget  *string  `json:"cache_ttl_override_target,omitempty"`
-	CustomBaseURLEnabled    *bool    `json:"custom_base_url_enabled,omitempty"`
-	CustomBaseURL           *string  `json:"custom_base_url,omitempty"`
+
+	UpstreamUsageOpenAISemantic *bool   `json:"upstream_usage_openai_semantic,omitempty"`
+	CustomBaseURLEnabled        *bool   `json:"custom_base_url_enabled,omitempty"`
+	CustomBaseURL               *string `json:"custom_base_url,omitempty"`
 
 	QuotaLimit       *float64 `json:"quota_limit,omitempty"`
 	QuotaUsed        *float64 `json:"quota_used,omitempty"`

@@ -12,11 +12,11 @@ import (
 func TestParseSSEUsagePassthroughNormalizesKimiPromptUsage(t *testing.T) {
 	usage := &ClaudeUsage{}
 
-	parseSSEUsagePassthrough(`{"type":"message_start","message":{"usage":{"input_tokens":173306,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":0,"prompt_tokens":173306,"cached_tokens":0}}}`, usage)
+	parseSSEUsagePassthrough(`{"type":"message_start","message":{"usage":{"input_tokens":173306,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":0,"prompt_tokens":173306,"cached_tokens":0}}}`, usage, false)
 	require.Equal(t, 173306, usage.InputTokens)
 	require.Zero(t, usage.CacheReadInputTokens)
 
-	parseSSEUsagePassthrough(`{"type":"message_delta","usage":{"input_tokens":250,"cache_creation_input_tokens":0,"cache_read_input_tokens":173056,"output_tokens":166,"prompt_tokens":173306,"cached_tokens":173056}}`, usage)
+	parseSSEUsagePassthrough(`{"type":"message_delta","usage":{"input_tokens":250,"cache_creation_input_tokens":0,"cache_read_input_tokens":173056,"output_tokens":166,"prompt_tokens":173306,"cached_tokens":173056}}`, usage, false)
 	require.Equal(t, 250, usage.InputTokens, "Kimi message_delta input_tokens is already the uncached bucket")
 	require.Equal(t, 173056, usage.CacheReadInputTokens)
 	require.Equal(t, 166, usage.OutputTokens)
@@ -25,8 +25,8 @@ func TestParseSSEUsagePassthroughNormalizesKimiPromptUsage(t *testing.T) {
 func TestParseSSEUsagePassthroughKimiFullyCachedInputReplacesStartTotal(t *testing.T) {
 	usage := &ClaudeUsage{}
 
-	parseSSEUsagePassthrough(`{"type":"message_start","message":{"usage":{"input_tokens":173306,"prompt_tokens":173306}}}`, usage)
-	parseSSEUsagePassthrough(`{"type":"message_delta","usage":{"input_tokens":0,"cache_read_input_tokens":173306,"output_tokens":8,"prompt_tokens":173306,"cached_tokens":173306}}`, usage)
+	parseSSEUsagePassthrough(`{"type":"message_start","message":{"usage":{"input_tokens":173306,"prompt_tokens":173306}}}`, usage, false)
+	parseSSEUsagePassthrough(`{"type":"message_delta","usage":{"input_tokens":0,"cache_read_input_tokens":173306,"output_tokens":8,"prompt_tokens":173306,"cached_tokens":173306}}`, usage, false)
 
 	require.Zero(t, usage.InputTokens, "an explicit zero uncached bucket must not retain message_start's total")
 	require.Equal(t, 173306, usage.CacheReadInputTokens)
@@ -65,7 +65,7 @@ func TestParseClaudeUsageFromResponseBodyNormalizesCNProviderAliases(t *testing.
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			usage := parseClaudeUsageFromResponseBody([]byte(tt.body))
+			usage := parseClaudeUsageFromResponseBody([]byte(tt.body), false)
 			require.Equal(t, tt.wantInput, usage.InputTokens)
 			require.Equal(t, tt.wantCacheRead, usage.CacheReadInputTokens)
 			require.Equal(t, tt.wantOutput, usage.OutputTokens)
@@ -97,7 +97,7 @@ func TestParseSSEUsagePassthroughNormalizesGLMAndDeepSeekAliases(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			usage := &ClaudeUsage{}
-			parseSSEUsagePassthrough(tt.data, usage)
+			parseSSEUsagePassthrough(tt.data, usage, false)
 			require.Equal(t, tt.wantInput, usage.InputTokens)
 			require.Equal(t, tt.wantCacheRead, usage.CacheReadInputTokens)
 			require.Equal(t, 30, usage.OutputTokens)
@@ -112,8 +112,8 @@ func TestMergeAnthropicUsageNormalizesKimiStreamForOpenAIBilling(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(`{"type":"message_delta","usage":{"input_tokens":250,"cache_read_input_tokens":173056,"output_tokens":166,"prompt_tokens":173306,"cached_tokens":173056}}`), &delta))
 
 	usage := &ClaudeUsage{}
-	mergeAnthropicUsage(usage, start.Message.Usage)
-	mergeAnthropicUsage(usage, *delta.Usage)
+	mergeAnthropicUsage(usage, start.Message.Usage, false)
+	mergeAnthropicUsage(usage, *delta.Usage, false)
 	require.Equal(t, 250, usage.InputTokens)
 	require.Equal(t, 173056, usage.CacheReadInputTokens)
 
@@ -144,7 +144,7 @@ func TestMergeAnthropicUsageNormalizesGLMAndDeepSeekAliases(t *testing.T) {
 			require.NoError(t, json.Unmarshal([]byte(tt.raw), &src))
 
 			usage := &ClaudeUsage{}
-			mergeAnthropicUsage(usage, src)
+			mergeAnthropicUsage(usage, src, false)
 			require.Equal(t, 400, usage.InputTokens)
 			require.Equal(t, 800, usage.CacheReadInputTokens)
 
@@ -226,7 +226,7 @@ func TestCNProviderAnthropicUsageBillsUncachedInput(t *testing.T) {
 	billing := NewBillingService(&config.Config{}, nil)
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			claudeUsage := parseClaudeUsageFromResponseBody([]byte(tt.body))
+			claudeUsage := parseClaudeUsageFromResponseBody([]byte(tt.body), false)
 			openAIUsage := claudeUsageToOpenAIUsage(claudeUsage)
 			uncachedInput := max(openAIUsage.InputTokens-openAIUsage.CacheReadInputTokens-openAIUsage.CacheCreationInputTokens, 0)
 			require.Equal(t, tt.wantInput, uncachedInput)

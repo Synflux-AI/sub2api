@@ -736,6 +736,8 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 	}
 
 	usage := &ClaudeUsage{}
+	// 账号级 usage 口径标注提前取出：解析器在 SSE 热路径里逐事件调用。
+	forceOpenAISemanticUsage := account.IsUpstreamUsageOpenAISemantic()
 	var firstTokenMs *int
 	scanner := bufio.NewScanner(resp.Body)
 	// 设置更大的buffer以处理长行
@@ -1113,7 +1115,7 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 							firstTokenMs = &ms
 						}
 						if usagePatch != nil {
-							mergeSSEUsagePatch(usage, usagePatch)
+							mergeSSEUsagePatch(usage, usagePatch, forceOpenAISemanticUsage)
 						}
 					}
 				}
@@ -1170,7 +1172,7 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 
 }
 
-func (s *GatewayService) parseSSEUsage(data string, usage *ClaudeUsage) {
+func (s *GatewayService) parseSSEUsage(data string, usage *ClaudeUsage, forceOpenAISemantic bool) {
 	if usage == nil {
 		return
 	}
@@ -1181,7 +1183,7 @@ func (s *GatewayService) parseSSEUsage(data string, usage *ClaudeUsage) {
 	}
 
 	if patch := s.extractSSEUsagePatch(event); patch != nil {
-		mergeSSEUsagePatch(usage, patch)
+		mergeSSEUsagePatch(usage, patch, forceOpenAISemantic)
 	}
 }
 
@@ -1323,7 +1325,7 @@ func readOpenAISemanticUsagePatch(usageObj map[string]any, patch *sseUsagePatch)
 	}
 }
 
-func mergeSSEUsagePatch(usage *ClaudeUsage, patch *sseUsagePatch) {
+func mergeSSEUsagePatch(usage *ClaudeUsage, patch *sseUsagePatch, forceOpenAISemantic bool) {
 	if usage == nil || patch == nil {
 		return
 	}
@@ -1361,6 +1363,11 @@ func mergeSSEUsagePatch(usage *ClaudeUsage, patch *sseUsagePatch) {
 			patch.openAISemanticPromptTokens-usage.CacheReadInputTokens-usage.CacheCreationInputTokens,
 			0,
 		)
+	}
+
+	// 上游不声明口径时按账号标注兜底还原；已还原过的事件由守卫短路。
+	if forceOpenAISemantic {
+		forceOpenAISemanticPromptUsage(usage)
 	}
 }
 
@@ -1519,6 +1526,9 @@ func (s *GatewayService) handleNonStreamingResponse(ctx context.Context, resp *h
 		}
 		response.Usage.OpenAISemanticDeclared = true
 		normalizeAnthropicCompatiblePromptUsage(oaiNode, &response.Usage)
+	} else if account.IsUpstreamUsageOpenAISemantic() {
+		// 上游不声明口径：按账号标注把含缓存的 prompt 总量还原成净输入。
+		forceOpenAISemanticPromptUsage(&response.Usage)
 	}
 
 	// Cache TTL Override: 重写 non-streaming 响应中的 cache_creation 分类。

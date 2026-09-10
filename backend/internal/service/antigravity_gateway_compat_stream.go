@@ -191,10 +191,11 @@ func (s *antigravityCompatStreamSession) consumeClaudeData(eventType, payload st
 		event.Type = eventType
 	}
 	if event.Usage != nil {
-		mergeAnthropicUsage(s.usage, *event.Usage)
+		// Antigravity 直连 Google，不存在 Anthropic 兼容中转的口径问题。
+		mergeAnthropicUsage(s.usage, *event.Usage, false)
 	}
 	if event.Message != nil {
-		mergeAnthropicUsage(s.usage, event.Message.Usage)
+		mergeAnthropicUsage(s.usage, event.Message.Usage, false)
 	}
 	if event.Type == "message_stop" {
 		s.terminalEvent = true

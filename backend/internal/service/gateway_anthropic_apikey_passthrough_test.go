@@ -1289,7 +1289,7 @@ func TestGatewayService_ParseSSEUsagePassthrough_MessageStartFallbacks(t *testin
 	usage := &ClaudeUsage{}
 	data := `{"type":"message_start","message":{"usage":{"input_tokens":12,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cached_tokens":9,"cache_creation":{"ephemeral_5m_input_tokens":3,"ephemeral_1h_input_tokens":4}}}}`
 
-	parseSSEUsagePassthrough(data, usage)
+	parseSSEUsagePassthrough(data, usage, false)
 
 	require.Equal(t, 12, usage.InputTokens)
 	require.Equal(t, 9, usage.CacheReadInputTokens, "应兼容 cached_tokens 字段")
@@ -1301,11 +1301,11 @@ func TestGatewayService_ParseSSEUsagePassthrough_MessageStartFallbacks(t *testin
 func TestGatewayService_ParseSSEUsagePassthrough_MessageDeltaSelectiveOverwrite(t *testing.T) {
 	usage := &ClaudeUsage{}
 	start := `{"type":"message_start","message":{"usage":{"input_tokens":10,"cache_creation_input_tokens":463184,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":463184}}}}`
-	parseSSEUsagePassthrough(start, usage)
+	parseSSEUsagePassthrough(start, usage, false)
 
 	data := `{"type":"message_delta","usage":{"input_tokens":0,"output_tokens":5,"cache_creation_input_tokens":463184,"cache_read_input_tokens":0,"cached_tokens":11,"cache_creation":{"ephemeral_5m_input_tokens":463184,"ephemeral_1h_input_tokens":0}}}`
 
-	parseSSEUsagePassthrough(data, usage)
+	parseSSEUsagePassthrough(data, usage, false)
 
 	require.Equal(t, 10, usage.InputTokens, "message_delta 中 0 值不应覆盖已有 input_tokens")
 	require.Equal(t, 5, usage.OutputTokens)
@@ -1318,24 +1318,24 @@ func TestGatewayService_ParseSSEUsagePassthrough_MessageDeltaSelectiveOverwrite(
 func TestGatewayService_ParseSSEUsagePassthrough_NoopCases(t *testing.T) {
 
 	usage := &ClaudeUsage{InputTokens: 3}
-	parseSSEUsagePassthrough("", usage)
+	parseSSEUsagePassthrough("", usage, false)
 	require.Equal(t, 3, usage.InputTokens)
 
-	parseSSEUsagePassthrough("[DONE]", usage)
+	parseSSEUsagePassthrough("[DONE]", usage, false)
 	require.Equal(t, 3, usage.InputTokens)
 
-	parseSSEUsagePassthrough("not-json", usage)
+	parseSSEUsagePassthrough("not-json", usage, false)
 	require.Equal(t, 3, usage.InputTokens)
 
 	// nil usage 不应 panic
-	parseSSEUsagePassthrough(`{"type":"message_start"}`, nil)
+	parseSSEUsagePassthrough(`{"type":"message_start"}`, nil, false)
 }
 
 func TestGatewayService_ParseSSEUsagePassthrough_FallbackFromUsageNode(t *testing.T) {
 	usage := &ClaudeUsage{}
 	data := `{"type":"content_block_delta","usage":{"cached_tokens":6,"cache_creation":{"ephemeral_5m_input_tokens":2,"ephemeral_1h_input_tokens":1}}}`
 
-	parseSSEUsagePassthrough(data, usage)
+	parseSSEUsagePassthrough(data, usage, false)
 
 	require.Equal(t, 6, usage.CacheReadInputTokens)
 	require.Equal(t, 3, usage.CacheCreationInputTokens)
@@ -1343,18 +1343,18 @@ func TestGatewayService_ParseSSEUsagePassthrough_FallbackFromUsageNode(t *testin
 
 func TestParseClaudeUsageFromResponseBody(t *testing.T) {
 	t.Run("empty or missing usage", func(t *testing.T) {
-		got := parseClaudeUsageFromResponseBody(nil)
+		got := parseClaudeUsageFromResponseBody(nil, false)
 		require.NotNil(t, got)
 		require.Equal(t, 0, got.InputTokens)
 
-		got = parseClaudeUsageFromResponseBody([]byte(`{"id":"x"}`))
+		got = parseClaudeUsageFromResponseBody([]byte(`{"id":"x"}`), false)
 		require.NotNil(t, got)
 		require.Equal(t, 0, got.OutputTokens)
 	})
 
 	t.Run("parse all usage fields and fallback", func(t *testing.T) {
 		body := []byte(`{"usage":{"input_tokens":21,"output_tokens":34,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cached_tokens":13,"cache_creation":{"ephemeral_5m_input_tokens":5,"ephemeral_1h_input_tokens":8}}}`)
-		got := parseClaudeUsageFromResponseBody(body)
+		got := parseClaudeUsageFromResponseBody(body, false)
 		require.Equal(t, 21, got.InputTokens)
 		require.Equal(t, 34, got.OutputTokens)
 		require.Equal(t, 13, got.CacheReadInputTokens, "cache_read_input_tokens 为空时应回退 cached_tokens")
@@ -1365,7 +1365,7 @@ func TestParseClaudeUsageFromResponseBody(t *testing.T) {
 
 	t.Run("keep explicit aggregate values", func(t *testing.T) {
 		body := []byte(`{"usage":{"input_tokens":1,"output_tokens":2,"cache_creation_input_tokens":9,"cache_read_input_tokens":7,"cached_tokens":99,"cache_creation":{"ephemeral_5m_input_tokens":4,"ephemeral_1h_input_tokens":5}}}`)
-		got := parseClaudeUsageFromResponseBody(body)
+		got := parseClaudeUsageFromResponseBody(body, false)
 		require.Equal(t, 9, got.CacheCreationInputTokens, "已显式提供聚合字段时不应被明细覆盖")
 		require.Equal(t, 7, got.CacheReadInputTokens, "已显式提供 cache_read_input_tokens 时不应回退 cached_tokens")
 	})
