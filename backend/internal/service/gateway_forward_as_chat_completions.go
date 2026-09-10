@@ -185,9 +185,9 @@ func (s *GatewayService) ForwardAsChatCompletions(
 	var result *ForwardResult
 	var handleErr error
 	if clientStream {
-		result, handleErr = s.handleCCStreamingFromAnthropic(resp, c, originalModel, mappedModel, reasoningEffort, startTime, includeUsage)
+		result, handleErr = s.handleCCStreamingFromAnthropic(resp, c, originalModel, mappedModel, reasoningEffort, startTime, includeUsage, account.IsUpstreamUsageOpenAISemantic())
 	} else {
-		result, handleErr = s.handleCCBufferedFromAnthropic(resp, c, originalModel, mappedModel, reasoningEffort, startTime)
+		result, handleErr = s.handleCCBufferedFromAnthropic(resp, c, originalModel, mappedModel, reasoningEffort, startTime, account.IsUpstreamUsageOpenAISemantic())
 	}
 
 	return result, handleErr
@@ -224,6 +224,7 @@ func (s *GatewayService) handleCCBufferedFromAnthropic(
 	mappedModel string,
 	reasoningEffort *string,
 	startTime time.Time,
+	forceOpenAISemanticUsage bool,
 ) (*ForwardResult, error) {
 	requestID := resp.Header.Get("x-request-id")
 	// 本函数不接 ctx 参数，日志用的 request-scoped logger 从请求 ctx 取
@@ -267,13 +268,13 @@ func (s *GatewayService) handleCCBufferedFromAnthropic(
 		// message_start carries the initial response structure and cache usage
 		if event.Type == "message_start" && event.Message != nil {
 			finalResp = event.Message
-			mergeAnthropicUsage(&usage, event.Message.Usage)
+			mergeAnthropicUsage(&usage, event.Message.Usage, forceOpenAISemanticUsage)
 		}
 
 		// message_delta carries final usage and stop_reason
 		if event.Type == "message_delta" {
 			if event.Usage != nil {
-				mergeAnthropicUsage(&usage, *event.Usage)
+				mergeAnthropicUsage(&usage, *event.Usage, forceOpenAISemanticUsage)
 			}
 			if event.Delta != nil && event.Delta.StopReason != "" && finalResp != nil {
 				finalResp.StopReason = apicompat.AnthropicStopReasonPtr(event.Delta.StopReason)
@@ -365,6 +366,7 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 	reasoningEffort *string,
 	startTime time.Time,
 	includeUsage bool,
+	forceOpenAISemanticUsage bool,
 ) (*ForwardResult, error) {
 	requestID := resp.Header.Get("x-request-id")
 	// 本函数不接 ctx 参数，日志用的 request-scoped logger 从请求 ctx 取。
@@ -438,11 +440,11 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 
 		// Extract usage from message_delta
 		if event.Type == "message_delta" && event.Usage != nil {
-			mergeAnthropicUsage(&usage, *event.Usage)
+			mergeAnthropicUsage(&usage, *event.Usage, forceOpenAISemanticUsage)
 		}
 		// Also capture usage from message_start (carries cache fields)
 		if event.Type == "message_start" && event.Message != nil {
-			mergeAnthropicUsage(&usage, event.Message.Usage)
+			mergeAnthropicUsage(&usage, event.Message.Usage, forceOpenAISemanticUsage)
 		}
 
 		// Chain: Anthropic event → Responses events → CC chunks

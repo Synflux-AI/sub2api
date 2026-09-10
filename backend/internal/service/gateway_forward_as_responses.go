@@ -191,9 +191,9 @@ func (s *GatewayService) ForwardAsResponses(
 	var result *ForwardResult
 	var handleErr error
 	if clientStream {
-		result, handleErr = s.handleResponsesStreamingResponse(resp, c, originalModel, mappedModel, reasoningEffort, startTime, clientToolMapping)
+		result, handleErr = s.handleResponsesStreamingResponse(resp, c, originalModel, mappedModel, reasoningEffort, startTime, clientToolMapping, account.IsUpstreamUsageOpenAISemantic())
 	} else {
-		result, handleErr = s.handleResponsesBufferedStreamingResponse(resp, c, originalModel, mappedModel, reasoningEffort, startTime, clientToolMapping)
+		result, handleErr = s.handleResponsesBufferedStreamingResponse(resp, c, originalModel, mappedModel, reasoningEffort, startTime, clientToolMapping, account.IsUpstreamUsageOpenAISemantic())
 	}
 
 	return result, handleErr
@@ -274,7 +274,7 @@ func ExtractResponsesReasoningEffortFromBody(body []byte, modelCandidates ...str
 	return &normalized
 }
 
-func mergeAnthropicUsage(dst *ClaudeUsage, src apicompat.AnthropicUsage) {
+func mergeAnthropicUsage(dst *ClaudeUsage, src apicompat.AnthropicUsage, forceOpenAISemantic bool) {
 	if dst == nil {
 		return
 	}
@@ -297,7 +297,10 @@ func mergeAnthropicUsage(dst *ClaudeUsage, src apicompat.AnthropicUsage) {
 	// fields. Prefer those authoritative totals or hit/miss buckets over the
 	// overloaded input_tokens field. This covers Kimi's changing stream
 	// semantics as well as GLM/DeepSeek cache aliases.
-	if src.PromptTokens > 0 || src.PromptCacheHitTokens != nil || src.PromptCacheMissTokens != nil {
+	// 保留了 OpenAI 风格 prompt/cache 字段时下面的分支已经算出净输入，
+	// 不能再叠加账号标注的兜底减法。
+	hasOpenAIPromptFields := src.PromptTokens > 0 || src.PromptCacheHitTokens != nil || src.PromptCacheMissTokens != nil
+	if hasOpenAIPromptFields {
 		cacheReadTokens := src.CacheReadInputTokens
 		if cacheReadTokens == 0 && src.CachedTokens > 0 {
 			cacheReadTokens = src.CachedTokens
@@ -334,6 +337,11 @@ func mergeAnthropicUsage(dst *ClaudeUsage, src apicompat.AnthropicUsage) {
 	if src.OutputTokens > 0 {
 		dst.OutputTokens = src.OutputTokens
 	}
+
+	// 上游既不声明口径、也不回 prompt_tokens 时，按账号标注兜底还原净输入。
+	if !hasOpenAIPromptFields && forceOpenAISemantic {
+		forceOpenAISemanticPromptUsage(dst)
+	}
 }
 
 // parseAnthropicSSEField parses an SSE field line in the form "field:value" or "field: value".
@@ -358,6 +366,7 @@ func (s *GatewayService) handleResponsesBufferedStreamingResponse(
 	reasoningEffort *string,
 	startTime time.Time,
 	clientToolMapping apicompat.ResponsesClientToolMapping,
+	forceOpenAISemanticUsage bool,
 ) (*ForwardResult, error) {
 	requestID := resp.Header.Get("x-request-id")
 	// 本函数不接 ctx 参数，日志用的 request-scoped logger 从请求 ctx 取
@@ -408,13 +417,13 @@ func (s *GatewayService) handleResponsesBufferedStreamingResponse(
 		// message_start carries the initial response structure
 		if event.Type == "message_start" && event.Message != nil {
 			finalResp = event.Message
-			mergeAnthropicUsage(&usage, event.Message.Usage)
+			mergeAnthropicUsage(&usage, event.Message.Usage, forceOpenAISemanticUsage)
 		}
 
 		// message_delta carries final usage and stop_reason
 		if event.Type == "message_delta" {
 			if event.Usage != nil {
-				mergeAnthropicUsage(&usage, *event.Usage)
+				mergeAnthropicUsage(&usage, *event.Usage, forceOpenAISemanticUsage)
 			}
 			if event.Delta != nil && event.Delta.StopReason != "" && finalResp != nil {
 				finalResp.StopReason = apicompat.AnthropicStopReasonPtr(event.Delta.StopReason)
@@ -510,6 +519,7 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 	reasoningEffort *string,
 	startTime time.Time,
 	clientToolMapping apicompat.ResponsesClientToolMapping,
+	forceOpenAISemanticUsage bool,
 ) (*ForwardResult, error) {
 	requestID := resp.Header.Get("x-request-id")
 	// 本函数不接 ctx 参数，日志用的 request-scoped logger 从请求 ctx 取。
@@ -566,11 +576,11 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 
 		// Extract usage from message_delta
 		if event.Type == "message_delta" && event.Usage != nil {
-			mergeAnthropicUsage(&usage, *event.Usage)
+			mergeAnthropicUsage(&usage, *event.Usage, forceOpenAISemanticUsage)
 		}
 		// Also capture usage from message_start
 		if event.Type == "message_start" && event.Message != nil {
-			mergeAnthropicUsage(&usage, event.Message.Usage)
+			mergeAnthropicUsage(&usage, event.Message.Usage, forceOpenAISemanticUsage)
 		}
 
 		// Convert to Responses events

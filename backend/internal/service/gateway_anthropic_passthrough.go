@@ -696,6 +696,8 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthroughWithRu
 	}
 
 	usage := &ClaudeUsage{}
+	// 账号级 usage 口径标注提前取出：解析器在 SSE 热路径里逐事件调用。
+	forceOpenAISemanticUsage := account.IsUpstreamUsageOpenAISemantic()
 	var firstTokenMs *int
 	clientDisconnected := false
 	sawTerminalEvent := false
@@ -865,7 +867,7 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthroughWithRu
 				ms := int(time.Since(startTime).Milliseconds())
 				firstTokenMs = &ms
 			}
-			parseSSEUsagePassthrough(data, usage)
+			parseSSEUsagePassthrough(data, usage, forceOpenAISemanticUsage)
 		} else if anthropicStreamEventIsTerminal(event.eventName, "") {
 			sawTerminalEvent = true
 		}
@@ -1062,7 +1064,7 @@ func extractAnthropicSSEDataLine(line string) (string, bool) {
 
 // parseSSEUsagePassthrough 从 Anthropic SSE data 行提取 usage（包级函数：
 // Anthropic 平台 passthrough 与国产供应商原生 Anthropic 直通共用）。
-func parseSSEUsagePassthrough(data string, usage *ClaudeUsage) {
+func parseSSEUsagePassthrough(data string, usage *ClaudeUsage, forceOpenAISemantic bool) {
 	if usage == nil || data == "" || data == "[DONE]" {
 		return
 	}
@@ -1156,7 +1158,9 @@ func parseSSEUsagePassthrough(data string, usage *ClaudeUsage) {
 		usage.OpenAISemanticDeclared = true
 		usageNode = oaiNode
 	}
-	normalizeAnthropicCompatiblePromptUsage(usageNode, usage)
+	if !normalizeAnthropicCompatiblePromptUsage(usageNode, usage) && forceOpenAISemantic {
+		forceOpenAISemanticPromptUsage(usage)
+	}
 }
 
 // openAISemanticUsageNode 返回上游显式声明为 OpenAI 口径的原始 usage 节点。
@@ -1181,6 +1185,37 @@ func openAISemanticUsageNode(usageNode gjson.Result) (gjson.Result, bool) {
 		return gjson.Result{}, false
 	}
 	return oaiNode, true
+}
+
+// forceOpenAISemanticPromptUsage 在上游不声明口径、但账号显式标注了
+// upstream_usage_openai_semantic 时，把 input_tokens 里含缓存的 prompt 总量
+// 还原成净输入。上游既不声明、也不回 prompt_tokens 时这是唯一的还原手段：
+// 净输入 = 总量 - 缓存读取 - 缓存写入，与上游账单的算法一致。
+//
+// 三条守卫，任一不满足都不动 usage（保持既有行为）：
+//   - 已经还原过（声明分支或本函数）：打了 OpenAISemanticDeclared 就不再相减，
+//     否则流式的每个 message_delta 都会再扣一遍缓存；该标记同时让后续事件里
+//     的裸 input_tokens 不再把净输入打回总量。
+//   - input_tokens 为 0：此时无从判断口径，贸然打标会让后续真正带净输入的
+//     事件被忽略（Kimi 官方的 message_delta 只回未缓存部分）。
+//   - 没有任何缓存 token：减法本就是恒等变换，不必改写、更不必打标。
+func forceOpenAISemanticPromptUsage(usage *ClaudeUsage) bool {
+	if usage == nil || usage.OpenAISemanticDeclared || usage.InputTokens <= 0 {
+		return false
+	}
+	// 只给了嵌套 5m/1h 明细、没给扁平聚合时先补齐：减法要从总量里扣掉缓存写入。
+	if usage.CacheCreationInputTokens == 0 {
+		if total := usage.CacheCreation5mTokens + usage.CacheCreation1hTokens; total > 0 {
+			usage.CacheCreationInputTokens = total
+		}
+	}
+	cached := usage.CacheReadInputTokens + usage.CacheCreationInputTokens
+	if cached <= 0 {
+		return false
+	}
+	usage.InputTokens = max(usage.InputTokens-cached, 0)
+	usage.OpenAISemanticDeclared = true
+	return true
 }
 
 // normalizeAnthropicCompatiblePromptUsage converts provider-native OpenAI-style
@@ -1238,7 +1273,7 @@ func normalizeAnthropicCompatiblePromptUsage(usageNode gjson.Result, usage *Clau
 	return true
 }
 
-func parseClaudeUsageFromResponseBody(body []byte) *ClaudeUsage {
+func parseClaudeUsageFromResponseBody(body []byte, forceOpenAISemantic bool) *ClaudeUsage {
 	usage := &ClaudeUsage{}
 	if len(body) == 0 {
 		return usage
@@ -1273,7 +1308,9 @@ func parseClaudeUsageFromResponseBody(body []byte) *ClaudeUsage {
 		usage.OpenAISemanticDeclared = true
 		usageNode = oaiNode
 	}
-	normalizeAnthropicCompatiblePromptUsage(usageNode, usage)
+	if !normalizeAnthropicCompatiblePromptUsage(usageNode, usage) && forceOpenAISemantic {
+		forceOpenAISemanticPromptUsage(usage)
+	}
 	return usage
 }
 
@@ -1354,7 +1391,7 @@ func (s *GatewayService) handleNonStreamingResponseAnthropicAPIKeyPassthrough(
 		}
 	}
 
-	usage := parseClaudeUsageFromResponseBody(body)
+	usage := parseClaudeUsageFromResponseBody(body, account.IsUpstreamUsageOpenAISemantic())
 	if IsForceCacheBilling(ctx) && usage.InputTokens > 0 {
 		body, err = classifyAnthropicResponseInputAsCacheRead(body, usage)
 		if err != nil {

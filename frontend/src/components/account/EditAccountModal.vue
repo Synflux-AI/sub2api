@@ -1721,6 +1721,38 @@
         </div>
       </div>
 
+      <!-- 上游 usage 口径按 OpenAI 语义还原（Anthropic 兼容中转，默认关闭） -->
+      <div
+        v-if="supportsUpstreamUsageSemantic"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+      >
+        <div class="flex items-center justify-between">
+          <div>
+            <label class="input-label mb-0">{{ t('admin.accounts.upstreamUsageSemantic.label') }}</label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.upstreamUsageSemantic.hint') }}
+            </p>
+          </div>
+          <button
+            id="edit-account-upstream-usage-openai-semantic-toggle"
+            type="button"
+            @click="upstreamUsageOpenAISemantic = !upstreamUsageOpenAISemantic"
+            :class="[
+              'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
+              upstreamUsageOpenAISemantic ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
+            ]"
+            :aria-pressed="upstreamUsageOpenAISemantic"
+          >
+            <span
+              :class="[
+                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+                upstreamUsageOpenAISemantic ? 'translate-x-5' : 'translate-x-0'
+              ]"
+            />
+          </button>
+        </div>
+      </div>
+
       <!-- OpenAI 自动透传开关（OAuth/API Key） -->
       <div
         v-if="account?.platform === 'openai' && (account?.type === 'oauth' || account?.type === 'setup-token' || account?.type === 'apikey')"
@@ -3516,6 +3548,11 @@ type AnthropicAPIKeyAuthScheme = 'x_api_key' | 'authorization_bearer'
 const anthropicPassthroughEnabled = ref(false)
 // 出站注入 X-Trace-Id：对所有平台/类型生效，默认关闭
 const traceIdPassthroughEnabled = ref(false)
+// 上游 usage 口径标注：只在会走 Anthropic usage 解析的平台上有意义
+const upstreamUsageOpenAISemantic = ref(false)
+const supportsUpstreamUsageSemantic = computed(() =>
+  ['anthropic', 'kimi', 'zhipu', 'deepseek', 'minimax'].includes(props.account?.platform ?? '')
+)
 const anthropicAPIKeyAuthScheme = ref<AnthropicAPIKeyAuthScheme>('x_api_key')
 const webSearchEmulationMode = ref('default')
 const webSearchGlobalEnabled = ref(false)
@@ -4006,6 +4043,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   webSearchEmulationMode.value = 'default'
   // 出站注入 X-Trace-Id：对所有平台/类型生效，直接按 extra 回填（无平台分支）
   traceIdPassthroughEnabled.value = extra?.trace_id_passthrough === true
+  upstreamUsageOpenAISemantic.value = extra?.upstream_usage_openai_semantic === true
   if (newAccount.platform === 'openai' && (newAccount.type === 'oauth' || newAccount.type === 'setup-token' || newAccount.type === 'apikey')) {
     openaiPassthroughEnabled.value = extra?.openai_passthrough === true || extra?.openai_oauth_passthrough === true
     openaiFlattenNamespacesEnabled.value =
@@ -5665,6 +5703,22 @@ const handleSubmit = async () => {
       } else if ('trace_id_passthrough' in currentExtra) {
         const newExtra: Record<string, unknown> = { ...currentExtra }
         delete newExtra.trace_id_passthrough
+        updatePayload.extra = newExtra
+      }
+    }
+
+    // 上游 usage 口径标注：与 X-Trace-Id 同理放在平台专属 extra 块之后复用已组装的
+    // extra；关闭时删除 key 而非写 false。
+    if (supportsUpstreamUsageSemantic.value) {
+      const currentExtra = (updatePayload.extra as Record<string, unknown>) ||
+        (props.account.extra as Record<string, unknown>) || {}
+      if (upstreamUsageOpenAISemantic.value) {
+        const newExtra: Record<string, unknown> = { ...currentExtra }
+        newExtra.upstream_usage_openai_semantic = true
+        updatePayload.extra = newExtra
+      } else if ('upstream_usage_openai_semantic' in currentExtra) {
+        const newExtra: Record<string, unknown> = { ...currentExtra }
+        delete newExtra.upstream_usage_openai_semantic
         updatePayload.extra = newExtra
       }
     }

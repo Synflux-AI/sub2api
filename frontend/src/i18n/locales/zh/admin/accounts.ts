@@ -848,6 +848,10 @@ export default {
         passthroughDesc:
           '开启后，向该账号上游发起请求时会带上本次请求的 X-Trace-Id，用于多级中转链路的日志关联。默认关闭；仅在上游是自己的中转实例时开启。对真实供应商（api.anthropic.com / api.x.ai 等）开启会多带一个自定义请求头，并破坏 Claude Code / Grok CLI 的请求头指纹一致性。'
       },
+      upstreamUsageSemantic: {
+        label: '上游 usage 按 OpenAI 口径还原',
+        hint: '部分 Anthropic 兼容中转回的 input_tokens 是含缓存的 prompt 总量（OpenAI 口径），而不是 Anthropic 约定的净输入，直接采信会让缓存 token 先按输入单价计一次、再按缓存读取单价计一次。开启后按「净输入 = input_tokens − 缓存读取 − 缓存写入」还原。默认关闭；上游在 usage.billing_usage 里显式声明口径时会自动识别，无需开启。对真实供应商（api.anthropic.com / api.moonshot.cn 等）开启会少算输入。'
+      },
       modelRestriction: '模型限制（可选）',
       modelWhitelist: '模型白名单',
       modelMapping: '模型映射',

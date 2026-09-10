@@ -45,6 +45,8 @@ func (s *GatewayService) handleBedrockStreamingResponse(
 	}
 
 	usage := &ClaudeUsage{}
+	// 账号级 usage 口径标注提前取出：解析器在 SSE 热路径里逐事件调用。
+	forceOpenAISemanticUsage := account.IsUpstreamUsageOpenAISemantic()
 	var firstTokenMs *int
 	clientDisconnected := false
 
@@ -139,7 +141,7 @@ func (s *GatewayService) handleBedrockStreamingResponse(
 			sseData = transformBedrockInvocationMetrics(sseData)
 
 			// 解析 SSE 事件数据提取 usage
-			parseSSEUsagePassthrough(string(sseData), usage)
+			parseSSEUsagePassthrough(string(sseData), usage, forceOpenAISemanticUsage)
 
 			// 确定 SSE event type
 			eventType := gjson.GetBytes(sseData, "type").String()

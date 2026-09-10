@@ -2511,6 +2511,21 @@ func (a *Account) GetCacheTTLOverrideTarget() string {
 	return "5m"
 }
 
+// upstreamUsageOpenAISemanticExtraKey 标记本账号的上游按 OpenAI 口径回 usage。
+const upstreamUsageOpenAISemanticExtraKey = "upstream_usage_openai_semantic"
+
+// IsUpstreamUsageOpenAISemantic 报告上游返回的是否为「Anthropic 形状 + OpenAI
+// 语义」的 usage：字段名是 input_tokens / cache_read_input_tokens，但
+// input_tokens 的值是含缓存的 prompt 总量。
+//
+// 这类上游通常在 usage.billing_usage 里显式声明口径，解析器据此自动还原
+// （见 openAISemanticUsageNode）；不声明的上游无法从值上分辨「净输入 N」和
+// 「总量 N」，只能由管理员按渠道显式标注，否则缓存 token 会先按 input 单价
+// 计一次、再按 cache read 单价计一次。
+func (a *Account) IsUpstreamUsageOpenAISemantic() bool {
+	return a != nil && a.getExtraBool(upstreamUsageOpenAISemanticExtraKey)
+}
+
 // GetQuotaLimit 获取 API Key 账号的配额限制（美元）
 // 返回 0 表示未启用
 func (a *Account) GetQuotaLimit() float64 {

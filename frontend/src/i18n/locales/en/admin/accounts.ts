@@ -769,6 +769,10 @@ export default {
         passthroughDesc:
           "When enabled, upstream requests for this account carry the current request's X-Trace-Id, so logs can be correlated across a multi-hop relay chain. Disabled by default; enable it only when the upstream is your own relay instance. Enabling it for a real vendor (api.anthropic.com, api.x.ai, etc.) sends one extra custom header to them and breaks Claude Code / Grok CLI request-header fingerprint parity."
       },
+      upstreamUsageSemantic: {
+        label: 'Restore upstream usage as OpenAI semantics',
+        hint: "Some Anthropic-compatible relays report input_tokens as the cache-inclusive prompt total (OpenAI semantics) rather than Anthropic's net input, so cached tokens get billed once at the input rate and again at the cache-read rate. When enabled, net input is restored as input_tokens − cache read − cache creation. Disabled by default; relays that declare their semantics in usage.billing_usage are detected automatically and need no toggle. Enabling it for a real vendor (api.anthropic.com, api.moonshot.cn, etc.) under-counts input."
+      },
       modelRestriction: 'Model Restriction (Optional)',
       modelWhitelist: 'Model Whitelist',
       modelMapping: 'Model Mapping',

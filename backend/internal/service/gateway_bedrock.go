@@ -408,7 +408,7 @@ func (s *GatewayService) handleBedrockNonStreamingResponse(
 	// 并移除该字段避免透传给客户端
 	body = transformBedrockInvocationMetrics(body)
 
-	usage := parseClaudeUsageFromResponseBody(body)
+	usage := parseClaudeUsageFromResponseBody(body, account.IsUpstreamUsageOpenAISemantic())
 
 	c.Header("Content-Type", "application/json")
 	if v := resp.Header.Get("x-amzn-requestid"); v != "" {

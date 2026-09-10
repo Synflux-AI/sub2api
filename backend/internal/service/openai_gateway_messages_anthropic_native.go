@@ -235,7 +235,7 @@ func (s *OpenAIGatewayService) handleNativeAnthropicBufferedResponse(
 		return nil, invalidNonStreamingJSONFailoverError(ctx, s.rateLimitService, resp, account, body, err, billingModel)
 	}
 
-	usage := parseClaudeUsageFromResponseBody(body)
+	usage := parseClaudeUsageFromResponseBody(body, account.IsUpstreamUsageOpenAISemantic())
 	if IsForceCacheBilling(ctx) && usage.InputTokens > 0 {
 		body, err = classifyAnthropicResponseInputAsCacheRead(body, usage)
 		if err != nil {
@@ -312,6 +312,8 @@ func (s *OpenAIGatewayService) handleNativeAnthropicStreamingResponse(
 	}
 
 	usage := &ClaudeUsage{}
+	// 账号级 usage 口径标注提前取出：解析器在 SSE 热路径里逐事件调用。
+	forceOpenAISemanticUsage := account.IsUpstreamUsageOpenAISemantic()
 	var firstTokenMs *int
 	clientDisconnected := false
 	sawTerminalEvent := false
@@ -441,7 +443,7 @@ func (s *OpenAIGatewayService) handleNativeAnthropicStreamingResponse(
 					ms := int(time.Since(startTime).Milliseconds())
 					firstTokenMs = &ms
 				}
-				parseSSEUsagePassthrough(data, usage)
+				parseSSEUsagePassthrough(data, usage, forceOpenAISemanticUsage)
 			} else {
 				trimmed := strings.TrimSpace(line)
 				if strings.HasPrefix(trimmed, "event:") && anthropicStreamEventIsTerminal(strings.TrimSpace(strings.TrimPrefix(trimmed, "event:")), "") {

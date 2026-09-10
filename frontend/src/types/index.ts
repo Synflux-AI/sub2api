@@ -1294,6 +1294,7 @@ export interface Account {
   // 缓存 TTL 强制替换（仅 Anthropic OAuth/SetupToken 账号有效）
   cache_ttl_override_enabled?: boolean | null
   cache_ttl_override_target?: string | null
+  upstream_usage_openai_semantic?: boolean | null
 
   // 自定义 Base URL 中继转发（仅 Anthropic OAuth/SetupToken 账号有效）
   custom_base_url_enabled?: boolean | null
