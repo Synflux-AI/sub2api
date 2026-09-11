@@ -181,6 +181,13 @@ func (s *OpenAIGatewayService) buildNativeAnthropicUpstreamRequest(
 		}
 	}
 
+	// 链路关联头：放在 builder 内部而非三个调用点，避免后续新增调用点再次遗漏。
+	// 落点在白名单拷贝之后、ApplyHeaderOverrides 之前，与其余转发路径一致
+	// （x-trace-id 在 headerOverrideBlockedNames 中，账号级覆写无法改写该值）。
+	// 此处 ctx 是 detachStreamUpstreamContext 派生的 context.WithoutCancel，
+	// 只切断取消传播、value 仍可读，与 sendCCUpstreamRequest 的既有先例一致。
+	injectTraceHeader(ctx, req, account)
+
 	// 覆盖入站鉴权残留，注入上游认证（默认 x-api-key；可经 extra
 	// anthropic_apikey_auth_scheme 切换 Authorization: Bearer；Ollama Cloud
 	// 上游按实际 base_url 强制 Bearer，与 nativeAnthropicTargetURL 同源）。
