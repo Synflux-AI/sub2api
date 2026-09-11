@@ -123,6 +123,9 @@ func TestCNNativeAnthropicSkipsTraceHeaderWhenDisabled(t *testing.T) {
 			err := tc.forward(svc, c, cnNativeAnthropicTraceAccount(APIProtocolAnthropic, false), tc.body)
 			require.Error(t, err)
 			require.NotNil(t, upstream.lastReq)
+			// 同时校验出站 URL：否则一旦请求被打到非原生 Anthropic 的 builder 上，
+			// 「默认关闭」这条护栏会因为 header 本来就不存在而静默失效。
+			require.Equal(t, "http://anthropic.example/v1/messages", upstream.lastReq.URL.String())
 			require.Empty(t, upstream.lastReq.Header.Values(traceid.Header))
 		})
 	}
