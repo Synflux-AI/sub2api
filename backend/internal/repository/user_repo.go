@@ -729,11 +729,18 @@ func (r *userRepository) GetLatestUsedAtByUserIDs(ctx context.Context, userIDs [
 		return nil, fmt.Errorf("sql executor is not configured")
 	}
 
+	// 按 user_id 逐个取 MAX(created_at)，不做跨用户 GROUP BY 聚合：
+	// `user_id = ANY(...)` 配 GROUP BY 用不到 idx_usage_logs_user_created 的 min/max
+	// 优化，PostgreSQL 只能把索引整段扫完再分组（659 万行 usage_logs 上实测 2.7s）。
+	// 相关子查询的形状与 userLastUsedAtOrder / userLastUsedAtRange 一致，每个用户
+	// 一次索引倒序取首行，同样数据量实测降到毫秒级。
 	const query = `
-		SELECT user_id, MAX(created_at) AS last_used_at
-		FROM usage_logs
-		WHERE user_id = ANY($1)
-		GROUP BY user_id
+		SELECT u.id AS user_id, l.last_used_at
+		FROM unnest($1::bigint[]) AS u(id)
+		CROSS JOIN LATERAL (
+			SELECT MAX(created_at) AS last_used_at FROM usage_logs WHERE user_id = u.id
+		) AS l
+		WHERE l.last_used_at IS NOT NULL
 	`
 
 	rows, err := r.sql.QueryContext(ctx, query, pq.Array(userIDs))
