@@ -887,6 +887,37 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthroughWithRu
 		return processEvent(event)
 	}
 
+	// #245：read_error 与 interval_timeout 这两个「上游把流搞断」的终止点此前直接
+	// 裸返回 error，调用方的 errors.As(err, &failoverErr) 不成立，整个 failover 块
+	// （同号重试 / 换号 / 规则动作）被跳过——规则配得再对也救不回。这里把它们合成
+	// 为虚拟 502 喂给规则引擎，与下面 missing_terminal_event 的先例一致。
+	//
+	// 守卫同款：只有首字前中断（客户端零字节）才能干净重试，已交付语义内容后重放
+	// 会产生双 message_start 腐化流。返回 nil 表示不该进引擎或规则未命中，调用方
+	// 维持原有的 recordStreamFailureCause + 裸返回，行为与修复前逐字节一致。
+	streamFailureRuleMatch := func(failure error) *anthropicPassthroughStreamRuleMatch {
+		if semanticEventForwarded || sawAnyErrorEvent || clientDisconnected || ctx.Err() != nil {
+			return nil
+		}
+		body, errType, errMessage, ok := syntheticAnthropicStreamRuleError(failure)
+		if !ok {
+			return nil
+		}
+		decision := s.decideErrorHandlingRule(ctx, ruleTracker, account, http.StatusBadGateway, body, model, errorHandlingRuleDecisionOptions{
+			Attempt: attempt, IgnoreRetryElapsed: true, IndependentRetryBudget: true,
+		})
+		if !decision.Matched {
+			return nil
+		}
+		// synthetic=true：这个 502 是传输层失败合成的，没有真实上游响应，绝不能
+		// 流进 ops_error_logs.upstream_status_code——那一列为 NULL 正是「这是传输层
+		// 失败」的判定依据。
+		return &anthropicPassthroughStreamRuleMatch{
+			decision: decision, statusCode: http.StatusBadGateway, body: body,
+			errType: errType, errMessage: errMessage, synthetic: true,
+		}
+	}
+
 	for {
 		select {
 		case ev, ok := <-events:
@@ -935,9 +966,15 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthroughWithRu
 					logger.CtxPrintf(ctx, "service.gateway", "[Anthropic passthrough] SSE line too long: account=%d max_size=%d error=%v", account.ID, maxLineSize, ev.err)
 					return resultWithUsage(), nil, ev.err
 				}
+				// 上面的 ErrTooLong 已先行 return，刻意不进引擎：协议层违规或超大
+				// payload 原样重发必然复现，只会白烧重试预算。
+				readErr := fmt.Errorf("stream read error: %w", ev.err)
+				if match := streamFailureRuleMatch(readErr); match != nil {
+					return resultWithUsage(), match, nil
+				}
 				s.recordStreamFailureCause(ctx, c, account, model,
 					streamFailureReadError, fmt.Sprintf("stream read error: %v", ev.err), firstTokenMs != nil, clientDisconnected, true)
-				return resultWithUsage(), nil, fmt.Errorf("stream read error: %w", ev.err)
+				return resultWithUsage(), nil, readErr
 			}
 
 			line := ev.line
@@ -966,9 +1003,13 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthroughWithRu
 			if s.rateLimitService != nil {
 				s.rateLimitService.HandleStreamTimeout(ctx, account, model)
 			}
+			timeoutErr := errors.New("stream data interval timeout")
+			if match := streamFailureRuleMatch(timeoutErr); match != nil {
+				return resultWithUsage(), match, nil
+			}
 			s.recordStreamFailureCause(ctx, c, account, model,
 				streamFailureIntervalTimeout, "stream data interval timeout", firstTokenMs != nil, clientDisconnected, true)
-			return resultWithUsage(), nil, fmt.Errorf("stream data interval timeout")
+			return resultWithUsage(), nil, timeoutErr
 
 		case <-keepaliveCh:
 			if clientDisconnected {
