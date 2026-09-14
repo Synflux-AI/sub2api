@@ -30,7 +30,7 @@ func newErrorHandlingRulePassthroughAccount() *Account {
 	}
 }
 
-func newErrorHandlingRulePassthroughService(t *testing.T, upstream *sequencedHTTPUpstream, ruleSettings *ErrorHandlingRuleSettings) *GatewayService {
+func newErrorHandlingRulePassthroughService(t *testing.T, upstream HTTPUpstream, ruleSettings *ErrorHandlingRuleSettings) *GatewayService {
 	t.Helper()
 	repo := &gatewayTTLSettingRepo{data: map[string]string{}}
 	cfg := &config.Config{Gateway: config.GatewayConfig{MaxLineSize: defaultMaxLineSize}}
