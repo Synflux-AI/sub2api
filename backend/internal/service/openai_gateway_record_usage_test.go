@@ -2134,8 +2134,8 @@ func TestOpenAIGatewayServiceRecordUsage_OutputImageSizeWinsBeforeBillingAndPers
 
 	err := svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
 		Result: &OpenAIForwardResult{
-			RequestID:           "resp_image_output_size",
-			Model:               "gpt-image-2",
+			RequestID: "resp_image_output_size",
+			Model:     "gpt-image-2",
 			Usage: OpenAIUsage{
 				ImageCacheReadTokens: 40,
 			},
