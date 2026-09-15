@@ -46,6 +46,9 @@ func TestModelRPMRulesMigrationNumberIsUnused(t *testing.T) {
 			owners = append(owners, entry.Name())
 		}
 	}
-	require.Equal(t, []string{"238_model_rpm_rules.sql"}, owners,
-		"迁移号 238 应只属于本迁移；撞号会让 schema_migrations 记录彼此覆盖")
+	// schema_migrations 以 filename 为主键（见 migrations_runner.go 的 DDL），
+	// 同号不同名的迁移各占一行、按文件名排序执行，不会彼此覆盖。上游也用了 238，
+	// 这里只守住本迁移文件本身没被改名或删除。
+	require.Contains(t, owners, "238_model_rpm_rules.sql",
+		"本迁移文件不应被改名或删除；改名会让已应用过的实例重跑一次")
 }

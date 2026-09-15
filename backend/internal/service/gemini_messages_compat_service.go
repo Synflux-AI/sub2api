@@ -1700,7 +1700,7 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 	var firstTokenMs *int
 
 	if stream {
-		streamRes, err := s.handleNativeStreamingResponse(ctx, c, resp, account, startTime, isOAuth, mappedModel)
+		streamRes, err := s.handleNativeStreamingResponse(ctx, c, resp, account, startTime, isOAuth, mappedModel, requestID)
 		if err != nil {
 			return nil, err
 		}
@@ -1708,17 +1708,23 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 		firstTokenMs = streamRes.firstTokenMs
 	} else {
 		if useUpstreamStream {
-			collected, usageObj, err := collectGeminiSSE(resp.Body, isOAuth)
+			var best geminiResponseSignal
+			collected, usageObj, stats, err := collectGeminiSSEObserved(resp.Body, isOAuth, func(rawBytes []byte) {
+				if sig, ok := detectGeminiResponseSignal(rawBytes); ok && sig.Kind > best.Kind {
+					best = sig
+				}
+			})
 			if err != nil {
 				return nil, s.writeGoogleError(c, http.StatusBadGateway, "Failed to read upstream stream")
 			}
+			s.finalizeGeminiSSESignal(c, account, false, requestID, best, stats.dataEvents > 0, stats.fallback)
 			b, _ := json.Marshal(collected)
 			upstreamResponseModelObserverFromContext(c).ObserveGemini(b)
 			observeGeminiImageOutputs(c, b)
 			c.Data(http.StatusOK, "application/json", b)
 			usage = usageObj
 		} else {
-			usageResp, err := s.handleNativeNonStreamingResponse(c, resp, isOAuth)
+			usageResp, err := s.handleNativeNonStreamingResponse(c, resp, isOAuth, account, requestID)
 			if err != nil {
 				return nil, err
 			}
@@ -2609,23 +2615,40 @@ func unwrapIfNeeded(isOAuth bool, raw []byte) []byte {
 }
 
 func collectGeminiSSE(body io.Reader, isOAuth bool) (map[string]any, *ClaudeUsage, error) {
+	collected, usage, _, err := collectGeminiSSEObserved(body, isOAuth, nil)
+	return collected, usage, err
+}
+
+// geminiSSECollectStats 记录一次 SSE 聚合读到的 data 事件数，以及非 data 行的兜底内容。
+type geminiSSECollectStats struct {
+	dataEvents int
+	fallback   *geminiSSEFallbackBody
+}
+
+// collectGeminiSSEObserved 在聚合的同时把每个解包后的事件原文交给 observe（可为 nil）。
+func collectGeminiSSEObserved(body io.Reader, isOAuth bool, observe func(rawBytes []byte)) (map[string]any, *ClaudeUsage, geminiSSECollectStats, error) {
 	reader := bufio.NewReader(body)
 
 	var last map[string]any
 	var lastWithParts map[string]any
 	var collectedTextParts []string // Collect all text parts for aggregation
 	usage := &ClaudeUsage{}
+	stats := geminiSSECollectStats{fallback: &geminiSSEFallbackBody{}}
 
 	for {
 		line, err := reader.ReadString('\n')
 		if len(line) > 0 {
 			trimmed := strings.TrimRight(line, "\r\n")
-			if strings.HasPrefix(trimmed, "data:") {
+			if !strings.HasPrefix(trimmed, "data:") {
+				if stats.dataEvents == 0 {
+					stats.fallback.AddLine(trimmed)
+				}
+			} else {
 				payload := strings.TrimSpace(strings.TrimPrefix(trimmed, "data:"))
 				switch payload {
 				case "", "[DONE]":
 					if payload == "[DONE]" {
-						return mergeCollectedTextParts(pickGeminiCollectResult(last, lastWithParts), collectedTextParts), usage, nil
+						return mergeCollectedTextParts(pickGeminiCollectResult(last, lastWithParts), collectedTextParts), usage, stats, nil
 					}
 				default:
 					var parsed map[string]any
@@ -2639,6 +2662,12 @@ func collectGeminiSSE(body io.Reader, isOAuth bool) (map[string]any, *ClaudeUsag
 					} else {
 						rawBytes = []byte(payload)
 						_ = json.Unmarshal(rawBytes, &parsed)
+					}
+					if len(rawBytes) > 0 {
+						stats.dataEvents++
+						if observe != nil {
+							observe(rawBytes)
+						}
 					}
 					if parsed != nil {
 						last = parsed
@@ -2663,11 +2692,11 @@ func collectGeminiSSE(body io.Reader, isOAuth bool) (map[string]any, *ClaudeUsag
 			break
 		}
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, stats, err
 		}
 	}
 
-	return mergeCollectedTextParts(pickGeminiCollectResult(last, lastWithParts), collectedTextParts), usage, nil
+	return mergeCollectedTextParts(pickGeminiCollectResult(last, lastWithParts), collectedTextParts), usage, stats, nil
 }
 
 func pickGeminiCollectResult(last map[string]any, lastWithParts map[string]any) map[string]any {
@@ -2828,7 +2857,7 @@ type UpstreamHTTPResult struct {
 	Body       []byte
 }
 
-func (s *GeminiMessagesCompatService) handleNativeNonStreamingResponse(c *gin.Context, resp *http.Response, isOAuth bool) (*ClaudeUsage, error) {
+func (s *GeminiMessagesCompatService) handleNativeNonStreamingResponse(c *gin.Context, resp *http.Response, isOAuth bool, account *Account, upstreamRequestID string) (*ClaudeUsage, error) {
 	if s.cfg != nil && s.cfg.Gateway.GeminiDebugResponseHeaders {
 		logger.LegacyPrintf("service.gemini_messages_compat", "[GeminiAPI] ========== Response Headers ==========")
 		for key, values := range resp.Header {
@@ -2856,6 +2885,11 @@ func (s *GeminiMessagesCompatService) handleNativeNonStreamingResponse(c *gin.Co
 	}
 	observer.ObserveGemini(respBody)
 	observeGeminiImageOutputs(c, respBody)
+	if sig, ok := detectGeminiResponseSignalInBody(respBody); ok {
+		s.markGeminiResponseSignal(c, account, sig, false, upstreamRequestID)
+	} else if isGeminiEmptyResponseBody(respBody) {
+		s.markGeminiEmptyResponse(c, account, false, upstreamRequestID)
+	}
 
 	responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
 
@@ -2879,6 +2913,7 @@ func (s *GeminiMessagesCompatService) handleNativeStreamingResponse(
 	startTime time.Time,
 	isOAuth bool,
 	mappedModel string,
+	upstreamRequestID string,
 ) (*geminiNativeStreamResult, error) {
 	if s.cfg != nil && s.cfg.Gateway.GeminiDebugResponseHeaders {
 		logger.LegacyPrintf("service.gemini_messages_compat", "[GeminiAPI] ========== Streaming Response Headers ==========")
@@ -2919,6 +2954,9 @@ func (s *GeminiMessagesCompatService) handleNativeStreamingResponse(
 	var firstTokenMs *int
 	failoverUnsafeOutputForwarded := false
 	sawTerminalEvent := false
+	var best geminiResponseSignal
+	sawDataEvent := false
+	fallback := &geminiSSEFallbackBody{}
 
 	for {
 		line, err := reader.ReadString('\n')
@@ -2962,12 +3000,22 @@ func (s *GeminiMessagesCompatService) handleNativeStreamingResponse(
 						}
 						flusher.Flush()
 						MarkResponseCommitted(c)
+						// 上游的带内信号标注只写 ops 记录，与本仓「错误信封即失败」的返回语义正交，
+						// 提前返回前补标一次，避免这条路径在 ops 里完全没有归类。
+						if sig, ok := detectGeminiResponseSignal(rawBytes); ok && sig.Kind > best.Kind {
+							best = sig
+						}
+						s.finalizeGeminiSSESignal(c, account, true, upstreamRequestID, best, true, fallback)
 						return &geminiNativeStreamResult{usage: usage, firstTokenMs: firstTokenMs}, fmt.Errorf("upstream response failed: %s", message)
 					}
 					if strings.TrimSpace(gjson.GetBytes(rawBytes, "candidates.0.finishReason").String()) != "" {
 						sawTerminalEvent = true
 					}
 
+					sawDataEvent = true
+					if sig, ok := detectGeminiResponseSignal(rawBytes); ok && sig.Kind > best.Kind {
+						best = sig
+					}
 					if u := extractGeminiUsage(rawBytes); u != nil {
 						usage = u
 					}
@@ -2990,6 +3038,9 @@ func (s *GeminiMessagesCompatService) handleNativeStreamingResponse(
 					flusher.Flush()
 				}
 			} else {
+				if !sawDataEvent {
+					fallback.AddLine(trimmed)
+				}
 				_, _ = io.WriteString(c.Writer, line)
 				trimmed := strings.TrimSpace(line)
 				if trimmed != "" && !strings.HasPrefix(trimmed, ":") {
@@ -3014,8 +3065,11 @@ func (s *GeminiMessagesCompatService) handleNativeStreamingResponse(
 			return nil, err
 		}
 	}
-	if !sawTerminalEvent {
-		message := "Gemini native stream ended before a terminal event"
+	// 上游明确交代过结束原因的流不算断流，见 geminiStreamEndedForDeclaredReason。
+	if !sawTerminalEvent && !geminiStreamEndedForDeclaredReason(best, sawDataEvent, fallback) {
+		message := geminiNativeStreamTerminalErrorMessage
+		// 同上：先落 ops 归类（空流 / promptFeedback 拦截等），再走本仓的断流失败语义。
+		s.finalizeGeminiSSESignal(c, account, true, upstreamRequestID, best, sawDataEvent, fallback)
 		if ruleErr := s.geminiStreamErrorHandlingRuleOverride(
 			ctx, c, account, resp.Header, 0, nil, mappedModel,
 			message, true, failoverUnsafeOutputForwarded,
@@ -3026,8 +3080,14 @@ func (s *GeminiMessagesCompatService) handleNativeStreamingResponse(
 		return &geminiNativeStreamResult{usage: usage, firstTokenMs: firstTokenMs}, errors.New("stream usage incomplete: missing terminal event")
 	}
 
+	s.finalizeGeminiSSESignal(c, account, true, upstreamRequestID, best, sawDataEvent, fallback)
+
 	return &geminiNativeStreamResult{usage: usage, firstTokenMs: firstTokenMs}, nil
 }
+
+// geminiNativeStreamTerminalErrorMessage 是原生流缺终止事件时写给客户端、并带进「流中断」
+// 规则引擎的固定文案。
+const geminiNativeStreamTerminalErrorMessage = "Gemini native stream ended before a terminal event"
 
 func writeGeminiNativeStreamTerminalError(c *gin.Context, message string) {
 	if c == nil || c.Writer == nil {
