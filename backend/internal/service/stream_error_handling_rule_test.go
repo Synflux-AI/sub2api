@@ -85,7 +85,7 @@ func TestGeminiNativeStreamErrorHandlingRuleHitAndMiss(t *testing.T) {
 	t.Run("hit", func(t *testing.T) {
 		svc := newGeminiRuleService(t, nil, streamRule(http.StatusServiceUnavailable, PlatformGemini))
 		c, rec := newGeminiRuleTestContext()
-		_, err := svc.handleNativeStreamingResponse(context.Background(), c, streamTestResponse(errorFrame), geminiRuleAccount(), time.Now(), false, "gemini")
+		_, err := svc.handleNativeStreamingResponse(context.Background(), c, streamTestResponse(errorFrame), geminiRuleAccount(), time.Now(), false, "gemini", "")
 
 		requireRuleFailover(t, err, true)
 		require.Empty(t, rec.Body.String())
@@ -94,7 +94,7 @@ func TestGeminiNativeStreamErrorHandlingRuleHitAndMiss(t *testing.T) {
 	t.Run("miss", func(t *testing.T) {
 		svc := newGeminiRuleService(t, nil, streamRule(http.StatusTooManyRequests, PlatformGemini))
 		c, rec := newGeminiRuleTestContext()
-		_, err := svc.handleNativeStreamingResponse(context.Background(), c, streamTestResponse(errorFrame), geminiRuleAccount(), time.Now(), false, "gemini")
+		_, err := svc.handleNativeStreamingResponse(context.Background(), c, streamTestResponse(errorFrame), geminiRuleAccount(), time.Now(), false, "gemini", "")
 
 		var failoverErr *UpstreamFailoverError
 		require.Error(t, err)
@@ -107,7 +107,7 @@ func TestGeminiNativeStreamErrorHandlingRuleHitAndMiss(t *testing.T) {
 		c, rec := newGeminiRuleTestContext()
 		_, err := svc.handleNativeStreamingResponse(
 			context.Background(), c, streamTestResponse("data: {\"candidates\":[]}\n\n"),
-			geminiRuleAccount(), time.Now(), false, "gemini",
+			geminiRuleAccount(), time.Now(), false, "gemini", "",
 		)
 
 		failoverErr := requireRuleFailover(t, err, false)
