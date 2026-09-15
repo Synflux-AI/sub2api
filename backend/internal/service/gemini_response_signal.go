@@ -315,6 +315,37 @@ func (b *geminiSSEFallbackBody) Truncated() bool {
 	return b != nil && b.truncated
 }
 
+// geminiStreamEndedForDeclaredReason 判断一条流式响应的结束是否由上游明确交代过原因，
+// 而不是被截断。上游的 2xx 带内信号（promptFeedback 整体拦截、内容过滤 finishReason、
+// 错误信封）都意味着「上游把结束原因讲完了」；上游用非 SSE 的完整 JSON body 回流式请求
+// 同理。这两类都不该触发换号重试——重试必然撞上同一个结果。
+//
+// 只有真正的空流（没有 data 事件、兜底体也没有实质内容，或内容语义为空）才算断流，
+// 交给调用方按「流中断」规则 failover。兜底体超限时无从判定，按不截断处理，避免把一条
+// 超大的正常响应误判成断流。
+//
+// 注意：SSE data 事件里的错误信封在读流循环里就提前返回了，走的是本仓既有的
+// 「错误信封即上游失败」语义，不经过这里。
+func geminiStreamEndedForDeclaredReason(best geminiResponseSignal, sawDataEvent bool, fallback *geminiSSEFallbackBody) bool {
+	if best.Kind != geminiSignalNone && best.Kind != geminiSignalAbnormalStop {
+		return true
+	}
+	if sawDataEvent {
+		return false
+	}
+	if fallback.Truncated() {
+		return true
+	}
+	body := bytes.TrimSpace(fallback.Bytes())
+	if len(body) == 0 {
+		return false
+	}
+	if sig, ok := detectGeminiResponseSignalInBody(body); ok {
+		return sig.Kind != geminiSignalAbnormalStop
+	}
+	return !isGeminiEmptyResponseBody(body)
+}
+
 // markGeminiResponseSignal 把带内信号登记到 ops 上下文。wire 状态保持 2xx，客户端字节不变，
 // 用量与计费照常走 ForwardResult。stream 是客户端请求的流式标记。
 //   - 内容策略类（promptFeedback.blockReason / 内容过滤 finishReason）是请求级结果：

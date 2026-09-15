@@ -128,11 +128,12 @@ data: {"error":{"code":429,"message":"Resource has been exhausted (e.g. check qu
 
 	result, err := svc.ForwardNative(context.Background(), c, geminiSignalTestAccount(),
 		"gemini-3.7-flash", "streamGenerateContent", true, geminiSignalTestRequest())
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	require.Equal(t, body, rec.Body.String(), "错误信封也原样透传，交给 SDK 客户端按错误处理")
-	require.Equal(t, 10, result.Usage.InputTokens)
-	require.Equal(t, 2, result.Usage.OutputTokens)
+	// 本仓与上游的分歧：流里的错误信封按上游失败处理并触发 failover，不是原样放行。
+	// 带内信号仍照上游口径登记，下面的 ops 断言与上游一致。
+	require.EqualError(t, err, "upstream response failed: Resource has been exhausted (e.g. check quota).")
+	require.Nil(t, result, "失败路径不返回 ForwardResult")
+	// 已收到的字节原样透传；本仓写完错误信封那一行即返回，故事件结尾的空行不会再转发。
+	require.Equal(t, strings.TrimSuffix(body, "\n"), rec.Body.String())
 
 	streamErrs := GetOpsStreamErrors(c)
 	require.Len(t, streamErrs, 1)
@@ -187,11 +188,12 @@ func TestGeminiForwardNative_EmptyStreamMarksUpstreamFailure(t *testing.T) {
 
 	result, err := svc.ForwardNative(context.Background(), c, geminiSignalTestAccount(),
 		"gemini-3.7-flash", "streamGenerateContent", true, geminiSignalTestRequest())
-	require.NoError(t, err)
-	require.NotNil(t, result)
+	// 本仓与上游的分歧：真正的空流算断流，走「流中断」规则并 failover，同时往流里注入一帧
+	// 终止错误。带内信号仍照上游口径登记，下面的 ops 断言与上游一致。
+	require.EqualError(t, err, "stream usage incomplete: missing terminal event")
+	require.Nil(t, result, "失败路径不返回 ForwardResult")
 	require.Equal(t, http.StatusOK, rec.Code)
-	require.Zero(t, rec.Body.Len())
-	require.Nil(t, result.FirstTokenMs)
+	require.Contains(t, rec.Body.String(), geminiNativeStreamTerminalErrorMessage)
 
 	streamErrs := GetOpsStreamErrors(c)
 	require.Len(t, streamErrs, 1)
@@ -285,8 +287,9 @@ data: {"error":{"code":503,"message":"The model is overloaded. Please try again 
 
 	_, err := svc.ForwardNative(context.Background(), c, geminiSignalTestAccount(),
 		"gemini-3.7-flash", "streamGenerateContent", true, geminiSignalTestRequest())
-	require.NoError(t, err)
-	require.Equal(t, body, rec.Body.String())
+	// 同上：错误信封在本仓触发 failover；优先级仍取最高的那个信号（错误 > 内容过滤）。
+	require.EqualError(t, err, "upstream response failed: The model is overloaded. Please try again later.")
+	require.Equal(t, strings.TrimSuffix(body, "\n"), rec.Body.String())
 
 	streamErrs := GetOpsStreamErrors(c)
 	require.Len(t, streamErrs, 1)
@@ -372,8 +375,10 @@ func TestGeminiForwardNative_StreamNonSSEEmptyBodyIsEmpty(t *testing.T) {
 			c, rec := newGeminiNativeTestContext(t)
 			_, err := svc.ForwardNative(context.Background(), c, geminiSignalTestAccount(),
 				"gemini-3.7-flash", "streamGenerateContent", true, geminiSignalTestRequest())
-			require.NoError(t, err)
-			require.Equal(t, body, rec.Body.String())
+			// 语义为空的响应体在本仓算断流：failover + 注入终止错误帧，ops 归类与上游一致。
+			require.EqualError(t, err, "stream usage incomplete: missing terminal event")
+			require.Contains(t, rec.Body.String(), body)
+			require.Contains(t, rec.Body.String(), geminiNativeStreamTerminalErrorMessage)
 			streamErrs := GetOpsStreamErrors(c)
 			require.Len(t, streamErrs, 1)
 			require.Equal(t, geminiSignalEmptyStreamReason, streamErrs[0].Code)
@@ -395,8 +400,16 @@ func TestGeminiForwardNative_StreamWithoutDataEventsIsEmpty(t *testing.T) {
 			c, rec := newGeminiNativeTestContext(t)
 			_, err := svc.ForwardNative(context.Background(), c, geminiSignalTestAccount(),
 				"gemini-3.7-flash", "streamGenerateContent", true, geminiSignalTestRequest())
-			require.NoError(t, err)
-			require.Equal(t, body, rec.Body.String())
+			// [DONE] 是终止事件，其余三种在本仓算断流：failover + 注入终止错误帧。
+			// 两种情况下 ops 归类都与上游一致。
+			if name == "done marker only" {
+				require.NoError(t, err)
+				require.Equal(t, body, rec.Body.String())
+			} else {
+				require.EqualError(t, err, "stream usage incomplete: missing terminal event")
+				require.Contains(t, rec.Body.String(), body)
+				require.Contains(t, rec.Body.String(), geminiNativeStreamTerminalErrorMessage)
+			}
 			streamErrs := GetOpsStreamErrors(c)
 			require.Len(t, streamErrs, 1)
 			require.Equal(t, geminiSignalEmptyStreamReason, streamErrs[0].Code)

@@ -3000,6 +3000,12 @@ func (s *GeminiMessagesCompatService) handleNativeStreamingResponse(
 						}
 						flusher.Flush()
 						MarkResponseCommitted(c)
+						// 上游的带内信号标注只写 ops 记录，与本仓「错误信封即失败」的返回语义正交，
+						// 提前返回前补标一次，避免这条路径在 ops 里完全没有归类。
+						if sig, ok := detectGeminiResponseSignal(rawBytes); ok && sig.Kind > best.Kind {
+							best = sig
+						}
+						s.finalizeGeminiSSESignal(c, account, true, upstreamRequestID, best, true, fallback)
 						return &geminiNativeStreamResult{usage: usage, firstTokenMs: firstTokenMs}, fmt.Errorf("upstream response failed: %s", message)
 					}
 					if strings.TrimSpace(gjson.GetBytes(rawBytes, "candidates.0.finishReason").String()) != "" {
@@ -3059,8 +3065,11 @@ func (s *GeminiMessagesCompatService) handleNativeStreamingResponse(
 			return nil, err
 		}
 	}
-	if !sawTerminalEvent {
-		message := "Gemini native stream ended before a terminal event"
+	// 上游明确交代过结束原因的流不算断流，见 geminiStreamEndedForDeclaredReason。
+	if !sawTerminalEvent && !geminiStreamEndedForDeclaredReason(best, sawDataEvent, fallback) {
+		message := geminiNativeStreamTerminalErrorMessage
+		// 同上：先落 ops 归类（空流 / promptFeedback 拦截等），再走本仓的断流失败语义。
+		s.finalizeGeminiSSESignal(c, account, true, upstreamRequestID, best, sawDataEvent, fallback)
 		if ruleErr := s.geminiStreamErrorHandlingRuleOverride(
 			ctx, c, account, resp.Header, 0, nil, mappedModel,
 			message, true, failoverUnsafeOutputForwarded,
@@ -3075,6 +3084,10 @@ func (s *GeminiMessagesCompatService) handleNativeStreamingResponse(
 
 	return &geminiNativeStreamResult{usage: usage, firstTokenMs: firstTokenMs}, nil
 }
+
+// geminiNativeStreamTerminalErrorMessage 是原生流缺终止事件时写给客户端、并带进「流中断」
+// 规则引擎的固定文案。
+const geminiNativeStreamTerminalErrorMessage = "Gemini native stream ended before a terminal event"
 
 func writeGeminiNativeStreamTerminalError(c *gin.Context, message string) {
 	if c == nil || c.Writer == nil {
