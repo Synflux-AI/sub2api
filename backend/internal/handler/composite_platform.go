@@ -133,6 +133,30 @@ func stampForwardRequestedReasoningEffort(result *service.ForwardResult, request
 	result.RequestedReasoningEffort = requested
 }
 
+// stampForwardReasoningEffort 记录客户端请求的推理等级与最终转发的推理等级。
+// 后者参与计费倍率与 usage_log。Bedrock 通道在转发前会移除 output_config，客户端传入的
+// effort 并未到达上游，因此不记为转发等级，避免按未生效的 max 等级加价。
+// 国产模型 thinking-enabled 默认 effort 填充：Kimi/GLM/MiniMax 这些不支持 effort 档位的
+// passback-required 上游，仅要 thinking 启用且 OutputEffort 未明确传递时，在 usage_log 写 "high"
+// 避免该字段长期为 NULL（详见 DefaultEffortForThinkingEnabled 文档）。
+func stampForwardReasoningEffort(result *service.ForwardResult, parsedReq *service.ParsedRequest, account *service.Account) {
+	if result == nil || parsedReq == nil {
+		return
+	}
+	requested := service.NormalizeClaudeOutputEffort(parsedReq.OutputEffort)
+	stampForwardRequestedReasoningEffort(result, requested)
+	if result.ReasoningEffort == nil && (account == nil || !account.IsBedrock()) {
+		result.ReasoningEffort = requested
+	}
+	if result.ReasoningEffort == nil && parsedReq.ThinkingEnabled {
+		protocolModel := result.UpstreamModel
+		if protocolModel == "" {
+			protocolModel = result.Model
+		}
+		result.ReasoningEffort = service.DefaultEffortForThinkingEnabled(protocolModel)
+	}
+}
+
 func applyOpenAIReasoningEffortPolicyForRequest(c *gin.Context, apiKey *service.APIKey, body []byte) ([]byte, bool, error) {
 	bindRequestedReasoningEffort(c, body, strings.TrimSpace(gjson.GetBytes(body, "model").String()))
 	maxEffort, mappings, overLimit, ok := openAIReasoningEffortPolicyForRequest(c, apiKey)

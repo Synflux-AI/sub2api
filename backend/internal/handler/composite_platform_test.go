@@ -269,3 +269,33 @@ func TestClientRequestedModelUsesCompositePublicModel(t *testing.T) {
 	require.Equal(t, "public-alias", fields.ChannelMappedModel)
 	require.Equal(t, "public-alias\u2192gpt-5", fields.ModelMappingChain)
 }
+
+// Bedrock 通道在转发前移除 output_config，客户端传入的 effort 不应记为最终转发等级参与计费。
+func TestStampForwardReasoningEffort_BedrockSkipsForwardedEffort(t *testing.T) {
+	parsed := &service.ParsedRequest{OutputEffort: "max"}
+
+	bedrock := &service.Account{Platform: service.PlatformAnthropic, Type: service.AccountTypeBedrock}
+	result := &service.ForwardResult{}
+	stampForwardReasoningEffort(result, parsed, bedrock)
+	require.NotNil(t, result.RequestedReasoningEffort)
+	require.Equal(t, "max", *result.RequestedReasoningEffort)
+	require.Nil(t, result.ReasoningEffort)
+
+	apiKey := &service.Account{Platform: service.PlatformAnthropic, Type: service.AccountTypeAPIKey}
+	result = &service.ForwardResult{}
+	stampForwardReasoningEffort(result, parsed, apiKey)
+	require.NotNil(t, result.ReasoningEffort)
+	require.Equal(t, "max", *result.ReasoningEffort)
+	require.NotNil(t, result.RequestedReasoningEffort)
+	require.Equal(t, "max", *result.RequestedReasoningEffort)
+}
+
+// Forward 已写入的转发等级优先，不被客户端请求值覆盖。
+func TestStampForwardReasoningEffort_KeepsForwardResolvedEffort(t *testing.T) {
+	parsed := &service.ParsedRequest{OutputEffort: "max"}
+	forwarded := "xhigh"
+	result := &service.ForwardResult{ReasoningEffort: &forwarded}
+	stampForwardReasoningEffort(result, parsed, &service.Account{Platform: service.PlatformAnthropic, Type: service.AccountTypeAPIKey})
+	require.Equal(t, "xhigh", *result.ReasoningEffort)
+	require.Equal(t, "max", *result.RequestedReasoningEffort)
+}
