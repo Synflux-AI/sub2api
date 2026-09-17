@@ -66,15 +66,22 @@ func TestSameAccountRetryDelayFor(t *testing.T) {
 	})
 }
 
-func TestSameAccountRetryAllowedUsesDeadlineInsteadOfPoolCount(t *testing.T) {
+// SameAccountRetryDeadline 只是时间边界，不是次数豁免。它曾经无条件放行，
+// OAuth 429 的 2 分钟窗口因此整块绕过 retryLimit（#248）。
+func TestSameAccountRetryAllowedBoundsDeadlineWindowByRetryLimit(t *testing.T) {
 	err := &service.UpstreamFailoverError{
 		RetryableOnSameAccount:   true,
 		SameAccountRetryDeadline: time.Now().Add(time.Minute),
 	}
-	require.True(t, sameAccountRetryAllowed(err, 100, 0))
-	require.True(t, sameAccountRetryAllowed(err, 100, maxSameAccountRetries))
+	require.False(t, sameAccountRetryAllowed(err, 100, 0),
+		"零预算下窗口不得放行任何重试")
+	require.False(t, sameAccountRetryAllowed(err, 100, maxSameAccountRetries),
+		"窗口未过期也必须服从 retryLimit")
+	require.True(t, sameAccountRetryAllowed(err, maxSameAccountRetries-1, maxSameAccountRetries),
+		"预算未用尽且窗口未过期时照常重试")
 	err.SameAccountRetryDeadline = time.Now().Add(-time.Second)
-	require.False(t, sameAccountRetryAllowed(err, 0, 100))
+	require.False(t, sameAccountRetryAllowed(err, 0, 100),
+		"窗口过期后即使预算充足也不得重试")
 }
 
 func TestSameAccountRetryAllowedRequiresOptInAndDefaultsToCountLimit(t *testing.T) {
@@ -375,7 +382,7 @@ func TestHandleFailoverError_CacheBilling(t *testing.T) {
 		require.Zero(t, fs.SwitchCount)
 	})
 
-	t.Run("OAuth deadline存在时不按普通计数切换", func(t *testing.T) {
+	t.Run("OAuth deadline未过期但预算已用尽时换号", func(t *testing.T) {
 		mock := &mockTempUnscheduler{}
 		fs := NewFailoverState(3, true)
 		fs.SameAccountRetryCount[100] = maxSameAccountRetries
@@ -383,12 +390,15 @@ func TestHandleFailoverError_CacheBilling(t *testing.T) {
 		err.SameAccountRetryDeadline = time.Now().Add(time.Minute)
 		err.SameAccountRetryDelay = time.Nanosecond
 
-		fs.HandleFailoverError(context.Background(), mock, 100, "openai", maxSameAccountRetries, err)
+		action := fs.HandleFailoverError(context.Background(), mock, 100, "openai", maxSameAccountRetries, err)
 
-		require.False(t, fs.ForceCacheBilling)
-		require.Zero(t, fs.SwitchCount)
-		require.Equal(t, maxSameAccountRetries+1, fs.SameAccountRetryCount[100])
-		require.Empty(t, mock.calls)
+		// 窗口只管时间、不管次数：预算用尽后必须落到换号，而不是在同号上继续打
+		// （#248 的 A 点）。粘性会话实际切号，因此 ForceCacheBilling 置位。
+		require.Equal(t, FailoverContinue, action)
+		require.True(t, fs.ForceCacheBilling)
+		require.Equal(t, 1, fs.SwitchCount)
+		require.Equal(t, maxSameAccountRetries, fs.SameAccountRetryCount[100])
+		require.Len(t, mock.calls, 1)
 	})
 
 	t.Run("同账号重试耗尽并实际切换时设置ForceCacheBilling", func(t *testing.T) {

@@ -107,11 +107,12 @@ func sameAccountRetryAllowed(failoverErr *service.UpstreamFailoverError, retryCo
 		}
 		return retryCount < retryLimit
 	}
-	// OAuth 429 explicitly opts into a deadline window. It is intentionally not
-	// bounded by the ordinary/default pool retry count.
-	if !failoverErr.SameAccountRetryDeadline.IsZero() {
-		return true
-	}
+	// SameAccountRetryDeadline 只表达「多久之内还可以重试」，不表达「可以重试多少次」。
+	// 它曾经在这里无条件 return true，于是 OAuth 429 的 2 分钟窗口整块绕过了
+	// retryLimit：单账号能以 Retry-After（上限 8s）的节奏原地打十几次，而同一请求
+	// 里的 503 走 RequestScopedTransient 退避时只有 3 次，两类错误的上限不一致让
+	// 行为看起来随机，管理台配的重试次数也对 429 完全失效（#248）。
+	// 现在窗口只负责时间边界，次数一律回落到 retryLimit。
 	return retryLimit > 0 && retryCount < retryLimit
 }
 
@@ -164,6 +165,12 @@ type FailoverState struct {
 	profitVetoedAccountIDs map[int64]struct{}
 	// profitVetoCount 本次请求累计的利润否决次数，用于 maxProfitVetoAttempts 上限。
 	profitVetoCount int
+
+	// attempts 请求级上游尝试总预算。nil 表示不限（未装配），行为与接入本预算
+	// 之前一致。刻意用指针：Anthropic Messages 的兜底分组重试会在同一次请求里
+	// 重建 FailoverState，预算必须跨重建共享，否则「原分组打满 + 兜底分组再打满」
+	// 能让单次请求用掉两倍额度。
+	attempts *requestAttemptBudget
 }
 
 // NewFailoverState 创建 failover 状态
@@ -176,6 +183,32 @@ func NewFailoverState(maxSwitches int, hasBoundSession bool) *FailoverState {
 		profitVetoedAccountIDs: make(map[int64]struct{}),
 	}
 }
+
+// WithUpstreamAttemptBudget 装配一个新的请求级上游尝试总预算
+// （limit <= 0 表示不限）。调用方在单次请求里只构造一次 FailoverState 时用它。
+// 设计成链式可选装配而非构造参数：未装配的测试用例仍按「不限」保持原语义。
+func (s *FailoverState) WithUpstreamAttemptBudget(limit int) *FailoverState {
+	if s == nil {
+		return nil
+	}
+	budget := newRequestAttemptBudget(limit)
+	s.attempts = &budget
+	return s
+}
+
+// WithSharedUpstreamAttemptBudget 复用调用方持有的预算。单次请求里会重建
+// FailoverState 的路径（Anthropic Messages 的兜底分组重试）必须走这个，
+// 让重建前后共用同一个额度。
+func (s *FailoverState) WithSharedUpstreamAttemptBudget(budget *requestAttemptBudget) *FailoverState {
+	if s == nil {
+		return nil
+	}
+	s.attempts = budget
+	return s
+}
+
+// UpstreamAttempts 返回本次请求已消耗的上游尝试数（供日志与测试使用）。
+func (s *FailoverState) UpstreamAttempts() int { return s.attempts.Used() }
 
 // RecordProfitVeto 记录一次分组利润门终检否决：把账号加入排除列表（同时登记到
 // 利润否决集，使其不被 503 退避分支清掉）并递增否决计数。
@@ -230,6 +263,21 @@ func (s *FailoverState) HandleFailoverError(
 	}
 	s.LastFailoverErr = failoverErr
 	if failoverErr == nil || !failoverErr.ShouldRetryNextAccount() {
+		return FailoverExhausted
+	}
+
+	// 请求级总预算：走到这里说明本次上游尝试已经失败且允许继续推进。无论下一步
+	// 是同号原地重试还是换号，都先消耗同一个额度——这是唯一能同时兜住两个维度
+	// 的闸门（#248）。
+	//
+	// 耗尽时抢在下面全部分支之前终止，两个都是有意的：
+	//   - 不设 ForceCacheBilling：该标记只被后续尝试的计费读到（调用方都在循环
+	//     开头或 usage 提交处读），耗尽后不存在后续尝试。
+	//   - 不做临时封禁：这是请求级闸门，「本请求已经烧掉多少次尝试」与账号健康
+	//     无关，不该顺手把账号摘出候选池。
+	if !s.attempts.Consume() {
+		logAttemptBudgetExhausted(failoverLog(ctx), "gateway.failover_upstream_attempt_budget_exhausted",
+			accountID, failoverErr.StatusCode, s.attempts)
 		return FailoverExhausted
 	}
 

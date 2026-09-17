@@ -89,6 +89,44 @@ func TestOpenAI429FastPath_DoesNotBlockOAuthWhenFallbackDisabled(t *testing.T) {
 	require.Zero(t, repo.setRateLimitedCalls, "disabled 429 fallback must not persist a scheduler cooldown")
 }
 
+// #248 的 B 点：窗口过期且拿不到兜底 cooldown 时，起点必须保留。原先删起点，
+// 下一个 429 会经 LoadOrStore 又开一个全新的 2 分钟窗口，同账号原地重试因此
+// 无限续期（实测单账号 34 次）。
+func TestOpenAI429FastPath_ExpiredWindowDoesNotRenewWhenFallbackDisabled(t *testing.T) {
+	repo := &oauth429RateLimitRepo{}
+	settingRepo := newMockSettingRepo()
+	settingRepo.data[SettingKeyRateLimit429CooldownSettings] = `{"enabled":false,"cooldown_seconds":12}`
+	rateLimitService := NewRateLimitService(repo, nil, &config.Config{}, nil, nil)
+	rateLimitService.SetSettingService(NewSettingService(settingRepo, &config.Config{}))
+	svc := &OpenAIGatewayService{rateLimitService: rateLimitService}
+	rateLimitService.SetAccountRuntimeBlocker(svc)
+	account := &Account{ID: 427, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+	expiredStart := time.Now().Add(-openAIOAuth429RetryWindow - time.Second)
+	svc.openaiOAuth429RetryStartedAt.Store(account.ID, expiredStart)
+
+	svc.markOpenAIOAuth429RateLimited(context.Background(), account, http.Header{}, []byte(`{"detail":"Rate limit exceeded"}`))
+
+	stored, ok := svc.openaiOAuth429RetryStartedAt.Load(account.ID)
+	require.True(t, ok, "过期窗口起点必须保留，否则下一个 429 会开新窗口")
+	require.Equal(t, expiredStart, stored, "起点不得被刷新成 now")
+	require.False(t, svc.shouldRetryOpenAIOAuth429OnSameAccount(account, http.StatusTooManyRequests, false),
+		"窗口已用完，后续 429 必须换号而不是继续原地重试")
+	require.False(t, svc.ShouldRetryOpenAIOAuth429(account, http.Header{}, []byte(`{"detail":"Rate limit exceeded"}`)))
+}
+
+// 保留过期起点是自愈的：该账号任何一次成功都会清掉它，下次 429 拿到新窗口。
+func TestOpenAI429FastPath_SuccessReopensRetryWindowAfterExpiry(t *testing.T) {
+	svc := &OpenAIGatewayService{}
+	account := &Account{ID: 428, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+	svc.openaiOAuth429RetryStartedAt.Store(account.ID, time.Now().Add(-openAIOAuth429RetryWindow-time.Second))
+	require.False(t, svc.shouldRetryOpenAIOAuth429OnSameAccount(account, http.StatusTooManyRequests, false))
+
+	svc.ReportOpenAIAccountScheduleResult(account, "gpt-5", true, nil)
+
+	require.True(t, svc.shouldRetryOpenAIOAuth429OnSameAccount(account, http.StatusTooManyRequests, false),
+		"成功后窗口应重开")
+}
+
 func TestOpenAI429FastPath_DoesNotBlockOAuthWhenQuotaWindowIsNotExhausted(t *testing.T) {
 	repo := &oauth429RateLimitRepo{}
 	settingRepo := newMockSettingRepo()

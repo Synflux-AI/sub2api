@@ -1100,7 +1100,10 @@ export default {
         enabled: 'Enable Error Handling Rules',
         enabledHint: 'Independent switch, not affected by the "Enable Request Rectifier" master switch',
         defaultRetryCount: 'Default In-Place Retry Count',
-        defaultRetryCountHint: 'Used when a rule does not set its own; 0 means switch accounts immediately on match; max {max}',
+        defaultRetryCountHint:
+          'Per-rule, per-account in-place retry budget, used when a rule does not set its own; 0 means switch accounts immediately on match; max {max}. It is not a per-request retry ceiling — the request-wide upstream attempt budget is server-side gateway.max_upstream_attempts.',
+        defaultRetryCountInactive:
+          'No rule currently uses the "Retry" action, so this value is never consumed.',
         namePlaceholder: 'Rule note (optional)',
         orderHint: 'Rules are matched in ascending priority order; the first match wins. Lower values match first.',
         priority: 'Priority',

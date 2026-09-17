@@ -712,6 +712,60 @@ describe("admin ErrorHandlingRulesView", () => {
     expect(ruleRows(wrapper)[0].text()).toContain("Rule B");
   });
 
+  // #248：一套规则全是「立即切换账号」时「默认原地重试次数」是空转配置。
+  // 它看起来像「单次请求最多重试 N 次」的总闸门，界面必须说清楚它不是。
+  it("flags the default retry count as inactive when no rule retries in place", async () => {
+    getErrorHandlingRuleSettings.mockResolvedValue({
+      enabled: true,
+      default_retry_count: 2,
+      rules: [RULE_B],
+    });
+
+    const wrapper = mountView();
+    await flushPromises();
+
+    expect(
+      wrapper
+        .find('[data-testid="error-handling-rule-default-retry-inactive"]')
+        .exists(),
+    ).toBe(true);
+  });
+
+  it("does not flag the default retry count when a retry rule is enabled", async () => {
+    getErrorHandlingRuleSettings.mockResolvedValue({
+      enabled: true,
+      default_retry_count: 2,
+      rules: [RULE_A, RULE_B],
+    });
+
+    const wrapper = mountView();
+    await flushPromises();
+
+    expect(
+      wrapper
+        .find('[data-testid="error-handling-rule-default-retry-inactive"]')
+        .exists(),
+    ).toBe(false);
+  });
+
+  // 停用的 retry 规则不会命中，也就不会消费这个值：仍然算空转。
+  it("flags the default retry count as inactive when the only retry rule is disabled", async () => {
+    getErrorHandlingRuleSettings.mockResolvedValue({
+      enabled: true,
+      default_retry_count: 2,
+      rules: [{ ...RULE_A, enabled: false }],
+    });
+
+    const wrapper = mountView();
+    await flushPromises();
+
+    expect(
+      wrapper
+        .find('[data-testid="error-handling-rule-default-retry-inactive"]')
+        .exists(),
+    ).toBe(true);
+  });
+
   it("always sends a clamped integer default retry count", async () => {
     getErrorHandlingRuleSettings.mockResolvedValue({
       enabled: true,

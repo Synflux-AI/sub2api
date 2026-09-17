@@ -46,6 +46,7 @@ type OpenAIGatewayHandler struct {
 	concurrencyHelper          *ConcurrencyHelper
 	imageLimiter               *imageConcurrencyLimiter
 	maxAccountSwitches         int
+	maxUpstreamAttempts        int
 	cfg                        *config.Config
 }
 
@@ -363,11 +364,15 @@ func NewOpenAIGatewayHandler(
 ) *OpenAIGatewayHandler {
 	pingInterval := time.Duration(0)
 	maxAccountSwitches := 3
+	maxUpstreamAttempts := maxUpstreamAttemptsFromConfig(0, false)
 	if cfg != nil {
 		pingInterval = time.Duration(cfg.Concurrency.PingInterval) * time.Second
 		if cfg.Gateway.MaxAccountSwitches > 0 {
 			maxAccountSwitches = cfg.Gateway.MaxAccountSwitches
 		}
+		// 与 maxAccountSwitches 不同：显式的 0/负数在这里是有意义的「不限」，
+		// 不能当成「未配置」回退默认值。
+		maxUpstreamAttempts = maxUpstreamAttemptsFromConfig(cfg.Gateway.MaxUpstreamAttempts, true)
 	}
 	return &OpenAIGatewayHandler{
 		gatewayService:           gatewayService,
@@ -380,6 +385,7 @@ func NewOpenAIGatewayHandler(
 		concurrencyHelper:        NewConcurrencyHelper(concurrencyService, SSEPingFormatComment, pingInterval),
 		imageLimiter:             &imageConcurrencyLimiter{},
 		maxAccountSwitches:       maxAccountSwitches,
+		maxUpstreamAttempts:      maxUpstreamAttempts,
 		cfg:                      cfg,
 	}
 }
@@ -633,6 +639,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	profitVetoCount := 0
 	failedAccountIDs := make(map[int64]struct{})
 	sameAccountRetryCount := make(map[int64]int)
+	attemptBudget := newRequestAttemptBudget(h.maxUpstreamAttempts)
 	var lastFailoverErr *service.UpstreamFailoverError
 	var oauth429FailoverState service.OpenAIOAuth429FailoverState
 	var passthroughFailoverState openAIPassthroughFailoverState
@@ -893,6 +900,14 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 						return
 					}
 					if openAIFirstOutputFailoverExhausted(failoverErr, &firstOutputTimeoutSwitchCount) {
+						h.handleFailoverExhausted(c, failoverErr, streamStarted)
+						return
+					}
+					// 请求级总预算：同号原地重试、换号、OAuth 429 窗口共用同一个额度，
+					// 耗尽即终止。这是唯一横跨全部推进路径的闸门（#248）。
+					if !attemptBudget.Consume() {
+						logAttemptBudgetExhausted(reqLog, "openai.upstream_attempt_budget_exhausted",
+							account.ID, failoverErr.StatusCode, &attemptBudget)
 						h.handleFailoverExhausted(c, failoverErr, streamStarted)
 						return
 					}
@@ -1262,6 +1277,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 	profitVetoCount := 0
 	failedAccountIDs := make(map[int64]struct{})
 	sameAccountRetryCount := make(map[int64]int)
+	attemptBudget := newRequestAttemptBudget(h.maxUpstreamAttempts)
 	var lastFailoverErr *service.UpstreamFailoverError
 	var oauth429FailoverState service.OpenAIOAuth429FailoverState
 	effectiveMappedModel := preferredMappedModel
@@ -1446,6 +1462,13 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 						h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, currentRoutingModel, false, nil), false, nil, err)
 					}
 					if !failoverErr.ShouldRetryNextAccount() {
+						h.handleAnthropicFailoverExhausted(c, failoverErr, streamStarted)
+						return
+					}
+					// 请求级总预算，口径同 Responses 路径（#248）。
+					if !attemptBudget.Consume() {
+						logAttemptBudgetExhausted(reqLog, "openai_messages.upstream_attempt_budget_exhausted",
+							account.ID, failoverErr.StatusCode, &attemptBudget)
 						h.handleAnthropicFailoverExhausted(c, failoverErr, streamStarted)
 						return
 					}

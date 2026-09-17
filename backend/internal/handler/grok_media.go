@@ -184,6 +184,7 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 	profitVetoCount := 0
 	failedAccountIDs := make(map[int64]struct{})
 	sameAccountRetryCount := make(map[int64]int)
+	attemptBudget := newRequestAttemptBudget(h.maxUpstreamAttempts)
 	var lastFailoverErr *service.UpstreamFailoverError
 	var oauth429FailoverState service.OpenAIOAuth429FailoverState
 	mediaEligibilityRejected := false
@@ -388,6 +389,13 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 					return
 				}
 				if endpoint.IsVideoLookupRequest() {
+					h.handleFailoverExhausted(c, failoverErr, false)
+					return
+				}
+				// 请求级总预算，口径同 Responses 路径（#248）。
+				if !attemptBudget.Consume() {
+					logAttemptBudgetExhausted(reqLog, "grok_media.upstream_attempt_budget_exhausted",
+						account.ID, failoverErr.StatusCode, &attemptBudget)
 					h.handleFailoverExhausted(c, failoverErr, false)
 					return
 				}

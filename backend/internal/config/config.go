@@ -1088,6 +1088,13 @@ type GatewayConfig struct {
 	// Gemini 账户切换最大次数（Gemini 平台单独配置，因 API 限制更严格）
 	MaxAccountSwitchesGemini int `mapstructure:"max_account_switches_gemini"`
 
+	// MaxUpstreamAttempts: 单次请求的上游尝试总预算（0 或负数表示不限）。
+	// 这是唯一覆盖全部推进路径的闸门：同账号原地重试、换号、以及
+	// OAuth 429 的重试窗口共用同一个计数，耗尽即按 failover 耗尽终止。
+	// MaxAccountSwitches / pool_mode_retry_count 只各自约束一个维度，
+	// 两者乘起来仍可让单次请求打出几十次上游调用（#248）。
+	MaxUpstreamAttempts int `mapstructure:"max_upstream_attempts"`
+
 	// Antigravity 429 fallback 限流时间（分钟），解析重置时间失败时使用
 	AntigravityFallbackCooldownMinutes int `mapstructure:"antigravity_fallback_cooldown_minutes"`
 
@@ -2468,6 +2475,9 @@ func setDefaults() {
 	viper.SetDefault("gateway.failover_on_400", false)
 	viper.SetDefault("gateway.max_account_switches", 10)
 	viper.SetDefault("gateway.max_account_switches_gemini", 3)
+	// 默认 12 = max_account_switches(10) + 首个账号 + 1 次原地重试余量：
+	// 既不反过来收紧既有的换号上限，也把病态请求从实测的 17~93 次压回常数级。
+	viper.SetDefault("gateway.max_upstream_attempts", 12)
 	viper.SetDefault("gateway.force_codex_cli", false)
 	viper.SetDefault("gateway.disable_codex_identity_enforcement", false)
 	viper.SetDefault("gateway.disable_codex_originator_normalization", false)

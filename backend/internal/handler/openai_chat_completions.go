@@ -155,6 +155,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 	profitVetoCount := 0
 	failedAccountIDs := make(map[int64]struct{})
 	sameAccountRetryCount := make(map[int64]int)
+	attemptBudget := newRequestAttemptBudget(h.maxUpstreamAttempts)
 	var lastFailoverErr *service.UpstreamFailoverError
 	var oauth429FailoverState service.OpenAIOAuth429FailoverState
 
@@ -331,6 +332,13 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 						h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, reqModel, false, nil), false, nil, err)
 					}
 					if !failoverErr.ShouldRetryNextAccount() {
+						h.handleFailoverExhausted(c, failoverErr, streamStarted)
+						return
+					}
+					// 请求级总预算，口径同 Responses 路径（#248）。
+					if !attemptBudget.Consume() {
+						logAttemptBudgetExhausted(reqLog, "openai_chat_completions.upstream_attempt_budget_exhausted",
+							account.ID, failoverErr.StatusCode, &attemptBudget)
 						h.handleFailoverExhausted(c, failoverErr, streamStarted)
 						return
 					}

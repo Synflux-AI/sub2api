@@ -391,6 +391,12 @@ func (s *OpenAIGatewayService) newOpenAIAccountFailoverErrorWithClassificationHe
 	if oauth429Retry {
 		failoverErr.SameAccountRetryDeadline = s.openAIOAuth429RetryDeadline(account)
 		failoverErr.SameAccountRetryDelay = openAIOAuth429SameAccountRetryDelay(responseHeaders, failoverErr.SameAccountRetryDeadline)
+		// 同号重试侧的显式上限，与换号侧 ShouldStopOpenAIOAuth429Failover 用的
+		// 同一个常数对称。窗口只管时间边界，次数必须自己说清楚：不给这个上限时
+		// 次数会隐式落到账号的 pool-mode 基数（OAuth 账号恒为默认 3），管理员把
+		// 规则的 RetryLimit 放宽就又能在单账号上以 8s 节奏打十几次（#248）。
+		// SameAccountRetryMax 只向下夹，不会覆盖账号显式设成 0（禁用原地重试）。
+		failoverErr.SameAccountRetryMax = openAIOAuth429MaxAccountAttempts
 	}
 	return failoverErr
 }
