@@ -114,6 +114,7 @@ func (h *OpenAIGatewayHandler) AlphaSearch(c *gin.Context) {
 	profitVetoCount := 0
 	failedAccountIDs := make(map[int64]struct{})
 	sameAccountRetryCount := make(map[int64]int)
+	attemptBudget := newRequestAttemptBudget(h.maxUpstreamAttempts)
 	var lastFailoverErr *service.UpstreamFailoverError
 	switchCount := 0
 	var oauth429FailoverState service.OpenAIOAuth429FailoverState
@@ -226,6 +227,13 @@ func (h *OpenAIGatewayHandler) AlphaSearch(c *gin.Context) {
 				zap.Int("upstream_status", failoverErr.StatusCode),
 				zap.String("error_rule_id", failoverErr.ErrorRuleID),
 			)
+			h.handleFailoverExhausted(c, failoverErr, false)
+			return
+		}
+		// 请求级总预算，口径同 Responses 路径（#248）。
+		if !attemptBudget.Consume() {
+			logAttemptBudgetExhausted(reqLog, "openai_alpha_search.upstream_attempt_budget_exhausted",
+				account.ID, failoverErr.StatusCode, &attemptBudget)
 			h.handleFailoverExhausted(c, failoverErr, false)
 			return
 		}

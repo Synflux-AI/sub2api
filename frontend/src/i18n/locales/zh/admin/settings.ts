@@ -1093,7 +1093,10 @@ export default {
         enabled: '启用错误处理规则',
         enabledHint: '独立开关，不受「启用请求整流器」总开关影响',
         defaultRetryCount: '默认原地重试次数',
-        defaultRetryCountHint: '规则未单独配置时使用；0 表示命中即切换账号；最大 {max}',
+        defaultRetryCountHint:
+          '「每条规则 × 每个账号」的原地重试预算，规则未单独配置时使用；0 表示命中即切换账号；最大 {max}。它不是单次请求的总重试上限——请求级总上游尝试预算由服务端 gateway.max_upstream_attempts 控制。',
+        defaultRetryCountInactive:
+          '当前没有任何「原地重试」动作的规则，该值不会被使用。',
         orderHint: '按优先级从小到大依次匹配，命中第一条即生效；数值越小越先匹配',
         priority: '优先级',
         priorityHint: '数值越小优先级越高，优先匹配',

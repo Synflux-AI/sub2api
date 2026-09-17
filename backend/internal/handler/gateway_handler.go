@@ -55,6 +55,7 @@ type GatewayHandler struct {
 	userMsgQueueHelper        *UserMsgQueueHelper
 	maxAccountSwitches        int
 	maxAccountSwitchesGemini  int
+	maxUpstreamAttempts       int
 	cfg                       *config.Config
 	settingService            *service.SettingService
 }
@@ -80,6 +81,7 @@ func NewGatewayHandler(
 	pingInterval := time.Duration(0)
 	maxAccountSwitches := 10
 	maxAccountSwitchesGemini := 3
+	maxUpstreamAttempts := maxUpstreamAttemptsFromConfig(0, false)
 	if cfg != nil {
 		pingInterval = time.Duration(cfg.Concurrency.PingInterval) * time.Second
 		if cfg.Gateway.MaxAccountSwitches > 0 {
@@ -88,6 +90,9 @@ func NewGatewayHandler(
 		if cfg.Gateway.MaxAccountSwitchesGemini > 0 {
 			maxAccountSwitchesGemini = cfg.Gateway.MaxAccountSwitchesGemini
 		}
+		// 与上面两个上限不同：显式的 0/负数在这里是有意义的「不限」，
+		// 不能当成「未配置」回退默认值。
+		maxUpstreamAttempts = maxUpstreamAttemptsFromConfig(cfg.Gateway.MaxUpstreamAttempts, true)
 	}
 
 	// 初始化用户消息串行队列 helper
@@ -112,6 +117,7 @@ func NewGatewayHandler(
 		userMsgQueueHelper:        umqHelper,
 		maxAccountSwitches:        maxAccountSwitches,
 		maxAccountSwitchesGemini:  maxAccountSwitchesGemini,
+		maxUpstreamAttempts:       maxUpstreamAttempts,
 		cfg:                       cfg,
 		settingService:            settingService,
 	}
@@ -330,7 +336,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 	hasBoundSession := sessionKey != "" && sessionBoundAccountID > 0
 
 	if platform == service.PlatformGemini {
-		fs := NewFailoverState(h.maxAccountSwitchesGemini, hasBoundSession)
+		fs := NewFailoverState(h.maxAccountSwitchesGemini, hasBoundSession).WithUpstreamAttemptBudget(h.maxUpstreamAttempts)
 
 		// 单账号分组提前设置 SingleAccountRetry 标记，让 Service 层首次 503 就不设模型限流标记。
 		// 避免单账号分组收到 503 (MODEL_CAPACITY_EXHAUSTED) 时设 29s 限流，导致后续请求连续快速失败。
@@ -663,8 +669,13 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 		}
 	}()
 
+	// 上游尝试总预算在两层循环之外装配：兜底分组重试会重建 FailoverState，
+	// 预算必须跨重建共享，否则「原分组打满 + 兜底分组再打满」能让单次请求
+	// 用掉两倍额度（#248）。
+	attemptBudget := newRequestAttemptBudget(h.maxUpstreamAttempts)
+
 	for {
-		fs := NewFailoverState(h.maxAccountSwitches, hasBoundSession)
+		fs := NewFailoverState(h.maxAccountSwitches, hasBoundSession).WithSharedUpstreamAttemptBudget(&attemptBudget)
 		retryWithFallback := false
 
 		for {

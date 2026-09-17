@@ -538,6 +538,16 @@ gateway:
   # Allow failover on selected 400 errors (default: off)
   # 允许在特定 400 错误时进行故障转移（默认：关闭）
   failover_on_400: false
+  # Total upstream attempt budget for a single request (default: 12; 0 or negative = unlimited).
+  # Same-account in-place retries, account switches, and the OAuth 429 retry window all draw
+  # from this one budget, so it is the only ceiling that bounds a request end to end.
+  # max_account_switches and pool_mode_retry_count each bound one dimension only; multiplied
+  # together they still allow dozens of real upstream calls per request.
+  # 单次请求的上游尝试总预算（默认 12；0 或负数表示不限）。同账号原地重试、
+  # 换号、OAuth 429 重试窗口共用这一个预算，因此它是唯一能端到端兜住单次请求的上限。
+  # max_account_switches 与账号的 pool_mode_retry_count 各自只约束一个维度，
+  # 两者乘起来仍可让单次请求打出几十次真实上游调用。
+  max_upstream_attempts: 12
   # Scheduling configuration
   # 调度配置
   scheduling:

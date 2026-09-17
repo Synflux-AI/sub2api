@@ -51,15 +51,30 @@
                   min="0"
                   :max="ERROR_HANDLING_RULE_MAX_RETRY"
                   class="input input-sm w-24"
+                  :class="{ 'opacity-50': !hasInPlaceRetryRule }"
                   data-testid="error-handling-rule-default-retry"
                 />
-                <p class="text-xs text-gray-500 dark:text-gray-400">
-                  {{
-                    t("admin.settings.errorHandlingRule.defaultRetryCountHint", {
-                      max: ERROR_HANDLING_RULE_MAX_RETRY,
-                    })
-                  }}
-                </p>
+                <div class="space-y-1">
+                  <p class="text-xs text-gray-500 dark:text-gray-400">
+                    {{
+                      t(
+                        "admin.settings.errorHandlingRule.defaultRetryCountHint",
+                        { max: ERROR_HANDLING_RULE_MAX_RETRY },
+                      )
+                    }}
+                  </p>
+                  <p
+                    v-if="!hasInPlaceRetryRule"
+                    class="text-xs text-amber-600 dark:text-amber-400"
+                    data-testid="error-handling-rule-default-retry-inactive"
+                  >
+                    {{
+                      t(
+                        "admin.settings.errorHandlingRule.defaultRetryCountInactive",
+                      )
+                    }}
+                  </p>
+                </div>
               </div>
 
               <div class="flex flex-wrap items-center justify-between gap-3">
@@ -665,6 +680,19 @@ const errorHandlingRuleForm = reactive({
  */
 const sortedRules = computed<ErrorHandlingRuleFormItem[]>(() =>
   [...errorHandlingRuleForm.rules].sort((a, b) => a.priority - b.priority),
+);
+
+/**
+ * 「默认原地重试次数」只在 action=retry 且该规则没单独配 retry_count 时被消费。
+ * 一套规则全是「立即切换账号」时它是空转配置，界面必须说出来——否则它看起来
+ * 像「单次请求最多重试 N 次」的总闸门，而那是服务端
+ * gateway.max_upstream_attempts 的职责（#248）。
+ * 只看 enabled 的规则：停用的规则不会命中，也就不会消费这个值。
+ */
+const hasInPlaceRetryRule = computed(() =>
+  errorHandlingRuleForm.rules.some(
+    (rule) => rule.enabled && rule.action === "retry",
+  ),
 );
 
 // 没有任何一列设 sortable：行序就是匹配优先级，可排序会让视图顺序和 priority 脱钩

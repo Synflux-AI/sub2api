@@ -10,11 +10,14 @@ import (
 )
 
 const (
-	openAIAccountStateUpdateTimeout       = 5 * time.Second
-	openAIOAuth429FallbackCooldown        = 5 * time.Second
-	openAIOAuth429RetryWindow             = 2 * time.Minute
-	openAIOAuth429RetryDelay              = 500 * time.Millisecond
-	openAIOAuth429MaxRetryDelay           = 8 * time.Second
+	openAIAccountStateUpdateTimeout = 5 * time.Second
+	openAIOAuth429FallbackCooldown  = 5 * time.Second
+	openAIOAuth429RetryWindow       = 2 * time.Minute
+	openAIOAuth429RetryDelay        = 500 * time.Millisecond
+	openAIOAuth429MaxRetryDelay     = 8 * time.Second
+	// openAIOAuth429MaxAccountAttempts 同时用在两侧：换号侧
+	// ShouldStopOpenAIOAuth429Failover 限制最多试几个账号，同号侧作为
+	// SameAccountRetryMax 限制在单个账号上最多原地重试几次（#248）。
 	openAIOAuth429MaxAccountAttempts      = 3
 	openAIStopSchedulingBridgeCooldown    = 2 * time.Minute
 	openAIOAuth429StormWindow             = 10 * time.Second
@@ -234,7 +237,13 @@ func (s *OpenAIGatewayService) markOpenAIOAuth429RateLimited(ctx context.Context
 	} else if s.rateLimitService != nil {
 		cooldown, ok := s.rateLimitService.get429FallbackCooldown(ctx, account)
 		if !ok || cooldown <= 0 {
-			s.openaiOAuth429RetryStartedAt.Delete(account.ID)
+			// 管理员显式关掉了 429 兜底冷却：账号必须保持可调度，这里不能 park。
+			// 但过期的窗口起点也绝不能删——删掉之后下一个 429 会经
+			// openAIOAuth429RetryWindowActive 的 LoadOrStore 又开一个全新的
+			// 2 分钟窗口，同账号原地重试因此可以无限续期，实测单账号打到 34 次
+			// （#248）。保留过期起点即表示「本账号的窗口已用完」，后续 429 直接
+			// 换号。这个状态是自愈的：ReportOpenAIAccountScheduleResult 在该账号
+			// 任何一次成功后就会删掉起点，下次 429 自然拿到新窗口。
 			return
 		}
 		cooldownUntil = now.Add(cooldown)
