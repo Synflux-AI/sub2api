@@ -217,8 +217,6 @@ func applyCostBreakdownMultiplier(cost *CostBreakdown, multiplier float64) {
 	cost.ActualCost *= multiplier
 }
 
-const claudeFable51MaxReasoningEffortMultiplier = 3.0
-
 func isClaudeFable51Model(model string) bool {
 	model = strings.ToLower(strings.TrimSpace(model))
 	for _, marker := range []string{"fable-5-1", "fable-5.1", "fable5.1", "fable51"} {
@@ -232,23 +230,16 @@ func isClaudeFable51Model(model string) bool {
 	return false
 }
 
-func defaultMaxReasoningEffortMultiplier(model string) *float64 {
-	if !isClaudeFable51Model(model) {
-		return nil
-	}
-	multiplier := claudeFable51MaxReasoningEffortMultiplier
-	return &multiplier
-}
-
-func maxReasoningEffortBillingMultiplier(model, effort string, pricing *ModelPricing) float64 {
+// maxReasoningEffortBillingMultiplier 返回 max 推理等级的计费倍率。
+// 倍率只来自渠道/分组定价里显式配置的 MaxReasoningEffortMultiplier；未配置时按 1 倍计费。
+// 官方 API 定价是按 token 的固定单价，effort 等级不改变单价，因此不再为任何模型
+// （包括 Claude Fable 5.1）内置默认加价倍率。
+func maxReasoningEffortBillingMultiplier(effort string, pricing *ModelPricing) float64 {
 	if NormalizeMaxReasoningEffort(effort) != "max" {
 		return 1
 	}
 	if pricing != nil && pricing.MaxReasoningEffortMultiplier != nil && *pricing.MaxReasoningEffortMultiplier > 0 {
 		return *pricing.MaxReasoningEffortMultiplier
-	}
-	if multiplier := defaultMaxReasoningEffortMultiplier(model); multiplier != nil {
-		return *multiplier
 	}
 	return 1
 }
@@ -1410,7 +1401,7 @@ func (s *BillingService) CalculateCostUnified(input CostInput) (*CostBreakdown, 
 			applyLongContextBilling,
 		)
 		if err == nil {
-			applyCostBreakdownMultiplier(breakdown, maxReasoningEffortBillingMultiplier(input.Model, input.ReasoningEffort, nil))
+			applyCostBreakdownMultiplier(breakdown, maxReasoningEffortBillingMultiplier(input.ReasoningEffort, nil))
 		}
 		return breakdown, err
 	}
@@ -1498,7 +1489,7 @@ func (s *BillingService) calculateTokenCost(resolved *ResolvedPricing, input Cos
 
 	breakdown := s.computeTokenBreakdown(pricing, input.Tokens, input.RateMultiplier, input.ServiceTier, applyLongCtx)
 	applyCostBreakdownMultiplier(breakdown, resolvedChannelTimeMultiplier(resolved, input.PricingAt))
-	applyCostBreakdownMultiplier(breakdown, maxReasoningEffortBillingMultiplier(input.Model, input.ReasoningEffort, pricing))
+	applyCostBreakdownMultiplier(breakdown, maxReasoningEffortBillingMultiplier(input.ReasoningEffort, pricing))
 	return breakdown, nil
 }
 
@@ -1790,17 +1781,13 @@ func (s *BillingService) applyModelSpecificPricingPolicyEx(model string, pricing
 	}
 	normalized := normalizeKnownOpenAICodexModel(model)
 	isGPT56 := isOpenAIGPT56Model(normalized)
-	needsMaxReasoningEffortMultiplier := isClaudeFable51Model(model) && pricing.MaxReasoningEffortMultiplier == nil
 	needsCacheCreationPolicy := isGPT56 && !pricing.CacheCreationPriceExplicit && (pricing.CacheCreationPricePerToken <= 0 ||
 		(pricing.InputPricePerTokenPriority > 0 && pricing.CacheCreationPricePerTokenPriority <= 0))
 	fastRatio := openAIModelFastPricingRatio(normalized)
-	if !needsCacheCreationPolicy && fastRatio <= 0 && !needsMaxReasoningEffortMultiplier {
+	if !needsCacheCreationPolicy && fastRatio <= 0 {
 		return pricing
 	}
 	cloned := *pricing
-	if needsMaxReasoningEffortMultiplier {
-		cloned.MaxReasoningEffortMultiplier = defaultMaxReasoningEffortMultiplier(model)
-	}
 	if isGPT56 && !cloned.CacheCreationPriceExplicit {
 		if cloned.CacheCreationPricePerToken <= 0 {
 			cloned.CacheCreationPricePerToken = cloned.InputPricePerToken * 1.25

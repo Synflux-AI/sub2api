@@ -19,7 +19,7 @@ import (
 // totalCost 是本次请求的客户计费（倍率前），用于优先级 2。
 // serviceTier 是最终参与用户计费的 OpenAI 服务层级，用于优先级 3。
 // pricingAt 与本次客户计费使用同一时刻，避免跨峰谷请求的成本与售价错位。
-// reasoningEffort 是最终转发等级；Fable 5.1 max 默认按 3 倍额度消耗。
+// reasoningEffort 是最终转发等级；max 等级仅在渠道定价显式配置倍率时加价。
 func resolveAccountStatsCost(
 	ctx context.Context,
 	channelService *ChannelService,
@@ -116,7 +116,7 @@ func tryCustomRules(
 		}
 		cost := calculateStatsCost(pricing, tokens, requestCount)
 		if cost != nil {
-			*cost *= maxReasoningEffortBillingMultiplier(model, reasoningEffort, nil)
+			*cost *= maxReasoningEffortBillingMultiplier(reasoningEffort, nil)
 		}
 		return cost
 	}

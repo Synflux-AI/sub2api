@@ -1807,8 +1807,8 @@ func TestGetModelPricing_Fable51FallbackPricing(t *testing.T) {
 	require.InDelta(t, 12.5e-6, pricing.CacheCreation5mPrice, 1e-12)
 	require.InDelta(t, 20e-6, pricing.CacheCreation1hPrice, 1e-12)
 	require.InDelta(t, 0.25e-6, pricing.CacheReadPricePerToken, 1e-12)
-	require.NotNil(t, pricing.MaxReasoningEffortMultiplier)
-	require.Equal(t, 3.0, *pricing.MaxReasoningEffortMultiplier)
+	// max 推理等级不再内置默认倍率，仅由渠道定价显式配置。
+	require.Nil(t, pricing.MaxReasoningEffortMultiplier)
 }
 
 func TestGetModelPricingWithChannel_CacheReadPriceAffectsPriority(t *testing.T) {
