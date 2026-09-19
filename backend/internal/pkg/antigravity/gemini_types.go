@@ -171,6 +171,19 @@ type GeminiUsageMetadata struct {
 	PromptTokensDetails     []GeminiTokenDetail `json:"promptTokensDetails,omitempty"`
 }
 
+// NetInputTokens 返回 Claude 语义的 input_tokens（不含缓存命中部分）。
+//
+// Google 官方口径下 PromptTokenCount 包含 CachedContentTokenCount，需要减去；
+// 部分中转上游会先行扣除缓存再回传，此时 PromptTokenCount < CachedContentTokenCount，
+// 再减一次会得到负数并导致负费用，这里按"上游已扣除"处理并兜底不返回负数。
+func (m *GeminiUsageMetadata) NetInputTokens() int {
+	prompt, cached := m.PromptTokenCount, m.CachedContentTokenCount
+	if cached <= 0 || prompt < cached {
+		return max(prompt, 0)
+	}
+	return prompt - cached
+}
+
 // ImageOutputTokens 从 CandidatesTokensDetails 中提取 IMAGE 模态的 token 数
 func (m *GeminiUsageMetadata) ImageOutputTokens() int {
 	for _, d := range m.CandidatesTokensDetails {

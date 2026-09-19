@@ -875,6 +875,37 @@ func TestExtractGeminiUsage(t *testing.T) {
 				CacheReadInputTokens: 0,
 			},
 		},
+		{
+			// 中转上游已先行扣除缓存再回传 promptTokenCount，再减一次会得到 -299008 并产生负费用
+			name:    "上游已扣除缓存（promptTokenCount < cachedContentTokenCount）不得为负",
+			input:   `{"usageMetadata":{"promptTokenCount":0,"candidatesTokenCount":789,"cachedContentTokenCount":299008}}`,
+			wantNil: false,
+			wantUsage: &ClaudeUsage{
+				InputTokens:          0,
+				OutputTokens:         789,
+				CacheReadInputTokens: 299008,
+			},
+		},
+		{
+			name:    "上游已扣除缓存且仍有未命中输入",
+			input:   `{"usageMetadata":{"promptTokenCount":120,"candidatesTokenCount":10,"cachedContentTokenCount":4096}}`,
+			wantNil: false,
+			wantUsage: &ClaudeUsage{
+				InputTokens:          120,
+				OutputTokens:         10,
+				CacheReadInputTokens: 4096,
+			},
+		},
+		{
+			name:    "全部命中缓存（promptTokenCount == cachedContentTokenCount）",
+			input:   `{"usageMetadata":{"promptTokenCount":299008,"candidatesTokenCount":57,"cachedContentTokenCount":299008}}`,
+			wantNil: false,
+			wantUsage: &ClaudeUsage{
+				InputTokens:          0,
+				OutputTokens:         57,
+				CacheReadInputTokens: 299008,
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -1158,4 +1189,27 @@ func parseAnthropicContentBlockEvents(t *testing.T, raw string) []anthropicConte
 		})
 	}
 	return events
+}
+
+func TestGeminiNetInputTokens(t *testing.T) {
+	tests := []struct {
+		name           string
+		prompt, cached int
+		want           int
+	}{
+		{name: "官方口径：prompt 含 cached", prompt: 100, cached: 20, want: 80},
+		{name: "无缓存", prompt: 100, cached: 0, want: 100},
+		{name: "全部命中缓存", prompt: 300, cached: 300, want: 0},
+		{name: "上游已扣除缓存，无未命中输入", prompt: 0, cached: 299008, want: 0},
+		{name: "上游已扣除缓存，有未命中输入", prompt: 120, cached: 4096, want: 120},
+		{name: "负数 prompt 兜底为 0", prompt: -5, cached: 0, want: 0},
+		{name: "负数 cached 视为无缓存", prompt: 50, cached: -10, want: 50},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := geminiNetInputTokens(tt.prompt, tt.cached); got != tt.want {
+				t.Fatalf("geminiNetInputTokens(%d, %d) = %d, 期望 %d", tt.prompt, tt.cached, got, tt.want)
+			}
+		})
+	}
 }

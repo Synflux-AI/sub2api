@@ -1440,6 +1440,7 @@ func (s *BillingService) CalculateCostUnified(input CostInput) (*CostBreakdown, 
 
 // calculateTokenCost 按 token 区间计费
 func (s *BillingService) calculateTokenCost(resolved *ResolvedPricing, input CostInput) (*CostBreakdown, error) {
+	input.Tokens = clampNegativeUsageTokens(input.Tokens)
 	totalContext := input.Tokens.InputTokens + input.Tokens.CacheCreationTokens + input.Tokens.CacheReadTokens
 
 	// 分组开关是统一入口；账号 API 开关保留为额外开启能力，但 false 不否决分组配置。
@@ -1493,6 +1494,19 @@ func (s *BillingService) calculateTokenCost(resolved *ResolvedPricing, input Cos
 	return breakdown, nil
 }
 
+// clampNegativeUsageTokens 将主计费维度的负 token 数钳制为 0。
+// 仅处理 input / output / cache_read / cache_creation 四个直接乘单价的计数；
+// CacheCreation5m/1h 等细分项由 computeCacheCreationCost 自行处理负值。
+func clampNegativeUsageTokens(tokens UsageTokens) UsageTokens {
+	tokens.InputTokens = max(tokens.InputTokens, 0)
+	tokens.OutputTokens = max(tokens.OutputTokens, 0)
+	tokens.CacheReadTokens = max(tokens.CacheReadTokens, 0)
+	tokens.CacheCreationTokens = max(tokens.CacheCreationTokens, 0)
+	tokens.ImageInputTokens = max(tokens.ImageInputTokens, 0)
+	tokens.ImageOutputTokens = max(tokens.ImageOutputTokens, 0)
+	return tokens
+}
+
 // computeTokenBreakdown 是 token 计费的核心逻辑，由 calculateTokenCost 和 calculateCostInternal 共用。
 // applyLongCtx 控制是否检查长上下文定价（区间定价已自含上下文分层，不需要额外应用）。
 func (s *BillingService) computeTokenBreakdown(
@@ -1504,6 +1518,9 @@ func (s *BillingService) computeTokenBreakdown(
 	if rateMultiplier < 0 {
 		rateMultiplier = 0
 	}
+	// 上游 usage 口径异常（如中转已扣除缓存后再被减一次）可能泄漏负 token 数，
+	// 负数乘单价会产生负费用（给用户倒贴钱），计费前统一钳制为 0。
+	tokens = clampNegativeUsageTokens(tokens)
 
 	inputPrice := pricing.InputPricePerToken
 	outputPrice := pricing.OutputPricePerToken
