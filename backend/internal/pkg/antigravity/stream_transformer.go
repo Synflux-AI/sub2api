@@ -107,11 +107,11 @@ func (p *StreamingProcessor) ProcessLine(line string) []byte {
 	}
 
 	// 更新 usage
-	// 注意：Gemini 的 promptTokenCount 包含 cachedContentTokenCount，
-	// 但 Claude 的 input_tokens 不包含 cache_read_input_tokens，需要减去
+	// 注意：Gemini 的 promptTokenCount 通常包含 cachedContentTokenCount，
+	// 换算规则见 GeminiUsageMetadata.NetInputTokens（含中转上游已扣除缓存的兼容）
 	if geminiResp.UsageMetadata != nil {
 		cached := geminiResp.UsageMetadata.CachedContentTokenCount
-		p.inputTokens = geminiResp.UsageMetadata.PromptTokenCount - cached
+		p.inputTokens = geminiResp.UsageMetadata.NetInputTokens()
 		p.outputTokens = geminiResp.UsageMetadata.CandidatesTokenCount + geminiResp.UsageMetadata.ThoughtsTokenCount
 		p.cacheReadTokens = cached
 		p.imageOutputTokens = geminiResp.UsageMetadata.ImageOutputTokens()
@@ -184,7 +184,7 @@ func (p *StreamingProcessor) emitMessageStart(v1Resp *V1InternalResponse) []byte
 	usage := ClaudeUsage{}
 	if v1Resp.Response.UsageMetadata != nil {
 		cached := v1Resp.Response.UsageMetadata.CachedContentTokenCount
-		usage.InputTokens = v1Resp.Response.UsageMetadata.PromptTokenCount - cached
+		usage.InputTokens = v1Resp.Response.UsageMetadata.NetInputTokens()
 		usage.OutputTokens = v1Resp.Response.UsageMetadata.CandidatesTokenCount + v1Resp.Response.UsageMetadata.ThoughtsTokenCount
 		usage.CacheReadInputTokens = cached
 		usage.ImageOutputTokens = v1Resp.Response.UsageMetadata.ImageOutputTokens()

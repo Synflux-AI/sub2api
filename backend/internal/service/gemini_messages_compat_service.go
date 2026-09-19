@@ -3334,14 +3334,30 @@ func extractGeminiUsage(data []byte) *ClaudeUsage {
 		})
 	}
 
-	// 注意：Gemini 的 promptTokenCount 包含 cachedContentTokenCount，
-	// 但 Claude 的 input_tokens 不包含 cache_read_input_tokens，需要减去
 	return &ClaudeUsage{
-		InputTokens:          prompt - cached,
+		InputTokens:          geminiNetInputTokens(prompt, cached),
 		OutputTokens:         cand + thoughts,
 		CacheReadInputTokens: cached,
 		ImageOutputTokens:    imageTokens,
 	}
+}
+
+// geminiNetInputTokens 把 Gemini usageMetadata 的 prompt/cached 计数换算成 Claude 语义的 input_tokens。
+//
+// Google 官方口径下 promptTokenCount 包含 cachedContentTokenCount，而 Claude 的
+// input_tokens 不包含 cache_read_input_tokens，因此需要减去缓存命中部分。
+// 部分中转上游会先行扣除缓存，再把已扣除的 promptTokenCount 与原始的
+// cachedContentTokenCount 一并回传（例如 promptTokenCount=0、cachedContentTokenCount=299008），
+// 此时再减一次会得到负的输入 token，进而产生负费用（倒贴钱）。这里对 prompt < cached
+// 的情况按"上游已扣除"处理，直接采用 promptTokenCount，并兜底不返回负数。
+func geminiNetInputTokens(prompt, cached int) int {
+	if cached <= 0 {
+		return max(prompt, 0)
+	}
+	if prompt < cached {
+		return max(prompt, 0)
+	}
+	return prompt - cached
 }
 
 func asInt(v any) (int, bool) {

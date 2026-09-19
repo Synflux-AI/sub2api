@@ -1447,6 +1447,54 @@ func TestComputeCacheCreationCost_PreservesZeroDetailFallback(t *testing.T) {
 	}
 }
 
+// 上游 usage 口径异常泄漏负 token 时（如 Gemini 中转已扣除缓存后再被减一次），
+// 计费不得产生负费用；负数应按 0 处理，其余维度照常计费。
+func TestCalculateCost_NegativeTokensClampedToZero(t *testing.T) {
+	svc := newTestBillingService()
+
+	negative := UsageTokens{
+		InputTokens:     -299008,
+		OutputTokens:    789,
+		CacheReadTokens: 299008,
+	}
+	cost, err := svc.CalculateCost("claude-sonnet-4", negative, 1.0)
+	require.NoError(t, err)
+	require.InDelta(t, 0, cost.InputCost, 1e-12)
+	require.GreaterOrEqual(t, cost.TotalCost, 0.0)
+	require.GreaterOrEqual(t, cost.ActualCost, 0.0)
+
+	clamped := negative
+	clamped.InputTokens = 0
+	expected, err := svc.CalculateCost("claude-sonnet-4", clamped, 1.0)
+	require.NoError(t, err)
+	require.InDelta(t, expected.TotalCost, cost.TotalCost, 1e-12)
+	require.InDelta(t, expected.CacheReadCost, cost.CacheReadCost, 1e-12)
+	require.InDelta(t, expected.OutputCost, cost.OutputCost, 1e-12)
+}
+
+func TestClampNegativeUsageTokens(t *testing.T) {
+	got := clampNegativeUsageTokens(UsageTokens{
+		InputTokens:           -1,
+		ImageInputTokens:      -2,
+		OutputTokens:          -3,
+		CacheCreationTokens:   -4,
+		CacheReadTokens:       -5,
+		ImageOutputTokens:     -6,
+		CacheCreation5mTokens: -7,
+		CacheCreation1hTokens: 8,
+		ImageCacheReadTokens:  9,
+	})
+	require.Equal(t, UsageTokens{
+		// 细分项 CacheCreation5m/1h 与 ImageCacheReadTokens 由各自计算逻辑处理，这里保持原值
+		CacheCreation5mTokens: -7,
+		CacheCreation1hTokens: 8,
+		ImageCacheReadTokens:  9,
+	}, got)
+
+	positive := UsageTokens{InputTokens: 1, OutputTokens: 2, CacheReadTokens: 3, CacheCreationTokens: 4}
+	require.Equal(t, positive, clampNegativeUsageTokens(positive))
+}
+
 func TestCalculateCost_LargeTokenCount(t *testing.T) {
 	svc := newTestBillingService()
 
