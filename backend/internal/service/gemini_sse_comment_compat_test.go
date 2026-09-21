@@ -48,13 +48,26 @@ func TestDownstreamRejectsSSECommentsReadsBothHeaders(t *testing.T) {
 	require.False(t, downstreamRejectsSSEComments(nil))
 }
 
+const (
+	// 配置校验允许的最小心跳间隔，测试里取最小值缩短观察窗口。
+	antigravityStreamKeepaliveIntervalSeconds = 1
+	// 空闲观察窗口必须覆盖到第二次 tick：心跳除了 ticker 还有一道「距上次数据 >= keepaliveInterval」
+	// 的二次闸门（antigravity_gateway_streaming.go:374），而 lastDataAt 会被上游数据刷新到 ticker
+	// 创建之后，第一次 tick 必然差这点偏移够不到闸门。窗口只盖到第一次 tick 的话，断言能不能过
+	// 取决于 ticker 投递抖动，CI 负载一高就翻。
+	antigravityStreamIdleObserveWindow = 2500 * time.Millisecond
+)
+
 // runAntigravityGeminiStreamWithIdle 起一条上游流：先发一个 data 事件，然后空闲 idle 时长再关闭，
 // 返回写给下游的全部字节。用来观察空闲期间网关是否发了 ":\n\n" 心跳。
 func runAntigravityGeminiStreamWithIdle(t *testing.T, userAgent string, idle time.Duration) string {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	svc := newAntigravityCompatService(
-		config.GatewayConfig{MaxLineSize: defaultMaxLineSize, StreamKeepaliveInterval: 1},
+		config.GatewayConfig{
+			MaxLineSize:             defaultMaxLineSize,
+			StreamKeepaliveInterval: antigravityStreamKeepaliveIntervalSeconds,
+		},
 		nil,
 	)
 	c, recorder := newAntigravityCompatContext(http.MethodPost, "/v1beta/models/gemini-3.8-flash:streamGenerateContent", nil)
@@ -89,13 +102,13 @@ func runAntigravityGeminiStreamWithIdle(t *testing.T, userAgent string, idle tim
 }
 
 func TestAntigravityGeminiStreamKeepsCommentKeepaliveForOrdinaryClients(t *testing.T) {
-	out := runAntigravityGeminiStreamWithIdle(t, "curl/8.7.1", 1200*time.Millisecond)
+	out := runAntigravityGeminiStreamWithIdle(t, "curl/8.7.1", antigravityStreamIdleObserveWindow)
 	require.Contains(t, out, ":\n\n", "ordinary clients should still get the idle keepalive")
 	require.Contains(t, out, `"text":"partial"`)
 }
 
 func TestAntigravityGeminiStreamSkipsCommentKeepaliveForGoGenai(t *testing.T) {
-	out := runAntigravityGeminiStreamWithIdle(t, "google-genai-sdk/1.71.0 gl-go/go1.28-20260721-RC03", 1200*time.Millisecond)
+	out := runAntigravityGeminiStreamWithIdle(t, "google-genai-sdk/1.71.0 gl-go/go1.28-20260721-RC03", antigravityStreamIdleObserveWindow)
 	require.Contains(t, out, `"text":"partial"`)
 	for _, event := range strings.Split(out, "\n\n") {
 		require.False(t, strings.HasPrefix(event, ":"), "go-genai must never receive an SSE comment event, got %q", event)
