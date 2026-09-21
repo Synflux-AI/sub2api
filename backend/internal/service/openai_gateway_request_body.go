@@ -822,6 +822,14 @@ func appendOpenAIResponsesRequestPathSuffix(baseURL, suffix string) string {
 	return trimmedBase + trimmedSuffix
 }
 
+// needOpenAIResponseModelReplace 判定回程是否需要把上游模型名还原成客户端请求名。
+// 只有两侧都非空且确实不同才需要——出站改写的条件与此对称。
+func needOpenAIResponseModelReplace(originalModel, upstreamModel string) bool {
+	original := strings.TrimSpace(originalModel)
+	upstream := strings.TrimSpace(upstreamModel)
+	return original != "" && upstream != "" && original != upstream
+}
+
 func (s *OpenAIGatewayService) replaceModelInResponseBody(body []byte, fromModel, toModel string) []byte {
 	// 使用 gjson/sjson 精确替换 model 字段，避免全量 JSON 反序列化
 	if m := gjson.GetBytes(body, "model"); m.Exists() && m.Str == fromModel {

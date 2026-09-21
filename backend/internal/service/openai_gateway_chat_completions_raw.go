@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -307,6 +308,10 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 	refusalDetector := newOpenAIChatSilentRefusalDetector(requestBodyLen)
 	var terminal openAIRawStreamTerminalState
 	var streamRuleErr *UpstreamFailoverError
+	// 账号 model_mapping 的反向回写：出站把 originalModel 改成 upstreamModel，
+	// 回程必须还原，否则上游真实模型名会原样泄漏给下游（级联部署下会继续传染，
+	// 表现为下游 upstream_model_mismatch 误报）。
+	needModelReplace := needOpenAIResponseModelReplace(originalModel, upstreamModel)
 
 	writeLine := func(line string) {
 		if clientDisconnected {
@@ -378,6 +383,12 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 		}
 		line = applyOllamaCloudRawChatCompletionsSSELine(account, line)
 		line = stripEmptyChatToolCallIdentityFromSSELine(line)
+		// 必须排在上面的 observer.ObserveOpenAI 之后：observer 要观测上游原值，
+		// 否则 upstream_response_model / upstream_model_mismatch 以及依赖
+		// response_model 的计费判定会一起失真。
+		if needModelReplace && strings.Contains(line, upstreamModel) {
+			line = s.replaceModelInSSELine(line, upstreamModel, originalModel)
+		}
 
 		writeLine(line)
 		if line == "" {
@@ -566,6 +577,11 @@ func (s *OpenAIGatewayService) bufferRawChatCompletions(
 		return nil, newGrokMissingUsageFailoverError(c, account, upstreamRequestID)
 	}
 	respBody = applyOllamaCloudRawChatCompletionsResponse(account, respBody)
+	// 账号 model_mapping 的反向回写。必须排在 observer.ObserveOpenAI 与
+	// responseModel 提取之后：两者都要看上游原值。
+	if needOpenAIResponseModelReplace(originalModel, upstreamModel) && bytes.Contains(respBody, []byte(upstreamModel)) {
+		respBody = s.replaceModelInResponseBody(respBody, upstreamModel, originalModel)
+	}
 
 	if s.responseHeaderFilter != nil {
 		responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)

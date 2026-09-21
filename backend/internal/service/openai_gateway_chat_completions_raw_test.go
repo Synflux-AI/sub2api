@@ -1240,3 +1240,118 @@ func largeRawChatCompletionsBody() []byte {
 		strings.Repeat("x", openAISilentRefusalMinRequestBodyBytes) +
 		`"}],"stream":true}`)
 }
+
+// rawChatCompletionsMappedAccount 返回配了账号级 model_mapping 的 CC 直转账号。
+func rawChatCompletionsMappedAccount() *Account {
+	account := rawChatCompletionsTestAccount()
+	account.Credentials["model_mapping"] = map[string]any{
+		"kimi-k3": "FW-Kimi-K3",
+	}
+	return account
+}
+
+func TestForwardAsRawChatCompletions_RestoresClientModelInNonStreamingResponse(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	body := []byte(`{"model":"kimi-k3","messages":[{"role":"user","content":"hello"}],"stream":false}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body: io.NopCloser(strings.NewReader(
+			`{"id":"chatcmpl_mapped","object":"chat.completion","model":"FW-Kimi-K3","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":5,"total_tokens":8}}`,
+		)),
+	}}
+	svc := &OpenAIGatewayService{
+		cfg:          rawChatCompletionsTestConfig(),
+		httpUpstream: upstream,
+	}
+
+	result, err := svc.forwardAsRawChatCompletions(context.Background(), c, rawChatCompletionsMappedAccount(), body, "")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	// 出站仍然用上游真实模型名。
+	require.Equal(t, "FW-Kimi-K3", gjson.GetBytes(upstream.lastBody, "model").String())
+	// 下游只能看到自己请求的模型名。
+	require.Equal(t, "kimi-k3", gjson.Get(rec.Body.String(), "model").String())
+	require.NotContains(t, rec.Body.String(), "FW-Kimi-K3")
+	// observer 排在回写之前，上游口径不受影响。
+	require.Equal(t, "FW-Kimi-K3", result.UpstreamResponseModel)
+	require.False(t, result.UpstreamResponseModelConflict)
+	require.Equal(t, "kimi-k3", result.Model)
+	require.Equal(t, "FW-Kimi-K3", result.UpstreamModel)
+}
+
+func TestForwardAsRawChatCompletions_RestoresClientModelInStreamingResponse(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	body := []byte(`{"model":"kimi-k3","messages":[{"role":"user","content":"hello"}],"stream":true}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	upstreamBody := strings.Join([]string{
+		`data: {"id":"chatcmpl_mapped","object":"chat.completion.chunk","model":"FW-Kimi-K3","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}`,
+		"",
+		`data: {"id":"chatcmpl_mapped","object":"chat.completion.chunk","model":"FW-Kimi-K3","choices":[{"index":0,"delta":{"content":"final answer"},"finish_reason":"stop"}]}`,
+		"",
+		`data: {"id":"chatcmpl_mapped","object":"chat.completion.chunk","model":"FW-Kimi-K3","choices":[],"usage":{"prompt_tokens":3,"completion_tokens":5,"total_tokens":8}}`,
+		"",
+		"data: [DONE]",
+		"",
+	}, "\n")
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}, "x-request-id": []string{"rid_mapped_stream"}},
+		Body:       io.NopCloser(strings.NewReader(upstreamBody)),
+	}}
+	svc := &OpenAIGatewayService{
+		cfg:          rawChatCompletionsTestConfig(),
+		httpUpstream: upstream,
+	}
+
+	result, err := svc.forwardAsRawChatCompletions(context.Background(), c, rawChatCompletionsMappedAccount(), body, "")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	written := rec.Body.String()
+	require.NotContains(t, written, "FW-Kimi-K3")
+	require.Contains(t, written, `"model":"kimi-k3"`)
+	require.Contains(t, written, `"content":"final answer"`)
+	require.Contains(t, written, "data: [DONE]")
+	require.Equal(t, 3, result.Usage.InputTokens)
+	require.Equal(t, 5, result.Usage.OutputTokens)
+	require.Equal(t, "FW-Kimi-K3", result.UpstreamResponseModel)
+	require.False(t, result.UpstreamResponseModelConflict)
+}
+
+func TestForwardAsRawChatCompletions_WithoutModelMappingKeepsResponseBytes(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	upstreamJSON := `{"id":"chatcmpl_plain","object":"chat.completion","model":"kimi-k3","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":5,"total_tokens":8}}`
+	body := []byte(`{"model":"kimi-k3","messages":[{"role":"user","content":"hello"}],"stream":false}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(upstreamJSON)),
+	}}
+	svc := &OpenAIGatewayService{
+		cfg:          rawChatCompletionsTestConfig(),
+		httpUpstream: upstream,
+	}
+
+	_, err := svc.forwardAsRawChatCompletions(context.Background(), c, rawChatCompletionsTestAccount(), body, "")
+	require.NoError(t, err)
+	require.Equal(t, upstreamJSON, rec.Body.String())
+}
