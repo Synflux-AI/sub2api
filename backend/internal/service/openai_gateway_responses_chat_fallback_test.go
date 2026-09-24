@@ -96,8 +96,9 @@ func TestForwardResponses_ForceChatCompletionsReasoningEffortFollowsStripSwitch(
 	t.Run("default forwards none", func(t *testing.T) {
 		upstream, result := forward(t, forceChatResponsesFallbackAccount())
 		require.Equal(t, "none", gjson.GetBytes(upstream.lastBody, "reasoning_effort").String())
-		// 台账归一化仍把 none 记成空，属独立议题。
-		require.Nil(t, result.ReasoningEffort)
+		// 最终转发的 none 按原值记入台账（上游 e47255715 起不再归一化成空）。
+		require.NotNil(t, result.ReasoningEffort)
+		require.Equal(t, "none", *result.ReasoningEffort)
 	})
 
 	t.Run("strip switch omits none", func(t *testing.T) {

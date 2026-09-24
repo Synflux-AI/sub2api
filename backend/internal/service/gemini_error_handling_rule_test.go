@@ -380,6 +380,19 @@ func geminiTransportErrTestUpstream() *geminiCompatHTTPUpstreamStub {
 	return &geminiCompatHTTPUpstreamStub{err: errors.New("dial tcp: connection reset by peer")}
 }
 
+// requireGeminiBuiltinTransportFailover 断言规则未命中时的内置行为：传输层失败一律
+// 交给 handler 换号（上游 d0ed0eaca 起不再同号退避重试、也不在 service 层写响应）。
+func requireGeminiBuiltinTransportFailover(t *testing.T, err error, rec *httptest.ResponseRecorder, httpStub *geminiCompatHTTPUpstreamStub) {
+	t.Helper()
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.Empty(t, failoverErr.ErrorRuleID, "未命中时不得产出规则版错误")
+	require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
+	require.Equal(t, geminiTransportFailoverBody, failoverErr.ResponseBody)
+	require.Equal(t, 0, rec.Body.Len(), "响应归 handler 所有，service 层不得写出")
+	require.Equal(t, 1, httpStub.calls, "传输层失败不再同号重试")
+}
+
 // Forward：命中规则时必须换成规则版 failover 错误，ops 顶层状态码保持未设置。
 func TestGeminiForward_TransportErrorRuleTakesEffect(t *testing.T) {
 	httpStub := geminiTransportErrTestUpstream()
@@ -401,8 +414,7 @@ func TestGeminiForward_TransportErrorRuleTakesEffect(t *testing.T) {
 	require.False(t, ok, "合成状态码不得落进 ops_error_logs 顶层列")
 }
 
-// Forward：规则未命中时，存量行为必须零变化——原样走 writeClaudeError，
-// 状态码/响应体逐字不变。
+// Forward：规则未命中时，走内置的传输层 failover，不产出规则版错误。
 func TestGeminiForward_TransportErrorNoRuleUnchangedOutput(t *testing.T) {
 	httpStub := geminiTransportErrTestUpstream()
 	svc := newGeminiRuleService(t, httpStub, ErrorHandlingRule{
@@ -414,21 +426,7 @@ func TestGeminiForward_TransportErrorNoRuleUnchangedOutput(t *testing.T) {
 
 	_, err := svc.Forward(context.Background(), c, account, []byte(`{"model":"gemini-2.5-pro","messages":[{"role":"user","content":"hi"}]}`))
 
-	var failoverErr *UpstreamFailoverError
-	require.False(t, errors.As(err, &failoverErr), "未命中时不得产出规则版错误")
-	require.Equal(t, http.StatusBadGateway, rec.Code)
-	var payload struct {
-		Type  string `json:"type"`
-		Error struct {
-			Type    string `json:"type"`
-			Message string `json:"message"`
-		} `json:"error"`
-	}
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &payload))
-	require.Equal(t, "error", payload.Type)
-	require.Equal(t, "upstream_error", payload.Error.Type)
-	require.Contains(t, payload.Error.Message, "Upstream request failed after retries")
-	require.Contains(t, payload.Error.Message, "connection reset by peer")
+	requireGeminiBuiltinTransportFailover(t, err, rec, httpStub)
 }
 
 // ForwardNative：同一接线点，用 writeGoogleError 的原生 Google 错误形状核对。
@@ -464,19 +462,7 @@ func TestGeminiForwardNative_TransportErrorNoRuleUnchangedOutput(t *testing.T) {
 	_, err := svc.ForwardNative(context.Background(), c, account, "gemini-2.5-pro", "generateContent", false,
 		[]byte(`{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}`))
 
-	var failoverErr *UpstreamFailoverError
-	require.False(t, errors.As(err, &failoverErr))
-	require.Equal(t, http.StatusBadGateway, rec.Code)
-	var payload struct {
-		Error struct {
-			Code    int    `json:"code"`
-			Message string `json:"message"`
-			Status  string `json:"status"`
-		} `json:"error"`
-	}
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &payload))
-	require.Equal(t, http.StatusBadGateway, payload.Error.Code)
-	require.Contains(t, payload.Error.Message, "Upstream request failed after retries")
+	requireGeminiBuiltinTransportFailover(t, err, rec, httpStub)
 }
 
 // ForwardAsChatCompletions：没有 Forward/ForwardNative 那种「接线点之前物理
@@ -515,25 +501,13 @@ func TestGeminiForwardAsChatCompletions_TransportErrorNoRuleUnchangedOutput(t *t
 
 	_, err := svc.ForwardAsChatCompletions(context.Background(), c, account, body)
 
-	var failoverErr *UpstreamFailoverError
-	require.False(t, errors.As(err, &failoverErr))
-	require.Equal(t, http.StatusBadGateway, rec.Code)
-	var payload struct {
-		Error struct {
-			Type    string `json:"type"`
-			Message string `json:"message"`
-		} `json:"error"`
-	}
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &payload))
-	require.Equal(t, "upstream_error", payload.Error.Type)
-	require.Contains(t, payload.Error.Message, "Upstream request failed after retries")
+	requireGeminiBuiltinTransportFailover(t, err, rec, httpStub)
 }
 
 // ==================== #228 task-10：客户端断连必须排除在规则匹配之外 ====================
 //
-// Forward 里 sleepGeminiBackoff 不感知 context 取消，即便客户端已经断开，重试预算
-// 耗尽前仍会真实睡满 15s——这条测试用一条本该命中的宽泛规则证明：即使耗尽后才检查
-// ctx.Err()，只要它非 nil，规则依然必须被跳过。
+// 这条测试用一条本该命中的宽泛规则证明：只要 ctx.Err() 非 nil，规则必须被跳过；
+// 是否换号交给 handler 的 failover 循环（它会先看客户端是否还在）。
 func TestGeminiForward_TransportError_ClientDisconnectedSkipsRule(t *testing.T) {
 	httpStub := geminiTransportErrTestUpstream()
 	svc := newGeminiRuleService(t, httpStub, ErrorHandlingRule{
@@ -549,8 +523,9 @@ func TestGeminiForward_TransportError_ClientDisconnectedSkipsRule(t *testing.T) 
 	_, err := svc.Forward(ctx, c, account, []byte(`{"model":"gemini-2.5-pro","messages":[{"role":"user","content":"hi"}]}`))
 
 	var failoverErr *UpstreamFailoverError
-	require.False(t, errors.As(err, &failoverErr), "客户端已断开：既不能被规则接管，也不能换号")
-	require.Equal(t, http.StatusBadGateway, rec.Code, "内置兜底路径必须仍然把响应写给客户端")
+	require.ErrorAs(t, err, &failoverErr)
+	require.Empty(t, failoverErr.ErrorRuleID, "客户端已断开：不能被规则接管")
+	require.Equal(t, 0, rec.Body.Len())
 	for _, ev := range opsUpstreamErrorEvents(t, c) {
 		require.NotEqual(t, "error_handling_rule_failover", ev.Kind, "不该出现规则接管的事件——客户端已断开必须跳过规则匹配")
 	}
