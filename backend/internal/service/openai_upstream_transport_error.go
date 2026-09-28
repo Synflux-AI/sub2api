@@ -90,10 +90,19 @@ func classifyUpstreamTransportError(err error) upstreamTransportErrorClass {
 	return upstreamTransportErrorClass{}
 }
 
+// isClientCanceledTransportError reports whether a transport-level failure was
+// caused by the client disconnecting: the request context itself is canceled
+// and the round-trip aborted with context.Canceled. Such a failure says nothing
+// about the upstream, so it is not recorded as an Ops upstream error event.
+func isClientCanceledTransportError(ctx context.Context, err error) bool {
+	return errors.Is(err, context.Canceled) && ctx != nil && errors.Is(ctx.Err(), context.Canceled)
+}
+
 // handleOpenAIUpstreamTransportError handles a transport-level upstream failure
 // (proxy/DNS/TCP/TLS or an interrupted response body). It:
 //  1. records the failure in Ops error logs (status 0, kind=request_error; there is
-//     no complete usable HTTP response);
+//     no complete usable HTTP response), except when the client disconnected
+//     (see isClientCanceledTransportError);
 //  2. for durable faults (expired/rejected proxy creds, dead proxy, DNS/routing)
 //     temporarily unschedules the account (DB + in-memory) and logs a stable
 //     warn event that alert rules can key on;
@@ -153,6 +162,9 @@ func (s *OpenAIGatewayService) handleOpenAIUpstreamTransportErrorWithURL(
 	upstreamURL string,
 	ruleEligible bool,
 ) error {
+	if isClientCanceledTransportError(ctx, err) {
+		return err
+	}
 	safeErr := sanitizeUpstreamErrorMessage(err.Error())
 	setOpsUpstreamError(c, 0, safeErr, "")
 	appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
