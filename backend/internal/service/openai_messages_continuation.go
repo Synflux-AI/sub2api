@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -160,7 +162,121 @@ func openAICompatSessionResponseKey(c *gin.Context, account *Account, promptCach
 	}, "\x00")
 }
 
-func (s *OpenAIGatewayService) getOpenAICompatSessionResponseID(_ context.Context, c *gin.Context, account *Account, promptCacheKey string) string {
+// OpenAICompatSessionStateCache is an optional GatewayCache capability that
+// shares /v1/messages→Responses compat continuation state across replicas.
+// Without it the binding lives in process memory, so a conversation that
+// alternates between replicas would resume from a stale previous_response_id
+// while its input is already trimmed to the latest turn (silent context loss).
+type OpenAICompatSessionStateCache interface {
+	GetOpenAICompatSessionState(ctx context.Context, key string) ([]byte, error)
+	SetOpenAICompatSessionState(ctx context.Context, key string, payload []byte, ttl time.Duration) error
+	DeleteOpenAICompatSessionState(ctx context.Context, key string) error
+}
+
+const openAICompatSessionStateRedisTimeout = 2 * time.Second
+
+type openAICompatSessionStatePayload struct {
+	ResponseID           string    `json:"response_id,omitempty"`
+	TurnState            string    `json:"turn_state,omitempty"`
+	ContinuationDisabled bool      `json:"continuation_disabled,omitempty"`
+	ExpiresAt            time.Time `json:"expires_at"`
+}
+
+func openAICompatSessionStateCacheKey(key string) string {
+	sum := sha256.Sum256([]byte(key))
+	return hex.EncodeToString(sum[:])
+}
+
+func (s *OpenAIGatewayService) openAICompatSessionStateCache() OpenAICompatSessionStateCache {
+	if s == nil || s.cache == nil {
+		return nil
+	}
+	cache, _ := s.cache.(OpenAICompatSessionStateCache)
+	return cache
+}
+
+func openAICompatSessionStateContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithTimeout(context.WithoutCancel(ctx), openAICompatSessionStateRedisTimeout)
+}
+
+// loadOpenAICompatSessionBinding returns the live (non-expired) binding. The
+// shared cache is the source of truth when available; the process-local map is
+// only used without it or when the shared cache errors.
+func (s *OpenAIGatewayService) loadOpenAICompatSessionBinding(ctx context.Context, key string) (openAICompatSessionResponseBinding, bool) {
+	if cache := s.openAICompatSessionStateCache(); cache != nil {
+		cacheCtx, cancel := openAICompatSessionStateContext(ctx)
+		raw, err := cache.GetOpenAICompatSessionState(cacheCtx, openAICompatSessionStateCacheKey(key))
+		cancel()
+		if err == nil {
+			if len(raw) == 0 {
+				return openAICompatSessionResponseBinding{}, false
+			}
+			var payload openAICompatSessionStatePayload
+			if jsonErr := json.Unmarshal(raw, &payload); jsonErr != nil {
+				s.deleteOpenAICompatSessionBinding(ctx, key)
+				return openAICompatSessionResponseBinding{}, false
+			}
+			binding := openAICompatSessionResponseBinding(payload)
+			if !binding.ExpiresAt.IsZero() && time.Now().After(binding.ExpiresAt) {
+				return openAICompatSessionResponseBinding{}, false
+			}
+			return binding, true
+		}
+		logOpenAIWSModeInfo("compat_session_state_read_fail cause=%s", truncateOpenAIWSLogValue(err.Error(), openAIWSLogValueMaxLen))
+	}
+	raw, ok := s.openaiCompatSessionResponses.Load(key)
+	if !ok {
+		return openAICompatSessionResponseBinding{}, false
+	}
+	binding, ok := raw.(openAICompatSessionResponseBinding)
+	if !ok {
+		s.openaiCompatSessionResponses.Delete(key)
+		return openAICompatSessionResponseBinding{}, false
+	}
+	if !binding.ExpiresAt.IsZero() && time.Now().After(binding.ExpiresAt) {
+		s.openaiCompatSessionResponses.Delete(key)
+		return openAICompatSessionResponseBinding{}, false
+	}
+	return binding, true
+}
+
+func (s *OpenAIGatewayService) storeOpenAICompatSessionBinding(ctx context.Context, key string, binding openAICompatSessionResponseBinding) {
+	if cache := s.openAICompatSessionStateCache(); cache != nil {
+		ttl := time.Until(binding.ExpiresAt)
+		if binding.ExpiresAt.IsZero() || ttl <= 0 {
+			ttl = s.openAIWSResponseStickyTTL()
+		}
+		raw, err := json.Marshal(openAICompatSessionStatePayload(binding))
+		if err == nil {
+			cacheCtx, cancel := openAICompatSessionStateContext(ctx)
+			err = cache.SetOpenAICompatSessionState(cacheCtx, openAICompatSessionStateCacheKey(key), raw, ttl)
+			cancel()
+		}
+		if err == nil {
+			s.openaiCompatSessionResponses.Delete(key)
+			return
+		}
+		logOpenAIWSModeInfo("compat_session_state_write_fail cause=%s", truncateOpenAIWSLogValue(err.Error(), openAIWSLogValueMaxLen))
+	}
+	s.openaiCompatSessionResponses.Store(key, binding)
+}
+
+func (s *OpenAIGatewayService) deleteOpenAICompatSessionBinding(ctx context.Context, key string) {
+	s.openaiCompatSessionResponses.Delete(key)
+	if cache := s.openAICompatSessionStateCache(); cache != nil {
+		cacheCtx, cancel := openAICompatSessionStateContext(ctx)
+		err := cache.DeleteOpenAICompatSessionState(cacheCtx, openAICompatSessionStateCacheKey(key))
+		cancel()
+		if err != nil {
+			logOpenAIWSModeInfo("compat_session_state_delete_fail cause=%s", truncateOpenAIWSLogValue(err.Error(), openAIWSLogValueMaxLen))
+		}
+	}
+}
+
+func (s *OpenAIGatewayService) getOpenAICompatSessionResponseID(ctx context.Context, c *gin.Context, account *Account, promptCacheKey string) string {
 	if s == nil {
 		return ""
 	}
@@ -168,30 +284,14 @@ func (s *OpenAIGatewayService) getOpenAICompatSessionResponseID(_ context.Contex
 	if key == "" {
 		return ""
 	}
-	raw, ok := s.openaiCompatSessionResponses.Load(key)
-	if !ok {
-		return ""
-	}
-	binding, ok := raw.(openAICompatSessionResponseBinding)
-	if !ok {
-		s.openaiCompatSessionResponses.Delete(key)
-		return ""
-	}
-	if !binding.ExpiresAt.IsZero() && time.Now().After(binding.ExpiresAt) {
-		s.openaiCompatSessionResponses.Delete(key)
-		return ""
-	}
-	if binding.ContinuationDisabled {
-		return ""
-	}
-	if strings.TrimSpace(binding.ResponseID) == "" {
-		s.openaiCompatSessionResponses.Delete(key)
+	binding, ok := s.loadOpenAICompatSessionBinding(ctx, key)
+	if !ok || binding.ContinuationDisabled {
 		return ""
 	}
 	return strings.TrimSpace(binding.ResponseID)
 }
 
-func (s *OpenAIGatewayService) bindOpenAICompatSessionResponseID(_ context.Context, c *gin.Context, account *Account, promptCacheKey, responseID string) {
+func (s *OpenAIGatewayService) bindOpenAICompatSessionResponseID(ctx context.Context, c *gin.Context, account *Account, promptCacheKey, responseID string) {
 	if s == nil {
 		return
 	}
@@ -204,21 +304,19 @@ func (s *OpenAIGatewayService) bindOpenAICompatSessionResponseID(_ context.Conte
 		ResponseID: id,
 		ExpiresAt:  time.Now().Add(s.openAIWSResponseStickyTTL()),
 	}
-	if raw, ok := s.openaiCompatSessionResponses.Load(key); ok {
-		if existing, ok := raw.(openAICompatSessionResponseBinding); ok {
-			if existing.ContinuationDisabled {
-				existing.ResponseID = ""
-				existing.ExpiresAt = time.Now().Add(s.openAIWSResponseStickyTTL())
-				s.openaiCompatSessionResponses.Store(key, existing)
-				return
-			}
-			binding.TurnState = existing.TurnState
+	if existing, ok := s.loadOpenAICompatSessionBinding(ctx, key); ok {
+		if existing.ContinuationDisabled {
+			existing.ResponseID = ""
+			existing.ExpiresAt = time.Now().Add(s.openAIWSResponseStickyTTL())
+			s.storeOpenAICompatSessionBinding(ctx, key, existing)
+			return
 		}
+		binding.TurnState = existing.TurnState
 	}
-	s.openaiCompatSessionResponses.Store(key, binding)
+	s.storeOpenAICompatSessionBinding(ctx, key, binding)
 }
 
-func (s *OpenAIGatewayService) deleteOpenAICompatSessionResponseID(_ context.Context, c *gin.Context, account *Account, promptCacheKey string) {
+func (s *OpenAIGatewayService) deleteOpenAICompatSessionResponseID(ctx context.Context, c *gin.Context, account *Account, promptCacheKey string) {
 	if s == nil {
 		return
 	}
@@ -226,25 +324,20 @@ func (s *OpenAIGatewayService) deleteOpenAICompatSessionResponseID(_ context.Con
 	if key == "" {
 		return
 	}
-	raw, ok := s.openaiCompatSessionResponses.Load(key)
+	binding, ok := s.loadOpenAICompatSessionBinding(ctx, key)
 	if !ok {
-		return
-	}
-	binding, ok := raw.(openAICompatSessionResponseBinding)
-	if !ok {
-		s.openaiCompatSessionResponses.Delete(key)
 		return
 	}
 	binding.ResponseID = ""
 	if strings.TrimSpace(binding.TurnState) == "" && !binding.ContinuationDisabled {
-		s.openaiCompatSessionResponses.Delete(key)
+		s.deleteOpenAICompatSessionBinding(ctx, key)
 		return
 	}
 	binding.ExpiresAt = time.Now().Add(s.openAIWSResponseStickyTTL())
-	s.openaiCompatSessionResponses.Store(key, binding)
+	s.storeOpenAICompatSessionBinding(ctx, key, binding)
 }
 
-func (s *OpenAIGatewayService) disableOpenAICompatSessionContinuation(_ context.Context, c *gin.Context, account *Account, promptCacheKey string) {
+func (s *OpenAIGatewayService) disableOpenAICompatSessionContinuation(ctx context.Context, c *gin.Context, account *Account, promptCacheKey string) {
 	if s == nil {
 		return
 	}
@@ -256,15 +349,13 @@ func (s *OpenAIGatewayService) disableOpenAICompatSessionContinuation(_ context.
 		ContinuationDisabled: true,
 		ExpiresAt:            time.Now().Add(s.openAIWSResponseStickyTTL()),
 	}
-	if raw, ok := s.openaiCompatSessionResponses.Load(key); ok {
-		if existing, ok := raw.(openAICompatSessionResponseBinding); ok {
-			binding.TurnState = existing.TurnState
-		}
+	if existing, ok := s.loadOpenAICompatSessionBinding(ctx, key); ok {
+		binding.TurnState = existing.TurnState
 	}
-	s.openaiCompatSessionResponses.Store(key, binding)
+	s.storeOpenAICompatSessionBinding(ctx, key, binding)
 }
 
-func (s *OpenAIGatewayService) isOpenAICompatSessionContinuationDisabled(_ context.Context, c *gin.Context, account *Account, promptCacheKey string) bool {
+func (s *OpenAIGatewayService) isOpenAICompatSessionContinuationDisabled(ctx context.Context, c *gin.Context, account *Account, promptCacheKey string) bool {
 	if s == nil {
 		return false
 	}
@@ -272,23 +363,11 @@ func (s *OpenAIGatewayService) isOpenAICompatSessionContinuationDisabled(_ conte
 	if key == "" {
 		return false
 	}
-	raw, ok := s.openaiCompatSessionResponses.Load(key)
-	if !ok {
-		return false
-	}
-	binding, ok := raw.(openAICompatSessionResponseBinding)
-	if !ok {
-		s.openaiCompatSessionResponses.Delete(key)
-		return false
-	}
-	if !binding.ExpiresAt.IsZero() && time.Now().After(binding.ExpiresAt) {
-		s.openaiCompatSessionResponses.Delete(key)
-		return false
-	}
-	return binding.ContinuationDisabled
+	binding, ok := s.loadOpenAICompatSessionBinding(ctx, key)
+	return ok && binding.ContinuationDisabled
 }
 
-func (s *OpenAIGatewayService) getOpenAICompatSessionTurnState(_ context.Context, c *gin.Context, account *Account, promptCacheKey string) string {
+func (s *OpenAIGatewayService) getOpenAICompatSessionTurnState(ctx context.Context, c *gin.Context, account *Account, promptCacheKey string) string {
 	if s == nil {
 		return ""
 	}
@@ -296,22 +375,14 @@ func (s *OpenAIGatewayService) getOpenAICompatSessionTurnState(_ context.Context
 	if key == "" {
 		return ""
 	}
-	raw, ok := s.openaiCompatSessionResponses.Load(key)
+	binding, ok := s.loadOpenAICompatSessionBinding(ctx, key)
 	if !ok {
-		return ""
-	}
-	binding, ok := raw.(openAICompatSessionResponseBinding)
-	if !ok || strings.TrimSpace(binding.TurnState) == "" {
-		return ""
-	}
-	if !binding.ExpiresAt.IsZero() && time.Now().After(binding.ExpiresAt) {
-		s.openaiCompatSessionResponses.Delete(key)
 		return ""
 	}
 	return strings.TrimSpace(binding.TurnState)
 }
 
-func (s *OpenAIGatewayService) bindOpenAICompatSessionTurnState(_ context.Context, c *gin.Context, account *Account, promptCacheKey, turnState string) {
+func (s *OpenAIGatewayService) bindOpenAICompatSessionTurnState(ctx context.Context, c *gin.Context, account *Account, promptCacheKey, turnState string) {
 	if s == nil {
 		return
 	}
@@ -324,11 +395,9 @@ func (s *OpenAIGatewayService) bindOpenAICompatSessionTurnState(_ context.Contex
 		TurnState: state,
 		ExpiresAt: time.Now().Add(s.openAIWSResponseStickyTTL()),
 	}
-	if raw, ok := s.openaiCompatSessionResponses.Load(key); ok {
-		if existing, ok := raw.(openAICompatSessionResponseBinding); ok {
-			binding.ResponseID = existing.ResponseID
-			binding.ContinuationDisabled = existing.ContinuationDisabled
-		}
+	if existing, ok := s.loadOpenAICompatSessionBinding(ctx, key); ok {
+		binding.ResponseID = existing.ResponseID
+		binding.ContinuationDisabled = existing.ContinuationDisabled
 	}
-	s.openaiCompatSessionResponses.Store(key, binding)
+	s.storeOpenAICompatSessionBinding(ctx, key, binding)
 }

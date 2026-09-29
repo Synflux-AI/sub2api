@@ -487,3 +487,50 @@ func (c *gatewayCache) MarkLiveCallClosed(ctx context.Context, callHash string, 
 	result, err := markLiveCallClosedScript.Run(ctx, c.rdb, []string{liveCallKey(callHash)}, int64(ttl.Seconds())).Int()
 	return result == 1, err
 }
+
+const openAICompatSessionStatePrefix = "openai:compat_session:"
+
+var _ service.OpenAICompatSessionStateCache = (*gatewayCache)(nil)
+
+func (c *gatewayCache) GetOpenAICompatSessionState(ctx context.Context, key string) ([]byte, error) {
+	if c == nil || c.rdb == nil {
+		return nil, errors.New("gateway cache unavailable")
+	}
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return nil, errors.New("invalid openai compat session state key")
+	}
+	val, err := c.rdb.Get(ctx, openAICompatSessionStatePrefix+key).Bytes()
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return val, nil
+}
+
+func (c *gatewayCache) SetOpenAICompatSessionState(ctx context.Context, key string, payload []byte, ttl time.Duration) error {
+	if c == nil || c.rdb == nil {
+		return errors.New("gateway cache unavailable")
+	}
+	key = strings.TrimSpace(key)
+	if key == "" || len(payload) == 0 {
+		return errors.New("invalid openai compat session state payload")
+	}
+	if ttl <= 0 {
+		ttl = time.Hour
+	}
+	return c.rdb.Set(ctx, openAICompatSessionStatePrefix+key, payload, ttl).Err()
+}
+
+func (c *gatewayCache) DeleteOpenAICompatSessionState(ctx context.Context, key string) error {
+	if c == nil || c.rdb == nil {
+		return errors.New("gateway cache unavailable")
+	}
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return nil
+	}
+	return c.rdb.Del(ctx, openAICompatSessionStatePrefix+key).Err()
+}
