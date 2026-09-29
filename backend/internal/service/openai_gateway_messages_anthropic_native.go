@@ -260,6 +260,7 @@ func (s *OpenAIGatewayService) handleNativeAnthropicBufferedResponse(
 	}
 
 	usage := parseClaudeUsageFromResponseBody(body, account.IsUpstreamUsageOpenAISemantic())
+	body = declareNativeAnthropicUsageSemantic(body, "usage", usage)
 	if IsForceCacheBilling(ctx) && usage.InputTokens > 0 {
 		body, err = classifyAnthropicResponseInputAsCacheRead(body, usage)
 		if err != nil {
@@ -468,6 +469,7 @@ func (s *OpenAIGatewayService) handleNativeAnthropicStreamingResponse(
 					firstTokenMs = &ms
 				}
 				parseSSEUsagePassthrough(data, usage, forceOpenAISemanticUsage)
+				line = declareNativeAnthropicSSEUsageSemantic(line, data, usage)
 			} else {
 				trimmed := strings.TrimSpace(line)
 				if strings.HasPrefix(trimmed, "event:") && anthropicStreamEventIsTerminal(strings.TrimSpace(strings.TrimPrefix(trimmed, "event:")), "") {
@@ -565,6 +567,52 @@ func (s *OpenAIGatewayService) nativeAnthropicStreamResult(
 		FirstTokenMs:     firstTokenMs,
 		ClientDisconnect: clientDisconnect,
 	}
+}
+
+// declareNativeAnthropicUsageSemantic 在转发给下游的 usage 对象里写入本实例已还原的
+// 口径声明：billing_usage.semantic=openai，openai_usage.prompt_tokens=累计的
+// 净输入+缓存读取+缓存写入。
+//
+// 多级中转时下游看不到背后是哪个渠道，只能靠账号开关猜 input_tokens 是总量还是
+// 净输入；上游是混合口径的资源池时一个开关必然猜错（#265）。声明优先于下游的
+// 账号开关（见 openAISemanticUsageNode），下游按「总量 − 缓存」还原即与本实例
+// 记账一致。外层 input_tokens 保持上游原值。总量为 0 时不声明：下游只认 >0 的声明。
+func declareNativeAnthropicUsageSemantic(data []byte, usagePath string, usage *ClaudeUsage) []byte {
+	if usage == nil || !gjson.GetBytes(data, usagePath).IsObject() {
+		return data
+	}
+	promptTokens := usage.InputTokens + usage.CacheReadInputTokens + usage.CacheCreationInputTokens
+	if promptTokens <= 0 {
+		return data
+	}
+	declared, err := sjson.SetBytes(data, usagePath+".billing_usage.semantic", "openai")
+	if err != nil {
+		return data
+	}
+	declared, err = sjson.SetBytes(declared, usagePath+".billing_usage.openai_usage.prompt_tokens", promptTokens)
+	if err != nil {
+		return data
+	}
+	return declared
+}
+
+// declareNativeAnthropicSSEUsageSemantic 对带 usage 的 message_start / message_delta
+// data 行写入口径声明，其它行原样返回。usage 须已合并本行（累计值）。
+func declareNativeAnthropicSSEUsageSemantic(line, data string, usage *ClaudeUsage) string {
+	var usagePath string
+	switch gjson.Get(data, "type").String() {
+	case "message_start":
+		usagePath = "message.usage"
+	case "message_delta":
+		usagePath = "usage"
+	default:
+		return line
+	}
+	declared := declareNativeAnthropicUsageSemantic([]byte(data), usagePath, usage)
+	if string(declared) == data {
+		return line
+	}
+	return "data: " + string(declared)
 }
 
 // claudeUsageToOpenAIUsage 把 Anthropic 格式 usage 映射到 OpenAI 网关统一的
