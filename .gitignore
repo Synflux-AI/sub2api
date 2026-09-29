@@ -143,6 +143,7 @@ docs/*
 !docs/USER_ACCESS_TOKEN_BALANCE_API.md
 !docs/USER_ACCESS_TOKEN_BALANCE_API_CN.md
 !docs/background-jobs-multi-replica.md
+!docs/multi-replica-request-state.md
 !docs/channel-monitor-v2-safe-defaults.md
 !docs/codex-credits.md
 !docs/legal/
