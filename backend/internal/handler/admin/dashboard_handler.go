@@ -574,7 +574,11 @@ func (h *DashboardHandler) GetUserUsageTrend(c *gin.Context) {
 	if err != nil || limit <= 0 {
 		limit = 12
 	}
-	sortBy := strings.TrimSpace(c.DefaultQuery("sort_by", "total_tokens"))
+	sortBy := strings.TrimSpace(c.Query("sort_by"))
+	// 上游仪表盘用 metric=tokens|actual_cost 切换；sort_by 缺省时兼容映射过来。
+	if sortBy == "" && strings.TrimSpace(c.Query("metric")) == "actual_cost" {
+		sortBy = "actual_cost"
+	}
 	if sortBy != "actual_cost" && sortBy != "requests" && sortBy != "total_tokens" {
 		sortBy = "total_tokens"
 	}

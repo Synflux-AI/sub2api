@@ -267,6 +267,25 @@ func TestDashboardHandler_GetUserUsageTrend_CachesSortSeparately(t *testing.T) {
 	require.Equal(t, []string{"actual_cost", "total_tokens"}, repo.usersTrendSorts)
 }
 
+func TestDashboardHandler_GetUserUsageTrend_MapsUpstreamMetricToSort(t *testing.T) {
+	t.Cleanup(resetDashboardReadCachesForTest)
+	resetDashboardReadCachesForTest()
+
+	gin.SetMode(gin.TestMode)
+	repo := &dashboardUsageRepoCacheProbe{}
+	handler := NewDashboardHandler(service.NewDashboardService(repo, nil, nil, nil), nil)
+	router := gin.New()
+	router.GET("/admin/dashboard/users-trend", handler.GetUserUsageTrend)
+
+	for _, query := range []string{"metric=actual_cost", "metric=tokens", "metric=actual_cost&sort_by=requests"} {
+		req := httptest.NewRequest(http.MethodGet, "/admin/dashboard/users-trend?start_date=2026-03-01&end_date=2026-03-07&"+query, nil)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		require.Equal(t, http.StatusOK, rec.Code)
+	}
+	require.Equal(t, []string{"actual_cost", "total_tokens", "requests"}, repo.usersTrendSorts)
+}
+
 func TestDashboardHandler_GetUserUsageTrend_AppliesFiltersAndNormalizesCacheKey(t *testing.T) {
 	t.Cleanup(resetDashboardReadCachesForTest)
 	resetDashboardReadCachesForTest()
