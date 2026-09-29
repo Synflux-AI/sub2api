@@ -13,7 +13,8 @@ import (
 func TestGatewayCacheOpenAICompatSessionState(t *testing.T) {
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	cache := NewGatewayCache(client).(*gatewayCache)
+	cache, ok := NewGatewayCache(client).(*gatewayCache)
+	require.True(t, ok)
 	ctx := context.Background()
 
 	got, err := cache.GetOpenAICompatSessionState(ctx, "k1")
