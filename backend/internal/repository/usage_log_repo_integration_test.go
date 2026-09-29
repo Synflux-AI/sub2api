@@ -1686,6 +1686,42 @@ func (s *UsageLogRepoSuite) TestGetUserUsageTrend_AggregatesOthers() {
 	s.Equal(1.0, others.ActualCost)
 }
 
+func (s *UsageLogRepoSuite) TestGetUserUsageTrend_SelectsTopByMetric() {
+	highTokens := mustCreateUser(s.T(), s.client, &service.User{Email: "tokens@test.com"})
+	highSpend := mustCreateUser(s.T(), s.client, &service.User{Email: "spend@test.com"})
+	tokenKey := mustCreateApiKey(s.T(), s.client, &service.APIKey{UserID: highTokens.ID, Key: "sk-trend-tokens", Name: "tokens"})
+	spendKey := mustCreateApiKey(s.T(), s.client, &service.APIKey{UserID: highSpend.ID, Key: "sk-trend-spend", Name: "spend"})
+	account := mustCreateAccount(s.T(), s.client, &service.Account{Name: "acc-trend-metric"})
+	at := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
+	s.createUsageLog(highTokens, tokenKey, account, 1000, 0, 0.1, at)
+	s.createUsageLog(highSpend, spendKey, account, 10, 0, 5, at)
+	start, end := at.Add(-time.Hour), at.Add(time.Hour)
+	// 本仓在 Top N 之外汇总一个 __others__ 桶，所以每次都是 Top 1 + 其他；行序不保证。
+	split := func(points []UserUsageTrendPoint) (top, others UserUsageTrendPoint) {
+		s.Require().Len(points, 2)
+		for _, p := range points {
+			if p.Key == "__others__" {
+				others = p
+			} else {
+				top = p
+			}
+		}
+		s.Require().Equal("__others__", others.Key)
+		return top, others
+	}
+	tokens, err := s.repo.GetUserUsageTrend(s.ctx, start, end, "day", 1, "total_tokens")
+	s.Require().NoError(err)
+	top, others := split(tokens)
+	s.Require().Equal(highTokens.ID, top.UserID)
+	s.Require().Equal(5.0, others.ActualCost)
+	spend, err := s.repo.GetUserUsageTrend(s.ctx, start, end, "day", 1, "actual_cost")
+	s.Require().NoError(err)
+	top, others = split(spend)
+	s.Require().Equal(highSpend.ID, top.UserID)
+	s.Require().Equal(5.0, top.ActualCost)
+	s.Require().Equal(int64(1000), others.Tokens)
+}
+
 // --- GetAPIKeyUsageTrend ---
 
 func (s *UsageLogRepoSuite) TestGetAPIKeyUsageTrend() {

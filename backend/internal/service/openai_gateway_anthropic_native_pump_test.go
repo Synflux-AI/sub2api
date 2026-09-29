@@ -140,7 +140,7 @@ func TestCCStreamingFromNativeAnthropic_HangTimesOut(t *testing.T) {
 
 	resp, pr, pw := newHangingUpstreamResponse()
 	start := time.Now()
-	res, err := svc.handleCCStreamingFromNativeAnthropic(resp, c, "glm-4.7", "glm-4.7", "glm-4.7", nil, start, true, false)
+	res, err := svc.handleCCStreamingFromNativeAnthropic(resp, c, "glm-4.7", "glm-4.7", "glm-4.7", nil, start, false)
 	_ = pw.Close()
 	_ = pr.Close()
 
@@ -220,7 +220,7 @@ func TestCCStreamingFromNativeAnthropic_HappyPathStillConverts(t *testing.T) {
 	}()
 	defer func() { _ = pr.Close() }()
 
-	res, err := svc.handleCCStreamingFromNativeAnthropic(resp, c, "glm-4.7", "glm-4.7", "glm-4.7", nil, time.Now(), true, false)
+	res, err := svc.handleCCStreamingFromNativeAnthropic(resp, c, "glm-4.7", "glm-4.7", "glm-4.7", nil, time.Now(), false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
