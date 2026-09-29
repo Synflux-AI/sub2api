@@ -21,8 +21,8 @@ import (
 //   - 观测与扣分是两个开关。TTFTMonitorEnabled 只写快照供面板展示（无调度风险），
 //     TTFTDegradeEnabled 才真正扣分。两者均默认关闭，按阶段显式开启。
 //   - 运行骨架对标 AccountErrorRateMonitorService：ticker + 分布式 leader lock +
-//     job heartbeat。leader lock 保证多实例下只有一个实例扣分，
-//     否则同一账号会被扣 N 倍（健康分是共享的 Redis 状态）。
+//     job heartbeat。leader lock 持有到周期末尾（见 releaseLeaderLockAfter），保证多实例下
+//     每个周期只有一个实例扣分，否则同一账号会被扣 N 倍（健康分是共享的 Redis 状态）。
 const (
 	accountTTFTMonitorJobName = "account_ttft_monitor"
 
@@ -270,6 +270,14 @@ func (s *AccountTTFTMonitorService) tryAcquireLeaderLock(ctx context.Context) (f
 		ttl = accountTTFTMonitorLeaderLockTTL
 	}
 
+	// 锁持有到周期末尾而不是本轮结束：否则 N 个副本相位错开的计时器会在同一周期内
+	// 依次拿到锁，每周期扣分 N 次。
+	hold := cycleLeaderLockHold(s.interval())
+	if ttl < hold {
+		ttl = hold
+	}
+
+	acquiredAt := time.Now()
 	ok, err := s.lockCache.TryAcquireLeaderLock(ctx, key, s.instanceID, ttl)
 	if err != nil {
 		s.warnNoLockOnce.Do(func() {
@@ -281,11 +289,12 @@ func (s *AccountTTFTMonitorService) tryAcquireLeaderLock(ctx context.Context) (f
 		s.maybeLogSkip(key)
 		return nil, false
 	}
-	return func() {
+	release := func() {
 		releaseCtx, releaseCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer releaseCancel()
 		_ = s.lockCache.ReleaseLeaderLock(releaseCtx, key, s.instanceID)
-	}, true
+	}
+	return func() { releaseLeaderLockAfter(release, acquiredAt.Add(hold)) }, true
 }
 
 func (s *AccountTTFTMonitorService) maybeLogSkip(key string) {

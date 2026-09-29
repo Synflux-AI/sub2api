@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"log"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/google/uuid"
 )
 
 // cnQuotaProber 抽象额度探测（*CNProviderQuotaService 实现，测试可替换）。
@@ -18,6 +20,12 @@ type cnQuotaProber interface {
 
 // cnQuotaProbeConcurrency 周期任务并发探测额度账号的并发度。
 const cnQuotaProbeConcurrency = 4
+
+const (
+	cnProviderBalanceCheckLeaderLockKey = "cn_provider:balance_check:leader"
+	// cnProviderBalanceCheckMaxRunTime 单轮最坏耗时：列表查询 + 最长 300s 的探测预算。
+	cnProviderBalanceCheckMaxRunTime = 6 * time.Minute
+)
 
 // CNProviderBalanceCheckService 周期性探测国产供应商账号：
 //   - payg（按量付费）：余额低于阈值则临时停调，恢复则清除（仅清除本服务写入的停调）；
@@ -36,6 +44,10 @@ type CNProviderBalanceCheckService struct {
 	stopCh         chan struct{}
 	stopOnce       sync.Once
 	wg             sync.WaitGroup
+
+	lockCache  LeaderLockCache
+	db         *sql.DB
+	instanceID string
 }
 
 // NewCNProviderBalanceCheckService 构造周期余额/额度检测服务。
@@ -54,7 +66,19 @@ func NewCNProviderBalanceCheckService(
 		cfg:            cfg,
 		interval:       interval,
 		stopCh:         make(chan struct{}),
+		instanceID:     uuid.NewString(),
 	}
+}
+
+// SetLeaderLock 注入跨副本 leader lock，保证每周期全局只探测一次：否则探测请求 ×N，
+// 且各副本按不同时刻的余额结果暂停/恢复账号会互相抖动。
+// 均为 nil 时不设闸门（单实例 / 测试行为）。必须在 Start 之前调用。
+func (s *CNProviderBalanceCheckService) SetLeaderLock(lockCache LeaderLockCache, db *sql.DB) {
+	if s == nil {
+		return
+	}
+	s.lockCache = lockCache
+	s.db = db
 }
 
 func (s *CNProviderBalanceCheckService) Start() {
@@ -78,7 +102,7 @@ func (s *CNProviderBalanceCheckService) Start() {
 		for {
 			select {
 			case <-ticker.C:
-				s.runOnce()
+				s.runOnceWithLeaderLock()
 			case <-s.stopCh:
 				return
 			}
@@ -94,6 +118,18 @@ func (s *CNProviderBalanceCheckService) Stop() {
 		close(s.stopCh)
 	})
 	s.wg.Wait()
+}
+
+// runOnceWithLeaderLock 抢本周期的 leader lock，抢不到即跳过本轮。
+func (s *CNProviderBalanceCheckService) runOnceWithLeaderLock() {
+	release, ok := tryAcquireCycleLeaderLock(context.Background(), s.lockCache, s.db,
+		cnProviderBalanceCheckLeaderLockKey, s.instanceID,
+		cycleLeaderLockHold(s.interval), cnProviderBalanceCheckMaxRunTime)
+	if !ok {
+		return
+	}
+	defer release()
+	s.runOnce()
 }
 
 func (s *CNProviderBalanceCheckService) runOnce() {

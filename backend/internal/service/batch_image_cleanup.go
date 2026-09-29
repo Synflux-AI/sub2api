@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"strings"
 	"sync"
@@ -10,6 +11,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
 
@@ -18,6 +20,8 @@ const (
 	defaultBatchImageOutputRetentionAfterTerminal = 72 * time.Hour
 	defaultBatchImageCleanupInterval              = 30 * time.Minute
 	defaultBatchImageCleanupBatchSize             = 100
+
+	batchImageCleanupLeaderLockKey = "batch_image:cleanup:leader"
 )
 
 type BatchImageCleanupService struct {
@@ -29,6 +33,10 @@ type BatchImageCleanupService struct {
 	cancel context.CancelFunc
 	done   chan struct{}
 	mu     sync.Mutex
+
+	lockCache  LeaderLockCache
+	db         *sql.DB
+	instanceID string
 }
 
 func NewBatchImageCleanupService(repo BatchImageRepository, accountRepo AccountRepository, cfg *config.Config) *BatchImageCleanupService {
@@ -37,6 +45,35 @@ func NewBatchImageCleanupService(repo BatchImageRepository, accountRepo AccountR
 		ProviderRegistry: NewBatchImageProviderRegistryFromConfig(cfg),
 		AccountResolver:  &BatchImageAccountRepositoryResolver{Repo: accountRepo},
 		Config:           cfg,
+		instanceID:       uuid.NewString(),
+	}
+}
+
+// SetLeaderLock 注入跨副本 leader lock，保证周期清理全局每周期只由一个副本执行。
+// 列表查询不认领 job，多副本同时跑会重复删除上游对象、重复写审计事件并重复累加
+// retry_count。均为 nil 时不设闸门（单实例 / 测试行为）。必须在 Start 之前调用。
+func (s *BatchImageCleanupService) SetLeaderLock(lockCache LeaderLockCache, db *sql.DB) {
+	if s == nil {
+		return
+	}
+	s.lockCache = lockCache
+	s.db = db
+}
+
+// runScheduledOnce 是周期清理的单轮入口：先抢本周期的 leader lock，抢不到即跳过。
+// 单轮以锁 TTL 为超时上限，避免锁过期后与接管的副本重叠。
+func (s *BatchImageCleanupService) runScheduledOnce(ctx context.Context) {
+	interval := s.cleanupInterval()
+	ttl := 2 * interval
+	release, ok := tryAcquireCycleLeaderLock(ctx, s.lockCache, s.db, batchImageCleanupLeaderLockKey, s.instanceID, cycleLeaderLockHold(interval), ttl)
+	if !ok {
+		return
+	}
+	defer release()
+	runCtx, cancel := context.WithTimeout(ctx, ttl)
+	defer cancel()
+	if _, err := s.RunOnce(runCtx, time.Now()); err != nil {
+		logger.L().Warn("batch_image.cleanup_run_failed", zap.Error(err))
 	}
 }
 
@@ -151,7 +188,7 @@ func (s *BatchImageCleanupService) Start() {
 		ticker := time.NewTicker(s.cleanupInterval())
 		defer ticker.Stop()
 		for {
-			_, _ = s.RunOnce(ctx, time.Now())
+			s.runScheduledOnce(ctx)
 			select {
 			case <-ctx.Done():
 				return

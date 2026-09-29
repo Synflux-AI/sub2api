@@ -180,7 +180,7 @@ func (c *OpsMetricsCollector) collectOnce() {
 		return
 	}
 
-	release, ok := c.tryAcquireLeaderLock(ctx)
+	release, ok := c.tryAcquireLeaderLock(ctx, c.getInterval())
 	if !ok {
 		return
 	}
@@ -884,15 +884,24 @@ end
 return 0
 `)
 
-func (c *OpsMetricsCollector) tryAcquireLeaderLock(ctx context.Context) (func(), bool) {
+// tryAcquireLeaderLock 抢本周期的采集锁。Redis 路径下锁持有到周期末尾（见
+// releaseLeaderLockAfter），否则 N 个副本每周期各写一行、面板 LIMIT 1 读到随机副本的
+// CPU/内存；DB advisory 回退路径仍按本轮结束释放，避免长期占用连接。
+func (c *OpsMetricsCollector) tryAcquireLeaderLock(ctx context.Context, interval time.Duration) (func(), bool) {
 	if c == nil || c.redisClient == nil {
 		return nil, true
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	hold := cycleLeaderLockHold(interval)
+	ttl := opsMetricsCollectorLeaderLockTTL
+	if ttl < hold {
+		ttl = hold
+	}
 
-	ok, err := c.redisClient.SetNX(ctx, opsMetricsCollectorLeaderLockKey, c.instanceID, opsMetricsCollectorLeaderLockTTL).Result()
+	acquiredAt := time.Now()
+	ok, err := c.redisClient.SetNX(ctx, opsMetricsCollectorLeaderLockKey, c.instanceID, ttl).Result()
 	if err != nil {
 		// Prefer fail-closed to avoid stampeding the database when Redis is flaky.
 		// Fallback to a DB advisory lock when Redis is present but unavailable.
@@ -913,7 +922,7 @@ func (c *OpsMetricsCollector) tryAcquireLeaderLock(ctx context.Context) (func(),
 		defer cancel()
 		_, _ = opsMetricsCollectorReleaseScript.Run(ctx, c.redisClient, []string{opsMetricsCollectorLeaderLockKey}, c.instanceID).Result()
 	}
-	return release, true
+	return func() { releaseLeaderLockAfter(release, acquiredAt.Add(hold)) }, true
 }
 
 func (c *OpsMetricsCollector) maybeLogSkip() {

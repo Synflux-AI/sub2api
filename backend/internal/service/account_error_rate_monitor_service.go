@@ -194,7 +194,7 @@ func (s *AccountErrorRateMonitorService) evaluateOnce(interval time.Duration) {
 	if loaded, lerr := s.opsService.GetOpsAlertRuntimeSettings(ctx); lerr == nil && loaded != nil {
 		lock = loaded.DistributedLock
 	}
-	release, ok := s.tryAcquireLeaderLock(ctx, lock)
+	release, ok := s.tryAcquireLeaderLock(ctx, lock, interval)
 	if !ok {
 		return
 	}
@@ -532,7 +532,9 @@ func (s *AccountErrorRateMonitorService) resetAll() {
 
 // ---------- leader lock / heartbeat(对标 OpsAlertEvaluatorService) ----------
 
-func (s *AccountErrorRateMonitorService) tryAcquireLeaderLock(ctx context.Context, lock OpsDistributedLockSettings) (func(), bool) {
+// tryAcquireLeaderLock 抢本周期的 leader lock。锁持有到周期末尾（见 releaseLeaderLockAfter）：
+// 若每轮结束即释放，N 个副本会在同一周期内依次执行，同一次破阈值的告警 ×N、剥离截止被顺延。
+func (s *AccountErrorRateMonitorService) tryAcquireLeaderLock(ctx context.Context, lock OpsDistributedLockSettings, interval time.Duration) (func(), bool) {
 	if !lock.Enabled {
 		return nil, true
 	}
@@ -547,7 +549,12 @@ func (s *AccountErrorRateMonitorService) tryAcquireLeaderLock(ctx context.Contex
 	if ttl <= 0 {
 		ttl = accountErrorRateMonitorLeaderLockTTL
 	}
+	hold := cycleLeaderLockHold(interval)
+	if ttl < hold {
+		ttl = hold
+	}
 
+	acquiredAt := time.Now()
 	ok, err := s.redisClient.SetNX(ctx, key, s.instanceID, ttl).Result()
 	if err != nil {
 		s.warnNoRedisOnce.Do(func() {
@@ -559,11 +566,12 @@ func (s *AccountErrorRateMonitorService) tryAcquireLeaderLock(ctx context.Contex
 		s.maybeLogSkip(key)
 		return nil, false
 	}
-	return func() {
+	release := func() {
 		releaseCtx, releaseCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer releaseCancel()
 		_, _ = accountErrorRateMonitorReleaseScript.Run(releaseCtx, s.redisClient, []string{key}, s.instanceID).Result()
-	}, true
+	}
+	return func() { releaseLeaderLockAfter(release, acquiredAt.Add(hold)) }, true
 }
 
 func (s *AccountErrorRateMonitorService) maybeLogSkip(key string) {

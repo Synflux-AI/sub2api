@@ -2,15 +2,25 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"sync"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/google/uuid"
 	"github.com/robfig/cron/v3"
 )
 
-const scheduledTestDefaultMaxWorkers = 10
+const (
+	scheduledTestDefaultMaxWorkers = 10
+
+	scheduledTestTickInterval  = time.Minute
+	scheduledTestRunTimeout    = 5 * time.Minute
+	scheduledTestLeaderLockKey = "scheduled_test:runner:leader"
+	scheduledTestLeaderLockTTL = scheduledTestRunTimeout + time.Minute
+	scheduledTestStartupSpread = 10 * time.Second
+)
 
 // ScheduledTestRunnerService periodically scans due test plans and executes them.
 type ScheduledTestRunnerService struct {
@@ -23,6 +33,12 @@ type ScheduledTestRunnerService struct {
 	cron      *cron.Cron
 	startOnce sync.Once
 	stopOnce  sync.Once
+
+	lockCache  LeaderLockCache
+	db         *sql.DB
+	instanceID string
+	// startupSpread 每次 tick 后延迟执行的时长（测试可置 0）。
+	startupSpread time.Duration
 }
 
 // NewScheduledTestRunnerService creates a new runner.
@@ -39,7 +55,21 @@ func NewScheduledTestRunnerService(
 		accountTestSvc: accountTestSvc,
 		rateLimitSvc:   rateLimitSvc,
 		cfg:            cfg,
+		instanceID:     uuid.NewString(),
+		startupSpread:  scheduledTestStartupSpread,
 	}
+}
+
+// SetLeaderLock 注入跨副本 leader lock。ListDue 不认领计划，多副本同时扫描会让同一
+// 计划被执行 N 次（真实上游请求、结果行、auto-recover 全 ×N）。锁同时防止单副本内
+// 上一轮尚未跑完、下一分钟的 tick 又扫到同一批计划。
+// 均为 nil 时不设闸门（单实例 / 测试行为）。必须在 Start 之前调用。
+func (s *ScheduledTestRunnerService) SetLeaderLock(lockCache LeaderLockCache, db *sql.DB) {
+	if s == nil {
+		return
+	}
+	s.lockCache = lockCache
+	s.db = db
 }
 
 // Start begins the cron ticker (every minute).
@@ -86,9 +116,22 @@ func (s *ScheduledTestRunnerService) Stop() {
 
 func (s *ScheduledTestRunnerService) runScheduled() {
 	// Delay 10s so execution lands at ~:10 of each minute instead of :00.
-	time.Sleep(10 * time.Second)
+	time.Sleep(s.startupSpread)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	release, ok := tryAcquireCycleLeaderLock(context.Background(), s.lockCache, s.db,
+		scheduledTestLeaderLockKey, s.instanceID,
+		cycleLeaderLockHold(scheduledTestTickInterval), scheduledTestLeaderLockTTL)
+	if !ok {
+		return
+	}
+	defer release()
+
+	s.runDue()
+}
+
+// runDue 扫描并执行到期计划（调用方负责 leader lock）。
+func (s *ScheduledTestRunnerService) runDue() {
+	ctx, cancel := context.WithTimeout(context.Background(), scheduledTestRunTimeout)
 	defer cancel()
 
 	now := time.Now()

@@ -14,10 +14,21 @@ import (
 type fakeLeaderLockCache struct {
 	mu         sync.Mutex
 	owners     map[string]string
+	expiresAt  map[string]time.Time
+	lastTTL    map[string]time.Duration
 	acquireErr error
+	// now 可注入时钟以模拟 TTL 到期；为 nil 时用 time.Now。
+	now func() time.Time
 }
 
-func (f *fakeLeaderLockCache) TryAcquireLeaderLock(_ context.Context, key, owner string, _ time.Duration) (bool, error) {
+func (f *fakeLeaderLockCache) clock() time.Time {
+	if f.now != nil {
+		return f.now()
+	}
+	return time.Now()
+}
+
+func (f *fakeLeaderLockCache) TryAcquireLeaderLock(_ context.Context, key, owner string, ttl time.Duration) (bool, error) {
 	if f.acquireErr != nil {
 		return false, f.acquireErr
 	}
@@ -25,11 +36,21 @@ func (f *fakeLeaderLockCache) TryAcquireLeaderLock(_ context.Context, key, owner
 	defer f.mu.Unlock()
 	if f.owners == nil {
 		f.owners = map[string]string{}
+		f.expiresAt = map[string]time.Time{}
+		f.lastTTL = map[string]time.Duration{}
 	}
 	if _, held := f.owners[key]; held {
-		return false, nil
+		if exp, ok := f.expiresAt[key]; !ok || f.clock().Before(exp) {
+			return false, nil
+		}
 	}
 	f.owners[key] = owner
+	f.lastTTL[key] = ttl
+	if ttl > 0 {
+		f.expiresAt[key] = f.clock().Add(ttl)
+	} else {
+		delete(f.expiresAt, key)
+	}
 	return true, nil
 }
 
@@ -38,6 +59,7 @@ func (f *fakeLeaderLockCache) ReleaseLeaderLock(_ context.Context, key, owner st
 	defer f.mu.Unlock()
 	if f.owners[key] == owner {
 		delete(f.owners, key)
+		delete(f.expiresAt, key)
 	}
 	return nil
 }

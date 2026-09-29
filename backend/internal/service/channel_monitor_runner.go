@@ -2,13 +2,24 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"fmt"
 	"log/slog"
 	"math/rand/v2"
 	"sync"
 	"time"
 
 	"github.com/alitto/pond/v2"
+	"github.com/google/uuid"
+)
+
+const (
+	// channelMonitorLeaderLockKeyPrefix 按 monitor 粒度的跨副本 leader lock 前缀。
+	channelMonitorLeaderLockKeyPrefix = "channel_monitor:v1:"
+	// channelMonitorReconcileInterval 从 DB 对账任务表的周期。多副本下 CRUD 钩子只会
+	// 通知处理该请求的那个副本，其余副本靠对账感知新建/修改/删除的 monitor。
+	channelMonitorReconcileInterval = 60 * time.Second
 )
 
 // MonitorScheduler 调度器接口，供 ChannelMonitorService 在 CRUD 时回调，
@@ -41,6 +52,9 @@ type monitorRunnerSvc interface {
 //     即时重建/取消对应任务（无需轮询 DB）
 //   - 实际 HTTP 检测交给 pond 池（容量 monitorWorkerConcurrency），
 //     防止突发并发拖垮上游
+//   - 多副本：每次检测前按 monitor 抢跨副本 leader lock 并持有到本周期末尾，
+//     保证同一 monitor 每个周期全局只探测一次；另有周期对账从 DB 同步任务表，
+//     让未处理 CRUD 请求的副本也能感知 monitor 的新建/修改/删除
 //
 // 历史清理与日聚合维护由 OpsCleanupService 的 cron 触发
 // ChannelMonitorService.RunDailyMaintenance（复用 leader lock + heartbeat），
@@ -63,6 +77,10 @@ type ChannelMonitorRunner struct {
 	// 防止单次检测耗时 > interval 时同一 monitor 被并发执行。
 	inFlight   map[int64]struct{}
 	inFlightMu sync.Mutex
+
+	lockCache  LeaderLockCache
+	db         *sql.DB
+	instanceID string
 }
 
 // scheduledMonitor 单个监控的运行时上下文。
@@ -72,6 +90,16 @@ type scheduledMonitor struct {
 	interval time.Duration
 	jitter   time.Duration // 每轮 ± [0, jitter] 的均匀随机偏移；0 = 固定间隔
 	cancel   context.CancelFunc
+}
+
+// minDelay 是两次触发之间的最短间隔（interval - jitter，且不低于全局下限）。
+// 跨副本 leader lock 的持有时长据此计算，保证本副本下一次触发一定能重新拿到锁。
+func (t *scheduledMonitor) minDelay() time.Duration {
+	d := t.interval - t.jitter
+	if floor := monitorMinIntervalSeconds * time.Second; d < floor {
+		d = floor
+	}
+	return d
 }
 
 // nextDelay 计算下一次触发的等待时长：interval ± [0, jitter] 的均匀随机偏移。
@@ -109,7 +137,18 @@ func newChannelMonitorRunner(svc monitorRunnerSvc, settingService *SettingServic
 		parentCancel:   cancel,
 		tasks:          make(map[int64]*scheduledMonitor),
 		inFlight:       make(map[int64]struct{}),
+		instanceID:     uuid.NewString(),
 	}
+}
+
+// SetLeaderLock 注入跨副本 leader lock。均为 nil 时不设闸门（单实例 / 测试行为）。
+// 必须在 Start 之前调用。
+func (r *ChannelMonitorRunner) SetLeaderLock(lockCache LeaderLockCache, db *sql.DB) {
+	if r == nil {
+		return
+	}
+	r.lockCache = lockCache
+	r.db = db
 }
 
 // Start 加载所有 enabled monitor 并为每个建立独立定时任务。
@@ -136,7 +175,83 @@ func (r *ChannelMonitorRunner) Start() {
 	for _, m := range enabled {
 		r.Schedule(m)
 	}
+
+	r.mu.Lock()
+	if !r.stopped {
+		r.wg.Add(1)
+		go r.runReconcile(channelMonitorReconcileInterval)
+	}
+	r.mu.Unlock()
 	slog.Info("channel_monitor: runner started", "scheduled_tasks", len(enabled))
+}
+
+// runReconcile 周期性从 DB 对账任务表，直到 runner 停止。
+func (r *ChannelMonitorRunner) runReconcile(interval time.Duration) {
+	defer r.wg.Done()
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-r.parentCtx.Done():
+			return
+		case <-ticker.C:
+			r.reconcile()
+		}
+	}
+}
+
+// reconcile 让本地任务表与 DB 中 enabled monitor 一致：
+// 新增或间隔/抖动变化的重建任务，DB 中已不存在（删除/停用）的取消任务。
+// 加载失败时保持现状，不做任何取消。
+func (r *ChannelMonitorRunner) reconcile() {
+	ctx, cancel := context.WithTimeout(r.parentCtx, monitorStartupLoadTimeout)
+	defer cancel()
+	enabled, err := r.svc.ListEnabledMonitors(ctx)
+	if err != nil {
+		slog.Warn("channel_monitor: reconcile load enabled monitors failed", "error", err)
+		return
+	}
+
+	wanted := make(map[int64]struct{}, len(enabled))
+	var toSchedule []*ChannelMonitor
+	r.mu.Lock()
+	if r.stopped {
+		r.mu.Unlock()
+		return
+	}
+	var toUnschedule []int64
+	for _, m := range enabled {
+		if m == nil || m.APIKeyDecryptFailed {
+			// 解密失败的 monitor 不应有任务：留在 wanted 之外，下面统一取消。
+			continue
+		}
+		wanted[m.ID] = struct{}{}
+		jitter := time.Duration(m.JitterSeconds) * time.Second
+		if jitter < 0 {
+			jitter = 0
+		}
+		existing, ok := r.tasks[m.ID]
+		if !ok || existing.interval != time.Duration(m.IntervalSeconds)*time.Second || existing.jitter != jitter {
+			toSchedule = append(toSchedule, m)
+		}
+	}
+	for id := range r.tasks {
+		if _, ok := wanted[id]; !ok {
+			toUnschedule = append(toUnschedule, id)
+		}
+	}
+	r.mu.Unlock()
+
+	for _, id := range toUnschedule {
+		r.Unschedule(id)
+	}
+	for _, m := range toSchedule {
+		r.Schedule(m)
+	}
+	if len(toUnschedule) > 0 || len(toSchedule) > 0 {
+		slog.Info("channel_monitor: reconciled tasks",
+			"scheduled", len(toSchedule), "unscheduled", len(toUnschedule))
+	}
 }
 
 // Schedule 为指定监控创建（或重置）独立定时任务。
@@ -269,7 +384,7 @@ func (r *ChannelMonitorRunner) fire(ctx context.Context, task *scheduledMonitor)
 		return
 	}
 	if _, ok := r.pool.TrySubmit(func() {
-		r.runOne(task.id, task.name)
+		r.runOne(task)
 	}); !ok {
 		// 池满：丢弃本次检测，但必须释放已占用的 inFlight 槽，否则该 monitor 会被永久卡住。
 		r.releaseInFlight(task.id)
@@ -299,11 +414,24 @@ func (r *ChannelMonitorRunner) releaseInFlight(id int64) {
 
 // runOne 执行单个监控的检测。普通错误只记日志；API key 解密失败会撤销任务。
 // 任务结束时（含 panic recover）必须释放 in-flight 槽。
-func (r *ChannelMonitorRunner) runOne(id int64, name string) {
-	ctx, cancel := context.WithTimeout(context.Background(), monitorRequestTimeout+monitorPingTimeout+monitorRunOneBuffer)
+// 检测前先抢该 monitor 的跨副本 leader lock，本周期已由其他副本探测过则跳过。
+func (r *ChannelMonitorRunner) runOne(task *scheduledMonitor) {
+	id, name := task.id, task.name
+	runTimeout := monitorRequestTimeout + monitorPingTimeout + monitorRunOneBuffer
+	ctx, cancel := context.WithTimeout(context.Background(), runTimeout)
 	defer cancel()
 
 	defer r.releaseInFlight(id)
+
+	release, ok := tryAcquireCycleLeaderLock(ctx, r.lockCache, r.db,
+		fmt.Sprintf("%s%d:leader", channelMonitorLeaderLockKeyPrefix, id), r.instanceID,
+		cycleLeaderLockHold(task.minDelay()), runTimeout)
+	if !ok {
+		slog.Debug("channel_monitor: skip, probed by another instance this cycle",
+			"monitor_id", id, "name", name)
+		return
+	}
+	defer release()
 
 	defer func() {
 		if rec := recover(); rec != nil {
