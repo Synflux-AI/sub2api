@@ -29,6 +29,19 @@ func NewOpenAIOAuthService(proxyRepo ProxyRepository, oauthClient OpenAIOAuthCli
 	}
 }
 
+// WithSessionStore replaces the in-memory OAuth session store (e.g. Redis-backed
+// so the auth-URL and code-exchange requests may hit different replicas). Redis
+// wiring stays in Wire providers so this package does not import go-redis (depguard).
+func (s *OpenAIOAuthService) WithSessionStore(store *openai.SessionStore) *OpenAIOAuthService {
+	if s != nil && store != nil {
+		if s.sessionStore != nil {
+			s.sessionStore.Stop()
+		}
+		s.sessionStore = store
+	}
+	return s
+}
+
 // SetPrivacyClientFactory 注入 ImpersonateChrome 客户端工厂，
 // 用于调用 chatgpt.com/backend-api 获取账号信息（plan_type 等）。
 func (s *OpenAIOAuthService) SetPrivacyClientFactory(factory PrivacyClientFactory) {

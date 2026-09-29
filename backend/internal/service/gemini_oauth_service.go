@@ -80,6 +80,19 @@ func NewGeminiOAuthService(
 	}
 }
 
+// WithSessionStore replaces the in-memory OAuth session store (e.g. Redis-backed
+// so the auth-URL and code-exchange requests may hit different replicas). Redis
+// wiring stays in Wire providers so this package does not import go-redis (depguard).
+func (s *GeminiOAuthService) WithSessionStore(store *geminicli.SessionStore) *GeminiOAuthService {
+	if s != nil && store != nil {
+		if s.sessionStore != nil {
+			s.sessionStore.Stop()
+		}
+		s.sessionStore = store
+	}
+	return s
+}
+
 func (s *GeminiOAuthService) GetOAuthConfig() *GeminiOAuthCapabilities {
 	// AI Studio OAuth is only enabled when the operator configures a custom OAuth client.
 	clientID := strings.TrimSpace(s.cfg.Gemini.OAuth.ClientID)

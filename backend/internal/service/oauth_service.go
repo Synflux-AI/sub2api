@@ -58,6 +58,19 @@ func NewOAuthService(proxyRepo ProxyRepository, oauthClient ClaudeOAuthClient) *
 	}
 }
 
+// WithSessionStore replaces the in-memory OAuth session store (e.g. Redis-backed
+// so the auth-URL and code-exchange requests may hit different replicas). Redis
+// wiring stays in Wire providers so this package does not import go-redis (depguard).
+func (s *OAuthService) WithSessionStore(store *oauth.SessionStore) *OAuthService {
+	if s != nil && store != nil {
+		if s.sessionStore != nil {
+			s.sessionStore.Stop()
+		}
+		s.sessionStore = store
+	}
+	return s
+}
+
 // GenerateAuthURLResult contains the authorization URL and session info
 type GenerateAuthURLResult struct {
 	AuthURL   string `json:"auth_url"`

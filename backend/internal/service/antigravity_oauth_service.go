@@ -22,6 +22,19 @@ func NewAntigravityOAuthService(proxyRepo ProxyRepository) *AntigravityOAuthServ
 	}
 }
 
+// WithSessionStore replaces the in-memory OAuth session store (e.g. Redis-backed
+// so the auth-URL and code-exchange requests may hit different replicas). Redis
+// wiring stays in Wire providers so this package does not import go-redis (depguard).
+func (s *AntigravityOAuthService) WithSessionStore(store *antigravity.SessionStore) *AntigravityOAuthService {
+	if s != nil && store != nil {
+		if s.sessionStore != nil {
+			s.sessionStore.Stop()
+		}
+		s.sessionStore = store
+	}
+	return s
+}
+
 // AntigravityAuthURLResult is the result of generating an authorization URL
 type AntigravityAuthURLResult struct {
 	AuthURL   string `json:"auth_url"`
