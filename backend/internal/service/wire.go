@@ -11,7 +11,10 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/payment"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/geminicli"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/oauth"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 	"github.com/google/wire"
 	"github.com/redis/go-redis/v9"
@@ -23,6 +26,41 @@ func ProvideGrokOAuthService(proxyRepo ProxyRepository, oauthClient GrokOAuthCli
 	// wire.go is depguard-exempt for redis; construct the Redis session store here.
 	if redisClient != nil {
 		svc = svc.WithSessionStore(xai.NewRedisSessionStore(redisClient))
+	}
+	return svc
+}
+
+// ProvideOAuthService wires the Claude OAuth service with a Redis-backed session
+// store so multi-replica deployments do not lose PKCE sessions between requests.
+func ProvideOAuthService(proxyRepo ProxyRepository, oauthClient ClaudeOAuthClient, redisClient *redis.Client) *OAuthService {
+	svc := NewOAuthService(proxyRepo, oauthClient)
+	if redisClient != nil {
+		svc = svc.WithSessionStore(oauth.NewRedisSessionStore(redisClient))
+	}
+	return svc
+}
+
+// ProvideGeminiOAuthService wires the Gemini OAuth service with a Redis-backed session store.
+func ProvideGeminiOAuthService(
+	proxyRepo ProxyRepository,
+	oauthClient GeminiOAuthClient,
+	codeAssist GeminiCliCodeAssistClient,
+	driveClient geminicli.DriveClient,
+	cfg *config.Config,
+	redisClient *redis.Client,
+) *GeminiOAuthService {
+	svc := NewGeminiOAuthService(proxyRepo, oauthClient, codeAssist, driveClient, cfg)
+	if redisClient != nil {
+		svc = svc.WithSessionStore(geminicli.NewRedisSessionStore(redisClient))
+	}
+	return svc
+}
+
+// ProvideAntigravityOAuthService wires the Antigravity OAuth service with a Redis-backed session store.
+func ProvideAntigravityOAuthService(proxyRepo ProxyRepository, redisClient *redis.Client) *AntigravityOAuthService {
+	svc := NewAntigravityOAuthService(proxyRepo)
+	if redisClient != nil {
+		svc = svc.WithSessionStore(antigravity.NewRedisSessionStore(redisClient))
 	}
 	return svc
 }
@@ -113,9 +151,13 @@ func ProvideOpenAIOAuthService(
 	proxyRepo ProxyRepository,
 	oauthClient OpenAIOAuthClient,
 	privacyClientFactory PrivacyClientFactory,
+	redisClient *redis.Client,
 ) *OpenAIOAuthService {
 	svc := NewOpenAIOAuthService(proxyRepo, oauthClient)
 	svc.SetPrivacyClientFactory(privacyClientFactory)
+	if redisClient != nil {
+		svc = svc.WithSessionStore(openai.NewRedisSessionStore(redisClient))
+	}
 	return svc
 }
 
@@ -826,13 +868,16 @@ func ProvideOpsIngressRejectAggregator(opsRepo OpsRepository, opsService *OpsSer
 }
 
 // ProvideSettingService wires SettingService with group reader and proxy repo.
-func ProvideSettingService(settingRepo SettingRepository, groupRepo GroupRepository, proxyRepo ProxyRepository, cfg *config.Config) *SettingService {
+func ProvideSettingService(settingRepo SettingRepository, groupRepo GroupRepository, proxyRepo ProxyRepository, cfg *config.Config, changeNotifier SettingsChangeNotifier) *SettingService {
 	svc := NewSettingService(settingRepo, cfg)
 	svc.SetDefaultSubscriptionGroupReader(groupRepo)
 	svc.SetProxyRepository(proxyRepo)
+	svc.SetSettingsChangeNotifier(changeNotifier)
 	if err := svc.LoadForwardedClientIPSettings(context.Background()); err != nil {
 		logger.LegacyPrintf("service.setting", "Warning: load forwarded client IP settings failed: %v", err)
 	}
+	// 多副本：订阅其他副本的设置保存广播，并周期重读无 TTL 的转发 IP 策略兜底。
+	svc.StartReplicaSettingsSync(context.Background())
 	if err := svc.MigrateOpenAIAllowClaudeCodeCodexPluginSetting(context.Background()); err != nil {
 		logger.LegacyPrintf("service.setting", "Warning: migrate openai allow Claude Code Codex plugin setting failed: %v", err)
 	}
@@ -930,15 +975,15 @@ var ProviderSet = wire.NewSet(
 	ProvideBatchImageCleanupService,
 	ProvideBatchImageWorkerRuntime,
 	wire.Bind(new(AccountRuntimeBlocker), new(*OpenAIGatewayService)),
-	NewOAuthService,
+	ProvideOAuthService,
 	ProvideOpenAIOAuthService,
 	ProvideGrokOAuthService,
 	wire.Bind(new(GrokOAuthTokenService), new(*GrokOAuthService)),
-	NewGeminiOAuthService,
+	ProvideGeminiOAuthService,
 	NewGeminiQuotaService,
 	NewCompositeTokenCacheInvalidator,
 	wire.Bind(new(TokenCacheInvalidator), new(*CompositeTokenCacheInvalidator)),
-	NewAntigravityOAuthService,
+	ProvideAntigravityOAuthService,
 	ProvideOAuthRefreshAPI,
 	ProvideGeminiTokenProvider,
 	NewGeminiMessagesCompatService,

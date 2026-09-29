@@ -10,10 +10,11 @@ import (
 	"net/url"
 	"os"
 	"strings"
-	"sync"
 	"time"
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/redissession"
+	"github.com/redis/go-redis/v9"
 )
 
 type OAuthConfig struct {
@@ -36,44 +37,41 @@ type OAuthSession struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// SessionStore manages OAuth sessions. With a Redis client the sessions are
+// shared across replicas; otherwise they live in process memory.
 type SessionStore struct {
-	mu       sync.RWMutex
-	sessions map[string]*OAuthSession
+	sessions *redissession.Hybrid[OAuthSession]
 	stopCh   chan struct{}
 }
 
+// NewSessionStore creates a process-local session store
 func NewSessionStore() *SessionStore {
+	return NewRedisSessionStore(nil)
+}
+
+// NewRedisSessionStore creates a session store backed by Redis (nil falls back to process memory).
+func NewRedisSessionStore(rdb *redis.Client) *SessionStore {
 	store := &SessionStore{
-		sessions: make(map[string]*OAuthSession),
+		sessions: redissession.NewHybrid(rdb, "gemini", SessionTTL, func(s *OAuthSession) time.Time { return s.CreatedAt }),
 		stopCh:   make(chan struct{}),
 	}
 	go store.cleanup()
 	return store
 }
 
+// Set stores a session
 func (s *SessionStore) Set(sessionID string, session *OAuthSession) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.sessions[sessionID] = session
+	s.sessions.Set(sessionID, session)
 }
 
+// Get retrieves a session
 func (s *SessionStore) Get(sessionID string) (*OAuthSession, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	session, ok := s.sessions[sessionID]
-	if !ok {
-		return nil, false
-	}
-	if time.Since(session.CreatedAt) > SessionTTL {
-		return nil, false
-	}
-	return session, true
+	return s.sessions.Get(sessionID)
 }
 
+// Delete removes a session
 func (s *SessionStore) Delete(sessionID string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.sessions, sessionID)
+	s.sessions.Delete(sessionID)
 }
 
 func (s *SessionStore) Stop() {
@@ -85,6 +83,7 @@ func (s *SessionStore) Stop() {
 	}
 }
 
+// cleanup removes expired process-local sessions periodically
 func (s *SessionStore) cleanup() {
 	ticker := time.NewTicker(5 * time.Minute)
 	defer ticker.Stop()
@@ -93,13 +92,7 @@ func (s *SessionStore) cleanup() {
 		case <-s.stopCh:
 			return
 		case <-ticker.C:
-			s.mu.Lock()
-			for id, session := range s.sessions {
-				if time.Since(session.CreatedAt) > SessionTTL {
-					delete(s.sessions, id)
-				}
-			}
-			s.mu.Unlock()
+			s.sessions.CleanupExpired()
 		}
 	}
 }

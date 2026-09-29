@@ -84,8 +84,9 @@ func (s *SettingService) UpdateSettingsWithAuthSourceDefaultsOmitting(ctx contex
 // refreshCachedSettingsAfterWrite keeps the in-process caches in step with the
 // write that just landed. A partial payload carries zero values for the fields
 // it omitted, so in that case the caches are rebuilt from storage rather than
-// from the request struct.
+// from the request struct. Other replicas are told to rebuild their caches from storage.
 func (s *SettingService) refreshCachedSettingsAfterWrite(ctx context.Context, settings *SystemSettings, omitted OmittedSettingKeys) {
+	defer s.publishSettingsUpdated(ctx)
 	if len(omitted) == 0 {
 		s.refreshCachedSettings(settings)
 		return

@@ -2,7 +2,7 @@
 
 本文记录同一实例跑多个 sub2api 副本（共享同一套 PostgreSQL + Redis）时，各周期性后台任务如何避免重复执行。来源：Issue #203。
 
-> 本文只覆盖后台任务。开多副本还有请求路径上的硬前置（管理员 OAuth 会话、compat 续链、WSv2 `previous_response_id`、转发 IP 设置、`TOTP_ENCRYPTION_KEY` 必须同值等），见 #203 的 2026-09-29 复核评论，另行跟踪。
+> 本文只覆盖后台任务。请求路径上的状态（管理员 OAuth 会话、compat 续链、WSv2 `previous_response_id`、设置缓存、`TOTP_ENCRYPTION_KEY` 必须同值等）见 [multi-replica-request-state.md](multi-replica-request-state.md)。
 
 ## 两种锁语义
 
