@@ -142,6 +142,13 @@ func (s *SettingService) startReplicaSettingsSync(ctx context.Context, interval 
 	notifier := s.replicaSync.notifier
 	s.replicaSync.mu.Unlock()
 
+	// cfg 的转发 IP 快照指针是懒初始化的（非原子），必须在后台 goroutine 写入前
+	// 由启动路径先初始化一次；原值写回，不改变生效策略。
+	if s.cfg != nil {
+		current := s.cfg.ForwardedClientIPSettings()
+		s.cfg.SetForwardedClientIPSettings(current.TrustForwardedIP, current.Headers)
+	}
+
 	if notifier != nil {
 		if err := notifier.SubscribeSettingsUpdates(syncCtx, func() {
 			reloadCtx, reloadCancel := context.WithTimeout(syncCtx, settingsChangeReloadTimeout)
