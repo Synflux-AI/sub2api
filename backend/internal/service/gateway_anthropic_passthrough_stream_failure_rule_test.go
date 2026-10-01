@@ -16,7 +16,7 @@ import (
 // #245：透传路径共有三个「上游把流搞断」的终止点，此前只有 missing_terminal_event
 // 挂了规则钩子；read_error 与 interval_timeout 直接裸返回 error，调用方
 // errors.As(err, &failoverErr) 不成立，整个 failover 块（同号重试 / 换号 / 规则
-// 动作）被跳过。生产实锤见 crs15 ops_error_logs id=1224773
+// 动作）被跳过。生产实锤见 #245
 // （trace a3b0736f694dfdac，读 body 623s 后 unexpected EOF，零规则命中）。
 //
 // 这批用例锁两件事：

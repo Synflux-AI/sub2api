@@ -26,7 +26,7 @@ func sampleBreakdown() *OpsAlertBreakdown {
 			{ErrorType: "upstream_error", StatusCode: 502, UpstreamStatusCode: 503, Count: 1},
 		},
 		TopUpstreams: []OpsAlertUpstreamStat{
-			{AccountID: 3, AccountName: "crs15-max", Platform: "anthropic", Model: "claude-haiku-4-5", Count: 4},
+			{AccountID: 3, AccountName: "upstream-max", Platform: "anthropic", Model: "claude-haiku-4-5", Count: 4},
 			{AccountID: 0, Count: 12}, // 无上游
 		},
 		Samples: []OpsAlertSampleStat{
@@ -53,7 +53,7 @@ func TestBuildAlertRichElements(t *testing.T) {
 		"invalid_request_error ×4 / api_error ×1",
 		"user#99",
 		"`invalid_request_error 400`",
-		"crs15-max",
+		"upstream-max",
 		"无上游（客户端错误，未到选号）— 12",
 		"Failed to read request body",
 		"客户端 `4xx`",

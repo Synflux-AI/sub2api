@@ -50,13 +50,13 @@ func newOpenAIRuleService(t *testing.T, upstream *failingOpenAIHTTPUpstream, rul
 
 func openAIRuleAccount() *Account {
 	return &Account{
-		ID: 60, Name: "upstream-img2", Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+		ID: 1001, Name: "upstream-img2", Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
 	}
 }
 
 var openAILostPingErr = errors.New(`Post "https://upstream.example.com/v1/images/edits": http2: client connection lost`)
 
-// 事故复刻：lost-ping 是传输层错误，没有 HTTP 状态码（那 128 条的
+// 事故复刻：lost-ping 是传输层错误，没有 HTTP 状态码（那批请求的
 // upstream_status_code 在库里是 NULL）。合成 502 + OpenAI 形状错误体后喂给引擎，
 // 规则才有东西可匹配。
 func TestOpenAIErrorHandlingRule_TransportErrorMatchesSynthetic502(t *testing.T) {
@@ -473,7 +473,7 @@ func TestOpenAIErrorHandlingRule_KindUsesEffectiveAction(t *testing.T) {
 
 // 规则接管会让调用方跳过 handleErrorResponse 那条链，而 setOpsUpstreamError 原先
 // 只在那条链里调。不补的话，被规则接管的请求在 ops_error_logs 里 upstream_status_code
-// 是 NULL —— 正是 #189 用来定案「128 条」的那几列。
+// 是 NULL —— 正是 #189 用来定案的那几列。
 func TestOpenAIErrorHandlingRule_RecordsTopLevelOpsUpstreamError(t *testing.T) {
 	svc := newOpenAIRuleService(t, nil, ErrorHandlingRule{
 		ID: "ops-rule", StatusCodes: []int{500}, Action: ErrorHandlingActionFailover,
@@ -494,7 +494,7 @@ func TestOpenAIErrorHandlingRule_RecordsTopLevelOpsUpstreamError(t *testing.T) {
 
 // 反面：传输层错误的合成 502 **绝不能**写进顶层 upstream_status_code。
 // 那一列为 NULL 正是「这是传输层失败、根本没有 HTTP 响应」的判定依据 —— #189 就是靠
-// `upstream_status_code IS NULL` 把那 128 条 lost-ping 捞出来的。写成 502 会让它们
+// `upstream_status_code IS NULL` 把那批 lost-ping 捞出来的。写成 502 会让它们
 // 与真实上游 502 在库里彻底混同。
 func TestOpenAIErrorHandlingRule_SyntheticStatusNotRecordedAsUpstreamStatus(t *testing.T) {
 	svc := newOpenAIRuleService(t, nil, ErrorHandlingRule{

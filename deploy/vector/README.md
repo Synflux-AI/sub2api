@@ -187,8 +187,7 @@ done
 
 ## 容量
 
-改动前 OO 约 114 万 docs/24h。error 事件量级与 `ops_error_logs` 写入量一致；usage 事件
-（PR2）预计新增约 16 万 docs/24h，文档数约 +15%。上线后除文档数外还要测量单条事件 bytes 的
+error 事件量级与 `ops_error_logs` 写入量一致；usage 事件（PR2）预计使 OO 的文档数增加约 15%。上线后除文档数外还要测量单条事件 bytes 的
 P50/P95/P99、每日 ingest bytes、retention 后总存储，以及 256MB disk buffer 能承受的 OO
 中断时长。
 
