@@ -52,7 +52,9 @@ func TestWrapUsageRecordTaskContextPropagatesToTask(t *testing.T) {
 		seen, _ = ctx.Value(ctxkey.TraceID).(string)
 	})
 
-	wrapUsageRecordTaskContext(parent, task)(context.Background())
+	wrapped, abandon := wrapUsageRecordTaskContext(parent, task)
+	t.Cleanup(abandon)
+	wrapped(context.Background())
 
 	require.Equal(t, "trace-abc", seen)
 }
