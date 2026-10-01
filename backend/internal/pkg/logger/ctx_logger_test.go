@@ -129,7 +129,7 @@ func TestCtxPrintf_CallerPointsToCallsite(t *testing.T) {
 func TestCtxPrintf_CarriesRequestScopedFields(t *testing.T) {
 	lines := captureStdoutJSON(t, func() {
 		CtxPrintf(requestScopedContext(), "service.gateway",
-			"[Forward] Upstream error (non-retryable): Account=%d(%s) Status=%d", 3, "crs15-max", 400)
+			"[Forward] Upstream error (non-retryable): Account=%d(%s) Status=%d", 3, "upstream-max", 400)
 	})
 
 	line := findLine(t, lines, "Upstream error (non-retryable)")

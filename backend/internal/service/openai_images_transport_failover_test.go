@@ -14,14 +14,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// 2026-08-26 事故：账号 60 的 /v1/images/edits 在同一秒吃到 128 条
+// 事故：一个图片账号的 /v1/images/edits 在同一秒吃到大量
 // `http2: client connection lost`，全部以 502 直吐给客户端 —— 一次重试、一次换号都没有。
 // 根因是 images 转发在传输层失败时返回裸 error，handler 的 errors.As(*UpstreamFailoverError)
 // 因此不成立，整个 failover 块被跳过。
 //
 // 这三个测试锁住修复：传输层错误必须返回 *UpstreamFailoverError（502），且只记一条
 // ops 上游错误事件（原先本地记一条、helper 再记一条会污染 ops_error_logs.upstream_errors，
-// 而这张表正是定案「128 条」的依据）。
+// 而这张表正是事故定案的依据）。
 
 func newImagesTransportTestService(upstream *failingOpenAIHTTPUpstream) *OpenAIGatewayService {
 	return &OpenAIGatewayService{
@@ -56,15 +56,15 @@ func opsUpstreamErrorEvents(t *testing.T, c *gin.Context) []*OpsUpstreamErrorEve
 
 func TestForwardOpenAIImagesAPIKey_TransportErrorReturnsFailover(t *testing.T) {
 	upstream := &failingOpenAIHTTPUpstream{
-		err: errors.New(`Post "https://subdirect.aicodexvip.top/v1/images/edits": http2: client connection lost`),
+		err: errors.New(`Post "https://upstream.example.com/v1/images/edits": http2: client connection lost`),
 	}
 	svc := newImagesTransportTestService(upstream)
 	account := &Account{
-		ID:          60,
-		Name:        "aicodexvip-img2",
+		ID:          1001,
+		Name:        "upstream-img2",
 		Platform:    PlatformOpenAI,
 		Type:        AccountTypeAPIKey,
-		Credentials: map[string]any{"api_key": "sk-test", "base_url": "https://subdirect.aicodexvip.top/v1"},
+		Credentials: map[string]any{"api_key": "sk-test", "base_url": "https://upstream.example.com/v1"},
 	}
 	c, rec := newImagesTransportTestContext("/v1/images/edits")
 	parsed := &OpenAIImagesRequest{
@@ -87,15 +87,15 @@ func TestForwardOpenAIImagesAPIKey_TransportErrorReturnsFailover(t *testing.T) {
 
 func TestForwardOpenAIImagesAPIKey_TransportErrorRecordsSingleOpsEvent(t *testing.T) {
 	upstream := &failingOpenAIHTTPUpstream{
-		err: errors.New(`Post "https://subdirect.aicodexvip.top/v1/images/edits": http2: client connection lost`),
+		err: errors.New(`Post "https://upstream.example.com/v1/images/edits": http2: client connection lost`),
 	}
 	svc := newImagesTransportTestService(upstream)
 	account := &Account{
-		ID:          60,
-		Name:        "aicodexvip-img2",
+		ID:          1001,
+		Name:        "upstream-img2",
 		Platform:    PlatformOpenAI,
 		Type:        AccountTypeAPIKey,
-		Credentials: map[string]any{"api_key": "sk-test", "base_url": "https://subdirect.aicodexvip.top/v1"},
+		Credentials: map[string]any{"api_key": "sk-test", "base_url": "https://upstream.example.com/v1"},
 	}
 	c, _ := newImagesTransportTestContext("/v1/images/edits")
 	parsed := &OpenAIImagesRequest{
@@ -113,7 +113,7 @@ func TestForwardOpenAIImagesAPIKey_TransportErrorRecordsSingleOpsEvent(t *testin
 	require.Equal(t, 0, events[0].UpstreamStatusCode)
 	require.Equal(t, "request_error", events[0].Kind)
 	require.Equal(t, PlatformOpenAI, events[0].Platform)
-	require.Equal(t, int64(60), events[0].AccountID)
+	require.Equal(t, int64(1001), events[0].AccountID)
 	require.NotEmpty(t, events[0].UpstreamURL, "upstream URL must survive the move to the shared helper")
 	require.Contains(t, events[0].Message, "client connection lost")
 }
@@ -124,7 +124,7 @@ func TestForwardOpenAIImagesOAuth_TransportErrorReturnsFailover(t *testing.T) {
 	}
 	svc := newImagesTransportTestService(upstream)
 	account := &Account{
-		ID:          61,
+		ID:          1002,
 		Name:        "codex-oauth-img",
 		Platform:    PlatformOpenAI,
 		Type:        AccountTypeOAuth,

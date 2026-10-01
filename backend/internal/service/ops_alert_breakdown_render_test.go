@@ -17,7 +17,7 @@ func sampleBreakdown() *OpsAlertBreakdown {
 			{Platform: "openai", Count: 8},
 		},
 		TopUsers: []OpsAlertUserStat{
-			{UserID: 64, Email: "e77938803@gmail.com", Notes: "田良智@云联精灵", Count: 5,
+			{UserID: 64, Email: "alice@example.com", Notes: "张三@示例科技", Count: 5,
 				Errors: []OpsAlertErrorTypeStat{{ErrorType: "invalid_request_error", StatusCode: 400, Count: 4}, {ErrorType: "api_error", StatusCode: 400, Count: 1}}},
 			{UserID: 99, Count: 4}, // 无 email/notes,回退 user#id
 		},
@@ -26,7 +26,7 @@ func sampleBreakdown() *OpsAlertBreakdown {
 			{ErrorType: "upstream_error", StatusCode: 502, UpstreamStatusCode: 503, Count: 1},
 		},
 		TopUpstreams: []OpsAlertUpstreamStat{
-			{AccountID: 3, AccountName: "crs15-max", Platform: "anthropic", Model: "claude-haiku-4-5", Count: 4},
+			{AccountID: 3, AccountName: "upstream-max", Platform: "anthropic", Model: "claude-haiku-4-5", Count: 4},
 			{AccountID: 0, Count: 12}, // 无上游
 		},
 		Samples: []OpsAlertSampleStat{
@@ -49,11 +49,11 @@ func TestBuildAlertRichElements(t *testing.T) {
 		"共 81 请求 · 近 5 分钟",
 		"Anthropic 10",
 		"OpenAI 8",
-		"田良智@云联精灵 · e77938803@gmail.com",
+		"张三@示例科技 · alice@example.com",
 		"invalid_request_error ×4 / api_error ×1",
 		"user#99",
 		"`invalid_request_error 400`",
-		"crs15-max",
+		"upstream-max",
 		"无上游（客户端错误，未到选号）— 12",
 		"Failed to read request body",
 		"客户端 `4xx`",
@@ -82,7 +82,7 @@ func TestBuildOpsAlertEmailBreakdownHTML(t *testing.T) {
 	for _, want := range []string{
 		"业务上下文",
 		"窗口请求 <b>81</b>",
-		"田良智@云联精灵 · e77938803@gmail.com",
+		"张三@示例科技 · alice@example.com",
 		"invalid_request_error ×4",
 		"<li>", "</ul>",
 	} {

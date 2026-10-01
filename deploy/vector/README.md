@@ -6,8 +6,12 @@ stream。
 
 `vector.yaml` 是三台生产机 `/opt/vector/vector.yaml` 的实际内容（2026-07-29 抄录时三台
 byte 级一致，sha256 `fd6093ad5bd521c85683298aa5e7a3df3a79665040a1d16c7389fe429002448d`）
-加上 #104 的改动，新增部分用 `#104` 注释标出。凭据与主机标签仍在各机
-`/opt/vector/.env`（`OO_USER` / `OO_TOKEN` / `OO_HOST_LABEL`），不入仓库。
+加上 #104 的改动，新增部分用 `#104` 注释标出。OO 地址、凭据与主机标签都在各机
+`/opt/vector/.env`（`OO_ENDPOINT` / `OO_USER` / `OO_TOKEN` / `OO_HOST_LABEL`），不入仓库。
+
+> 仓库里的 sink `uri` 由 `${OO_ENDPOINT}` 拼出，与各机现行文件里写死的地址不同。下次部署前先在每台机的
+> `/opt/vector/.env` 补上 `OO_ENDPOINT=https://<oo-host>`（与现行 `uri` 的主机一致，不带末尾 `/`）。
+> 变量缺失时 Vector 会把它替换成空串，`vector validate` 发现不了（0.57 实测），所以部署前要显式检查，见「部署顺序」。
 
 ## 数据流
 
@@ -121,6 +125,9 @@ usage 事件以 `usage_logs` 的 57 个持久化列为基线，两个字段刻�
 本仓库的 `vector.yaml` 已经是改好的完整版本，部署时先与目标机现状 diff 再覆盖：
 
 ```bash
+# 前置检查：OO_ENDPOINT 必须是 https://<host>，不能为空、不能带末尾 /；不满足时以非零退出码终止，后面的命令不要再执行。
+ssh root@<HOST> 'grep -Eq "^OO_ENDPOINT=https://[^/[:space:]]+$" /opt/vector/.env' \
+  || { echo "<HOST>: OO_ENDPOINT 缺失或格式不对，先修好 /opt/vector/.env" >&2; exit 1; }
 scp deploy/vector/vector.yaml root@<HOST>:/tmp/vector-new.yaml
 ssh root@<HOST> 'diff -u /opt/vector/vector.yaml /tmp/vector-new.yaml'
 ```
@@ -172,18 +179,17 @@ ssh root@<HOST> 'diff -u /opt/vector/vector.yaml /tmp/vector-new.yaml'
 三台机器的配置必须一致（改动前后都应三台同值）：
 
 ```bash
-for h in 144.126.209.169 134.199.209.111 129.212.166.106; do
+for h in <HOST_A> <HOST_B> <HOST_C>; do
   ssh root@$h 'sha256sum /opt/vector/vector.yaml'
 done
 ```
 
-`/opt/vector/.env` 的 `OO_HOST_LABEL` 三台**不同**，分别是 `linkyrouter-144` / `crs15-134` /
-`aihezu-129`；三台都往同一个 OO 实例（`https://oo.aihezu.dev`）打，靠 `.host` 区分。
+`/opt/vector/.env` 的 `OO_HOST_LABEL` 三台**不同**，每台一个主机标签；三台都往同一个 OO 实例（`OO_ENDPOINT`，形如
+`https://<oo-host>`，不带末尾 `/`）打，靠 `.host` 区分。本仓库是公开仓库，主机 IP、主机标签与 OO 地址都只写在各机 `.env` 和内部运维文档里。
 
 ## 容量
 
-改动前 OO 约 114 万 docs/24h。error 事件量级与 `ops_error_logs` 写入量一致；usage 事件
-（PR2）预计新增约 16 万 docs/24h，文档数约 +15%。上线后除文档数外还要测量单条事件 bytes 的
+error 事件量级与 `ops_error_logs` 写入量一致；usage 事件（PR2）预计使 OO 的文档数增加约 15%。上线后除文档数外还要测量单条事件 bytes 的
 P50/P95/P99、每日 ingest bytes、retention 后总存储，以及 256MB disk buffer 能承受的 OO
 中断时长。
 

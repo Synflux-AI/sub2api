@@ -56,6 +56,18 @@
 - Changes to client wire behavior, streaming, provider compatibility, authorization, data access, migrations, or release/deployment require focused regression coverage and review.
 - Do not manually publish production artifacts or bypass the Jenkins deployment gate.
 
+## Public repository: no customer, supplier, or infrastructure data
+
+`Synflux-AI/sub2api` is a **public** repository. Everything written here (source, tests, fixtures, docs, commit messages, Issues, PRs, review comments, release notes) is world-readable and gets indexed and cached.
+
+- Never write real customer data: company or person names, emails, account notes, user / API key / group IDs taken from production, or per-customer amounts, request counts, or traffic.
+- Never write supplier or channel details: upstream vendor names, account names, domains, prices, or "reverse" / resale channel descriptions.
+- Never write production infrastructure: public or private IPs, hostnames and host labels, internal service domains (log ingestion, Jenkins, admin consoles), exact incident timestamps tied to a customer, or links to private repositories.
+- Use neutral placeholders instead: `alice@example.com`, `张三@示例科技`, `upstream.example.com`, `<HOST_A>`, "a high-volume user", "the application node / the database node". Put real values in each host's `.env`, in the private ops repository, or in a private Issue, and keep only the mechanism and code locations here.
+- Test fixtures must be synthetic. Do not copy production rows, log lines, or error strings without replacing identifiers and domains.
+- Editing an Issue, PR, or comment does not remove the original: GitHub keeps the edit history publicly visible, and notification emails have already gone out. If sensitive data was posted, delete the item and recreate it sanitized (or delete the revision from the edit history in the web UI), then tell the maintainers.
+- Removing data from source does not remove it from Git history. Rewriting history on this shared repository is a maintainer decision; do not force-push on your own.
+
 ## Git conventions
 
 - Commit titles and bodies use Chinese. Technical identifiers may remain in English.
