@@ -4,13 +4,13 @@
 # Provenance
 #
 # Transcribed from the live /opt/vector/vector.yaml on the three production
-# hosts (144.126.209.169 linkyrouter / 134.199.209.111 crs15 /
-# 129.212.166.106 aihezu), which were byte-identical at
+# hosts, which were byte-identical at
 # sha256 fd6093ad5bd521c85683298aa5e7a3df3a79665040a1d16c7389fe429002448d,
 # then extended for issue #104. Sections added by #104 are marked "#104".
 #
-# Credentials and the host label stay in /opt/vector/.env on each host
-# (OO_USER / OO_TOKEN / OO_HOST_LABEL) and must never be committed: this fork
+# The OpenObserve endpoint, credentials and the host label stay in
+# /opt/vector/.env on each host (OO_ENDPOINT / OO_USER / OO_TOKEN /
+# OO_HOST_LABEL) and must never be committed: this fork is public and
 # receives periodic sync-main-* merges from upstream.
 #
 # Before deploying, diff against the host's current file rather than
@@ -162,7 +162,7 @@ sinks:
   oo:
     type: http
     inputs: [business_route._unmatched]
-    uri: https://oo.aihezu.dev/api/default/sub2api/_json
+    uri: ${OO_ENDPOINT}/api/default/sub2api/_json
     method: post
     auth:
       strategy: basic
@@ -190,7 +190,7 @@ sinks:
   oo_usage_logs:
     type: http
     inputs: [business_route.usage_log]
-    uri: https://oo.aihezu.dev/api/default/usage_logs/_json
+    uri: ${OO_ENDPOINT}/api/default/usage_logs/_json
     method: post
     auth:
       strategy: basic
@@ -212,7 +212,7 @@ sinks:
   oo_error_logs:
     type: http
     inputs: [business_route.error_log]
-    uri: https://oo.aihezu.dev/api/default/error_logs/_json
+    uri: ${OO_ENDPOINT}/api/default/error_logs/_json
     method: post
     auth:
       strategy: basic
@@ -240,7 +240,7 @@ sinks:
   oo_business_unknown:
     type: http
     inputs: [business_route.business_unknown]
-    uri: https://oo.aihezu.dev/api/default/business_unknown/_json
+    uri: ${OO_ENDPOINT}/api/default/business_unknown/_json
     method: post
     auth:
       strategy: basic

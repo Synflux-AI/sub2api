@@ -50,11 +50,11 @@ func newOpenAIRuleService(t *testing.T, upstream *failingOpenAIHTTPUpstream, rul
 
 func openAIRuleAccount() *Account {
 	return &Account{
-		ID: 60, Name: "aicodexvip-img2", Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
+		ID: 60, Name: "upstream-img2", Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
 	}
 }
 
-var openAILostPingErr = errors.New(`Post "https://subdirect.aicodexvip.top/v1/images/edits": http2: client connection lost`)
+var openAILostPingErr = errors.New(`Post "https://upstream.example.com/v1/images/edits": http2: client connection lost`)
 
 // 事故复刻：lost-ping 是传输层错误，没有 HTTP 状态码（那 128 条的
 // upstream_status_code 在库里是 NULL）。合成 502 + OpenAI 形状错误体后喂给引擎，

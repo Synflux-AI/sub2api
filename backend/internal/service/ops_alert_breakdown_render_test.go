@@ -17,7 +17,7 @@ func sampleBreakdown() *OpsAlertBreakdown {
 			{Platform: "openai", Count: 8},
 		},
 		TopUsers: []OpsAlertUserStat{
-			{UserID: 64, Email: "e77938803@gmail.com", Notes: "田良智@云联精灵", Count: 5,
+			{UserID: 64, Email: "alice@example.com", Notes: "张三@示例科技", Count: 5,
 				Errors: []OpsAlertErrorTypeStat{{ErrorType: "invalid_request_error", StatusCode: 400, Count: 4}, {ErrorType: "api_error", StatusCode: 400, Count: 1}}},
 			{UserID: 99, Count: 4}, // 无 email/notes,回退 user#id
 		},
@@ -49,7 +49,7 @@ func TestBuildAlertRichElements(t *testing.T) {
 		"共 81 请求 · 近 5 分钟",
 		"Anthropic 10",
 		"OpenAI 8",
-		"田良智@云联精灵 · e77938803@gmail.com",
+		"张三@示例科技 · alice@example.com",
 		"invalid_request_error ×4 / api_error ×1",
 		"user#99",
 		"`invalid_request_error 400`",
@@ -82,7 +82,7 @@ func TestBuildOpsAlertEmailBreakdownHTML(t *testing.T) {
 	for _, want := range []string{
 		"业务上下文",
 		"窗口请求 <b>81</b>",
-		"田良智@云联精灵 · e77938803@gmail.com",
+		"张三@示例科技 · alice@example.com",
 		"invalid_request_error ×4",
 		"<li>", "</ul>",
 	} {

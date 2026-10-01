@@ -56,15 +56,15 @@ func opsUpstreamErrorEvents(t *testing.T, c *gin.Context) []*OpsUpstreamErrorEve
 
 func TestForwardOpenAIImagesAPIKey_TransportErrorReturnsFailover(t *testing.T) {
 	upstream := &failingOpenAIHTTPUpstream{
-		err: errors.New(`Post "https://subdirect.aicodexvip.top/v1/images/edits": http2: client connection lost`),
+		err: errors.New(`Post "https://upstream.example.com/v1/images/edits": http2: client connection lost`),
 	}
 	svc := newImagesTransportTestService(upstream)
 	account := &Account{
 		ID:          60,
-		Name:        "aicodexvip-img2",
+		Name:        "upstream-img2",
 		Platform:    PlatformOpenAI,
 		Type:        AccountTypeAPIKey,
-		Credentials: map[string]any{"api_key": "sk-test", "base_url": "https://subdirect.aicodexvip.top/v1"},
+		Credentials: map[string]any{"api_key": "sk-test", "base_url": "https://upstream.example.com/v1"},
 	}
 	c, rec := newImagesTransportTestContext("/v1/images/edits")
 	parsed := &OpenAIImagesRequest{
@@ -87,15 +87,15 @@ func TestForwardOpenAIImagesAPIKey_TransportErrorReturnsFailover(t *testing.T) {
 
 func TestForwardOpenAIImagesAPIKey_TransportErrorRecordsSingleOpsEvent(t *testing.T) {
 	upstream := &failingOpenAIHTTPUpstream{
-		err: errors.New(`Post "https://subdirect.aicodexvip.top/v1/images/edits": http2: client connection lost`),
+		err: errors.New(`Post "https://upstream.example.com/v1/images/edits": http2: client connection lost`),
 	}
 	svc := newImagesTransportTestService(upstream)
 	account := &Account{
 		ID:          60,
-		Name:        "aicodexvip-img2",
+		Name:        "upstream-img2",
 		Platform:    PlatformOpenAI,
 		Type:        AccountTypeAPIKey,
-		Credentials: map[string]any{"api_key": "sk-test", "base_url": "https://subdirect.aicodexvip.top/v1"},
+		Credentials: map[string]any{"api_key": "sk-test", "base_url": "https://upstream.example.com/v1"},
 	}
 	c, _ := newImagesTransportTestContext("/v1/images/edits")
 	parsed := &OpenAIImagesRequest{
