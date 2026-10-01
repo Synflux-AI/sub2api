@@ -125,7 +125,9 @@ usage 事件以 `usage_logs` 的 57 个持久化列为基线，两个字段刻�
 本仓库的 `vector.yaml` 已经是改好的完整版本，部署时先与目标机现状 diff 再覆盖：
 
 ```bash
-ssh root@<HOST> 'grep -q "^OO_ENDPOINT=https://" /opt/vector/.env' || echo "<HOST> 缺 OO_ENDPOINT，先补上再继续"
+# 前置检查：OO_ENDPOINT 必须是 https://<host>，不能为空、不能带末尾 /；不满足时以非零退出码终止，后面的命令不要再执行。
+ssh root@<HOST> 'grep -Eq "^OO_ENDPOINT=https://[^/[:space:]]+$" /opt/vector/.env' \
+  || { echo "<HOST>: OO_ENDPOINT 缺失或格式不对，先修好 /opt/vector/.env" >&2; exit 1; }
 scp deploy/vector/vector.yaml root@<HOST>:/tmp/vector-new.yaml
 ssh root@<HOST> 'diff -u /opt/vector/vector.yaml /tmp/vector-new.yaml'
 ```
