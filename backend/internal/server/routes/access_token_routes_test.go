@@ -38,8 +38,6 @@ func newAccessTokenRouteSettingRepo(openAPIRPM string) *accessTokenRouteSettingR
 		"backend_mode_enabled": "true",
 		"panel_rate_limit_settings": `{"enabled":true,"user_rpm":0,"heavy_rpm":0,` +
 			`"exempt_admin":false,"public_ip_rpm":0,"open_api_rpm":` + openAPIRPM + `}`,
-		// 管理面合规确认：不确认的话 AdminComplianceGuard 会 423 拦下所有 admin 路由。
-		"admin_compliance_acknowledgement:1": `{"version":"` + service.AdminComplianceVersion + `"}`,
 	}}
 }
 
