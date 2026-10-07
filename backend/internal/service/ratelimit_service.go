@@ -2525,6 +2525,10 @@ const tempUnschedMessageMaxBytes = 2048
 // (account, model) pair via IsSchedulableForModelWithContext until the
 // cooldown expires, instead of re-selecting an account that can never serve
 // the model.
+//
+// 池模式账号（未开自定义错误码）的上游本身是个池，404 可能只是池内的暂时状态，
+// 与 HandleUpstreamError 的池模式豁免一致：不写 per-model 冷却。但仍返回 true，
+// 调用方据此决定的本次换号/同号重试结论保持不变，冷却只是副作用。
 func (s *RateLimitService) HandleUpstreamModelNotFound(ctx context.Context, account *Account, requestedModel string, statusCode int, responseBody []byte) bool {
 	if s == nil || account == nil || s.accountRepo == nil {
 		return false
@@ -2549,6 +2553,10 @@ func (s *RateLimitService) HandleUpstreamModelNotFound(ctx context.Context, acco
 		return false
 	}
 	if shouldSkipCodexPlanGatedImageModelCooldown(ctx, reason, requestedModel, modelKey) {
+		return true
+	}
+	if account.IsPoolMode() && !account.IsCustomErrorCodesEnabled() {
+		slog.Info("upstream_model_not_found_pool_mode_cooldown_skipped", "account_id", account.ID, "model", modelKey, "reason", reason)
 		return true
 	}
 	resetAt := time.Now().Add(cooldown)
