@@ -720,6 +720,25 @@ func ProvideIdempotencyCleanupService(repo IdempotencyRepository, cfg *config.Co
 	return svc
 }
 
+// ProvideUsageBillingRetryService creates and starts UsageBillingRetryService（计费补扣队列重放）。
+// 重放周期由 billing.retry_queue.interval_seconds 配置，默认 30 分钟；
+// 单条最大重放次数由 billing.retry_queue.max_attempts 配置，默认 10 次。
+func ProvideUsageBillingRetryService(repo UsageBillingRepository, billingCacheService *BillingCacheService, authCacheInvalidator APIKeyAuthCacheInvalidator, cfg *config.Config) *UsageBillingRetryService {
+	interval := DefaultUsageBillingRetryInterval
+	maxAttempts := DefaultUsageBillingRetryMaxAttempts
+	if cfg != nil {
+		if cfg.Billing.RetryQueue.IntervalSeconds > 0 {
+			interval = time.Duration(cfg.Billing.RetryQueue.IntervalSeconds) * time.Second
+		}
+		if cfg.Billing.RetryQueue.MaxAttempts > 0 {
+			maxAttempts = cfg.Billing.RetryQueue.MaxAttempts
+		}
+	}
+	svc := NewUsageBillingRetryService(repo, billingCacheService, authCacheInvalidator, interval, maxAttempts)
+	svc.Start()
+	return svc
+}
+
 // ProvideScheduledTestService creates ScheduledTestService.
 func ProvideScheduledTestService(
 	planRepo ScheduledTestPlanRepository,
@@ -1039,6 +1058,7 @@ var ProviderSet = wire.NewSet(
 	ProvideTokenRefreshService,
 	wire.Bind(new(GrokOAuthReconciler), new(*TokenRefreshService)),
 	ProvideAccountExpiryService,
+	ProvideUsageBillingRetryService,
 	ProvideOpenAICodexVersionSyncService,
 	ProvideClaudeCodeVersionSyncService,
 	ProvideProxyExpiryService,

@@ -1211,6 +1211,23 @@ billing:
   # Cache TTL (seconds) for per-user × per-platform quota records
   # 用户 × 平台 quota 缓存 TTL（秒），默认 86400=1天，覆盖典型 daily 窗口
   user_platform_quota_cache_ttl_seconds: 86400
+  # Deferred billing retry queue: when the billing transaction fails (e.g. waiting on
+  # the users row lock until timeout), the request is recorded at its real cost and the
+  # billing command is stored in usage_billing_retry_queue, then replayed every interval
+  # until it settles or max_attempts is used up (then marked failed for manual review).
+  # Replays are idempotent (same request_id + fingerprint).
+  # 计费补扣队列：扣费事务失败（例如等 users 行锁超时）时，请求按实际费用记账，扣费命令落到
+  # usage_billing_retry_queue，按周期重放；重放满 max_attempts 次仍失败则标记 failed、不再重试，
+  # 留给人工对账。重放走同一幂等键，不会重复扣费。
+  retry_queue:
+    # Replay interval in seconds (default 1800 = 30 minutes).
+    # Env: BILLING_RETRY_QUEUE_INTERVAL_SECONDS
+    # 重放周期（秒），默认 1800（30 分钟）
+    interval_seconds: 1800
+    # Max replay attempts per record (default 10). After that the record is marked failed.
+    # Env: BILLING_RETRY_QUEUE_MAX_ATTEMPTS
+    # 同一条记录的最大重放次数，默认 10；全部失败后标记 failed，不再重试
+    max_attempts: 10
   # In-flight balance reservation (Redis): at admission, estimate per-request cost
   # (input estimate + output price x max_tokens) and atomically require
   # cached_balance - in-flight reservations >= estimate. Released when the request ends.

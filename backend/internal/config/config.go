@@ -940,6 +940,16 @@ type BillingConfig struct {
 	UserPlatformQuotaSentinelTTLSeconds int `mapstructure:"user_platform_quota_sentinel_ttl_seconds"`
 	// InflightReservation 余额模式在途请求预留（Redis），防止并发请求在预检时看到同一份余额而集体透支。
 	InflightReservation InflightReservationConfig `mapstructure:"inflight_reservation"`
+	// RetryQueue 计费补扣队列：扣费事务失败的请求落到 usage_billing_retry_queue，定时重放直到结清。
+	RetryQueue BillingRetryQueueConfig `mapstructure:"retry_queue"`
+}
+
+// BillingRetryQueueConfig 计费补扣队列配置。
+type BillingRetryQueueConfig struct {
+	// IntervalSeconds 重放周期（秒），默认 1800（30 分钟）。
+	IntervalSeconds int `mapstructure:"interval_seconds"`
+	// MaxAttempts 同一条记录的最大重放次数，默认 10；全部失败后标记 failed，不再重试。
+	MaxAttempts int `mapstructure:"max_attempts"`
 }
 
 // InflightReservationConfig 余额模式在途预留配置。
@@ -2225,6 +2235,8 @@ func setDefaults() {
 	viper.SetDefault("billing.minimum_balance_reserve", 0.000001)
 	viper.SetDefault("billing.user_platform_quota_cache_ttl_seconds", 86400)
 	viper.SetDefault("billing.user_platform_quota_sentinel_ttl_seconds", 3600)
+	viper.SetDefault("billing.retry_queue.interval_seconds", 1800)
+	viper.SetDefault("billing.retry_queue.max_attempts", 10)
 	viper.SetDefault("billing.inflight_reservation.enabled", true)
 	viper.SetDefault("billing.inflight_reservation.ttl_seconds", 900)
 	viper.SetDefault("billing.inflight_reservation.default_max_tokens", 8192)
@@ -3460,6 +3472,12 @@ func (c *Config) Validate() error {
 	}
 	if c.Idempotency.MaxStoredResponseLen <= 0 {
 		return fmt.Errorf("idempotency.max_stored_response_len must be positive")
+	}
+	if c.Billing.RetryQueue.IntervalSeconds <= 0 {
+		return fmt.Errorf("billing.retry_queue.interval_seconds must be positive")
+	}
+	if c.Billing.RetryQueue.MaxAttempts <= 0 {
+		return fmt.Errorf("billing.retry_queue.max_attempts must be positive")
 	}
 	if c.Idempotency.CleanupIntervalSeconds <= 0 {
 		return fmt.Errorf("idempotency.cleanup_interval_seconds must be positive")
