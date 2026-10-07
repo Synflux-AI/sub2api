@@ -398,7 +398,16 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 
 	result, err := repo.Apply(billingCtx, cmd)
 	if err != nil {
-		return false, err
+		// 扣费事务失败（典型是排队等 users 行锁超时）时不按 0 放过：转入补扣队列，
+		// 由 UsageBillingRetryService 按同一幂等键重放。入队成功即视为本次已计费，
+		// 缓存侧按已扣处理；只有入队也失败才把错误交还调用方（usage log 按 0 记）。
+		if !enqueueUsageBillingRetry(ctx, repo, cmd, err) {
+			return false, err
+		}
+		finalizeCtx, finalizeCancel := detachedBillingContext(ctx)
+		defer finalizeCancel()
+		finalizePostUsageBilling(finalizeCtx, p, deps, nil)
+		return true, nil
 	}
 
 	if result == nil || !result.Applied {
@@ -484,6 +493,12 @@ func finalizePostUsageBilling(ctx context.Context, p *postUsageBillingParams, de
 			}
 			// flusher_enabled=true:不直写 DB,flusher 异步批量刷
 		}
+	}
+
+	// 扣费转入补扣队列时 result 为 nil：数据库里还没有扣后余额 / 额度，
+	// 此时发阈值通知只会基于旧数据误判，跳过。
+	if result == nil {
+		return
 	}
 
 	// Notification checks run async — all parameters are already captured,

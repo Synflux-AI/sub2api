@@ -2703,3 +2703,35 @@ func TestLoadSimpleModeAutoCreateDefaultGroups(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadBillingRetryQueueInterval(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.Equal(t, 1800, cfg.Billing.RetryQueue.IntervalSeconds)
+	require.Equal(t, 10, cfg.Billing.RetryQueue.MaxAttempts)
+
+	resetViperWithJWTSecret(t)
+	t.Setenv("BILLING_RETRY_QUEUE_INTERVAL_SECONDS", "600")
+	cfg, err = Load()
+	require.NoError(t, err)
+	require.Equal(t, 600, cfg.Billing.RetryQueue.IntervalSeconds)
+
+	resetViperWithJWTSecret(t)
+	t.Setenv("BILLING_RETRY_QUEUE_INTERVAL_SECONDS", "0")
+	_, err = Load()
+	require.ErrorContains(t, err, "billing.retry_queue.interval_seconds")
+}
+
+func TestLoadBillingRetryQueueMaxAttempts(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	t.Setenv("BILLING_RETRY_QUEUE_MAX_ATTEMPTS", "5")
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.Equal(t, 5, cfg.Billing.RetryQueue.MaxAttempts)
+
+	resetViperWithJWTSecret(t)
+	t.Setenv("BILLING_RETRY_QUEUE_MAX_ATTEMPTS", "0")
+	_, err = Load()
+	require.ErrorContains(t, err, "billing.retry_queue.max_attempts")
+}

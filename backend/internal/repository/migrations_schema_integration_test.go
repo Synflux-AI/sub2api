@@ -158,6 +158,13 @@ WHERE ns.nspname = 'public'
 	requireColumn(t, tx, "usage_billing_dedup_archive", "request_fingerprint", "character varying", 64, false)
 	requireIndex(t, tx, "usage_billing_dedup_archive", "usage_billing_dedup_archive_pkey")
 
+	// usage_billing_retry_queue: deferred billing replay queue (issue #270)
+	var usageBillingRetryQueueRegclass sql.NullString
+	require.NoError(t, tx.QueryRowContext(context.Background(), "SELECT to_regclass('public.usage_billing_retry_queue')").Scan(&usageBillingRetryQueueRegclass))
+	require.True(t, usageBillingRetryQueueRegclass.Valid, "expected usage_billing_retry_queue table to exist")
+	requireIndex(t, tx, "usage_billing_retry_queue", "idx_usage_billing_retry_queue_request_api_key")
+	requireIndex(t, tx, "usage_billing_retry_queue", "idx_usage_billing_retry_queue_due")
+
 	// settings table should exist
 	var settingsRegclass sql.NullString
 	require.NoError(t, tx.QueryRowContext(context.Background(), "SELECT to_regclass('public.settings')").Scan(&settingsRegclass))
