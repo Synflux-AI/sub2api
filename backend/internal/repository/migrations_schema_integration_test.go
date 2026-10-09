@@ -45,11 +45,13 @@ func TestMigrationsRunner_IsIdempotent_AndSchemaIsUpToDate(t *testing.T) {
 	// 上游两项 241 迁移按完整文件名独立应用，重复执行后仍需保留各自的 schema。
 	requireColumn(t, tx, "payment_orders", "bonus_amount", "numeric", 0, false)
 	requireColumnDefaultContains(t, tx, "payment_orders", "bonus_amount", "0")
-	requireConstraintDefinitionContains(t, tx, "user_platform_quotas", "user_platform_quotas_platform_check", "'typesafe'", "'opencode_go'")
-	requireConstraintDefinitionContains(t, tx, "composite_model_routes", "composite_model_routes_target_platform_check", "'typesafe'", "'opencode_go'")
+	// 242_drop_platform_check_constraints 把平台白名单移到应用层，241 加的 CHECK 应已被删除。
+	var platformChecks int
+	require.NoError(t, tx.QueryRowContext(context.Background(), "SELECT COUNT(*) FROM pg_constraint WHERE conname IN ('user_platform_quotas_platform_check', 'composite_model_routes_target_platform_check')").Scan(&platformChecks))
+	require.Zero(t, platformChecks)
 	var applied241 int
-	require.NoError(t, tx.QueryRowContext(context.Background(), "SELECT COUNT(*) FROM schema_migrations WHERE filename IN ('241_add_payment_order_bonus_amount.sql', '241_add_typesafe_platform.sql')").Scan(&applied241))
-	require.Equal(t, 2, applied241)
+	require.NoError(t, tx.QueryRowContext(context.Background(), "SELECT COUNT(*) FROM schema_migrations WHERE filename IN ('241_add_payment_order_bonus_amount.sql', '241_add_typesafe_platform.sql', '242_drop_platform_check_constraints.sql')").Scan(&applied241))
+	require.Equal(t, 3, applied241)
 
 	// users: columns required by repository queries
 	requireColumn(t, tx, "users", "username", "character varying", 100, false)
