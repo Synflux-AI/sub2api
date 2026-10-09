@@ -225,6 +225,7 @@ describe('user UsageView', () => {
     const wrapper = mountUsageView()
     await flushPromises()
 
+    expect(wrapper.findComponent(UsageTable).props('columns').map((column: { key: string }) => column.key)).toContain('latency')
     expect(query).toHaveBeenCalled()
     expect(getStats).toHaveBeenCalled()
     expect(getDashboardModels).toHaveBeenCalled()
