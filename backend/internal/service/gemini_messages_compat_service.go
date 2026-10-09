@@ -1388,6 +1388,7 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 	}
 
 	var resp *http.Response
+	signatureCleaned := false
 	for attempt := 1; attempt <= geminiMaxRetries; attempt++ {
 		upstreamReq, idHeader, err := buildReq(ctx)
 		if err != nil {
@@ -1413,6 +1414,34 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 		injectTraceHeader(ctx, upstreamReq, account)
 		account.ApplyCustomHeaders(upstreamReq)
 		resp, err = timedUpstreamDo(c, s.httpUpstream, upstreamReq, proxyURL, account.ID, account.Concurrency)
+		if err == nil && resp.StatusCode == http.StatusBadRequest && !signatureCleaned && bytes.Contains(body, []byte(`"thoughtSignature"`)) {
+			respBody := s.readUpstreamErrorBody(resp)
+			_ = resp.Body.Close()
+			// 上游不认历史签名（换号、签名损坏）：换成 dummy 签名同号重试一次。
+			// 只在被拒后才清洗——预先清洗会丢掉推理上下文，并让下一轮缓存只命中到第一个签名之前。
+			if isGeminiSignatureRelatedError(respBody) {
+				logger.LegacyPrintf("service.gemini_messages_compat", "Gemini account %d: signature-related 400, retrying with cleaned thoughtSignature", account.ID)
+				appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+					ProxyID:            opsUpstreamProxyID(account),
+					ProxyName:          opsUpstreamProxyName(account),
+					Platform:           account.Platform,
+					AccountID:          account.ID,
+					AccountName:        account.Name,
+					UpstreamStatusCode: resp.StatusCode,
+					UpstreamRequestID:  resp.Header.Get(requestIDHeader),
+					Kind:               "signature_error",
+					Message:            sanitizeUpstreamErrorMessage(strings.TrimSpace(extractUpstreamErrorMessage(respBody))),
+				})
+				body = CleanGeminiNativeThoughtSignatures(body)
+				signatureCleaned = true
+				continue
+			}
+			resp = &http.Response{
+				StatusCode: resp.StatusCode,
+				Header:     resp.Header.Clone(),
+				Body:       io.NopCloser(bytes.NewReader(respBody)),
+			}
+		}
 		if err != nil {
 			// countTokens 的本地估算属于内置独占兜底，不交给规则引擎。
 			transportErr := s.handleUpstreamTransportError(ctx, c, account, err, action != "countTokens")
