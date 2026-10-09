@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -505,7 +504,6 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 
 	// 判断是否真的绑定了粘性会话：有 sessionKey 且已经绑定到某个账号
 	hasBoundSession := sessionKey != "" && sessionBoundAccountID > 0
-	cleanedForUnknownBinding := false
 
 	fs := NewFailoverState(h.maxAccountSwitchesGemini, hasBoundSession).WithUpstreamAttemptBudget(h.maxUpstreamAttempts)
 
@@ -562,16 +560,9 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 			)
 			body = service.CleanGeminiNativeThoughtSignatures(body)
 			sessionBoundAccountID = account.ID
-		} else if sessionKey != "" && sessionBoundAccountID == 0 && !cleanedForUnknownBinding && bytes.Contains(body, []byte(`"thoughtSignature"`)) {
-			// 无缓存绑定但请求里已有 thoughtSignature：常见于缓存丢失/TTL 过期后，客户端继续携带旧签名。
-			// 为避免第一次转发就 400，这里做一次确定性清理，让新账号重新生成签名链路。
-			reqLog.Info("gemini.sticky_session_binding_missing",
-				zap.Bool("clean_thought_signature", true),
-			)
-			body = service.CleanGeminiNativeThoughtSignatures(body)
-			cleanedForUnknownBinding = true
-			sessionBoundAccountID = account.ID
 		} else if sessionBoundAccountID == 0 {
+			// 查不到绑定不代表换了号（会话哈希每轮都变、摘要链只在内存存 5 分钟），签名原样转发；
+			// 真被上游拒（Invalid thought signature）时由 ForwardNative 清洗后同号重试。
 			// 记录本次请求中首次选择到的账号，便于同一请求内 failover 时检测切换。
 			sessionBoundAccountID = account.ID
 		}
