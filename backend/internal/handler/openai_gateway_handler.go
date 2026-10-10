@@ -964,6 +964,14 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 					reqLog.Warn("openai.upstream_failover_switching", failoverSwitchFields...)
 					continue
 				}
+				if failoverClientGone(c) {
+					reqLog.Info("openai.forward_aborted_client_disconnected",
+						zap.Int64("account_id", account.ID),
+						zap.Error(err),
+					)
+					submitResponsesUsage(result)
+					return
+				}
 				h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, forwardModel, requireCompact, result), false, nil, err)
 				upstreamErrorAlreadyCommunicated := openAIForwardErrorAlreadyCommunicated(c, writerSizeBeforeForward, err)
 				wroteFallback := false
@@ -1521,7 +1529,16 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 					)
 					continue
 				}
+				if failoverClientGone(c) {
+					reqLog.Info("openai_messages.forward_aborted_client_disconnected",
+						zap.Int64("account_id", account.ID),
+						zap.Error(err),
+					)
+					submitMessagesUsage(result)
+					return
+				}
 				if result != nil && result.ClientDisconnect {
+					failoverClientGone(c)
 					reqLog.Info("openai_messages.client_disconnected",
 						zap.Int64("account_id", account.ID),
 						zap.Error(err),
@@ -1637,6 +1654,9 @@ func (h *OpenAIGatewayHandler) handleAnthropicFailoverExhausted(c *gin.Context, 
 // ensureAnthropicErrorResponse writes a fallback Anthropic error if no response was written.
 func (h *OpenAIGatewayHandler) ensureAnthropicErrorResponse(c *gin.Context, streamStarted bool) bool {
 	if c == nil || c.Writer == nil || c.Writer.Written() {
+		return false
+	}
+	if failoverClientGone(c) {
 		return false
 	}
 	h.anthropicStreamingAwareError(c, http.StatusBadGateway, "api_error", "Upstream request failed", streamStarted)
@@ -3761,6 +3781,9 @@ func (h *OpenAIGatewayHandler) ensureOpenAIStreamReadErrorResponse(c *gin.Contex
 	if !ok || c == nil || c.Writer == nil || service.IsResponseCommitted(c) {
 		return false
 	}
+	if failoverClientGone(c) {
+		return false
+	}
 	if c.Writer.Written() {
 		streamStarted = true
 	}
@@ -3775,8 +3798,7 @@ func (h *OpenAIGatewayHandler) ensureForwardErrorResponse(c *gin.Context, stream
 	if c == nil || c.Writer == nil {
 		return false
 	}
-	if c.Request != nil && errors.Is(c.Request.Context().Err(), context.Canceled) {
-		failoverClientGone(c)
+	if failoverClientGone(c) {
 		return false
 	}
 	// 先停 compact 心跳再读 Writer 状态，避免与心跳 goroutine 竞争。

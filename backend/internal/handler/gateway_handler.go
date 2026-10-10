@@ -533,6 +533,13 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 						return
 					}
 				}
+				if failoverClientGone(c) {
+					reqLog.Info("gateway.forward_aborted_client_disconnected",
+						zap.Int64("account_id", account.ID),
+						zap.Error(err),
+					)
+					return
+				}
 				upstreamErrorAlreadyCommunicated := gatewayForwardErrorAlreadyCommunicated(c, writerSizeBeforeForward, err)
 				wroteFallback := false
 				if !upstreamErrorAlreadyCommunicated {
@@ -1074,6 +1081,17 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 						failoverClientGone(c)
 						return
 					}
+				}
+				if failoverClientGone(c) {
+					reqLog.Info("gateway.forward_aborted_client_disconnected",
+						zap.Int64("account_id", account.ID),
+						zap.Error(err),
+					)
+					if result != nil {
+						submitForwardUsage(result)
+						upstreamServedSession = true
+					}
+					return
 				}
 				upstreamErrorAlreadyCommunicated := gatewayForwardErrorAlreadyCommunicated(c, writerSizeBeforeForward, err)
 				wroteFallback := false
@@ -2029,8 +2047,7 @@ func (h *GatewayHandler) ensureForwardErrorResponse(c *gin.Context, streamStarte
 	if c == nil || c.Writer == nil {
 		return false
 	}
-	if c.Request != nil && errors.Is(c.Request.Context().Err(), context.Canceled) {
-		failoverClientGone(c)
+	if failoverClientGone(c) {
 		return false
 	}
 	if service.IsResponseCommitted(c) {

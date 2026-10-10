@@ -359,6 +359,13 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 					)
 					continue
 				}
+				if failoverClientGone(c) {
+					reqLog.Info("openai.images.forward_aborted_client_disconnected",
+						zap.Int64("account_id", account.ID),
+						zap.Error(err),
+					)
+					return
+				}
 				h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, requestModel, false, result), false, nil, err)
 				upstreamErrorAlreadyCommunicated := openAIForwardErrorAlreadyCommunicated(c, writerSizeBeforeForward, err)
 				wroteFallback := false

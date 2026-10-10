@@ -319,6 +319,13 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 					return
 				}
 			}
+			if failoverClientGone(c) {
+				reqLog.Info("gateway.responses.forward_aborted_client_disconnected",
+					zap.Int64("account_id", account.ID),
+					zap.Error(err),
+				)
+				return
+			}
 			upstreamErrorAlreadyCommunicated := gatewayForwardErrorAlreadyCommunicated(c, writerSizeBeforeForward, err)
 			wroteFallback := false
 			if !upstreamErrorAlreadyCommunicated {
