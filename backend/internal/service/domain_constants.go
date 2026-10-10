@@ -666,6 +666,9 @@ const (
 	SettingKeyOpenAITTFTMode = "openai_ttft_mode"
 	OpenAITTFTModeSemantic   = "semantic"
 	OpenAITTFTModeVisible    = "visible"
+	// SettingKeyOpenAIImmediateLifecycleEvents 收到 response.created / in_progress 立即下发，
+	// 不再暂存到首个语义输出；之后的流内失败不再静默换号（默认 false）。
+	SettingKeyOpenAIImmediateLifecycleEvents = "openai_immediate_lifecycle_events"
 	// SettingKeyEnableFingerprintUnification 是否统一 OAuth 账号的 X-Stainless-* 指纹头（默认 true）
 	SettingKeyEnableFingerprintUnification = "enable_fingerprint_unification"
 	// SettingKeyEnableMetadataPassthrough 是否透传客户端原始 metadata.user_id（默认 false）

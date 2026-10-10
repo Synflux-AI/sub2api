@@ -1194,6 +1194,19 @@ func openAIStreamDataStartsClientOutput(data, eventType string) bool {
 	return !openAIStreamEventIsMetadata(eventType)
 }
 
+// openAIStreamStartsClientOutput 叠加 openai_immediate_lifecycle_events 设置：
+// 开启后 created / in_progress 也提交本次尝试，客户端立即可见，与直连 OpenAI 一致；
+// 此后的流内失败按"已有输出"处理，不再静默换号。
+func openAIStreamStartsClientOutput(data, eventType string, immediateLifecycle bool) bool {
+	if immediateLifecycle {
+		switch strings.TrimSpace(eventType) {
+		case "response.created", "response.in_progress":
+			return true
+		}
+	}
+	return openAIStreamDataStartsClientOutput(data, eventType)
+}
+
 func openAIStreamItemHasVisibleOutput(item gjson.Result) bool {
 	if item.Get("arguments").String() != "" || item.Get("input").String() != "" || item.Get("result").String() != "" {
 		return true
@@ -1271,6 +1284,16 @@ func openAIStreamDataStartsSemanticTTFT(data, eventType string) bool {
 	default:
 		return !openAIStreamEventIsMetadata(eventType)
 	}
+}
+
+// openAIImmediateLifecycleEvents 每个请求读一次，避免同一条流中途切换行为。
+func (s *OpenAIGatewayService) openAIImmediateLifecycleEvents(ctx context.Context) bool {
+	if s != nil && s.settingService != nil {
+		return s.settingService.IsOpenAIImmediateLifecycleEventsEnabled(ctx)
+	}
+	cached, ok := gatewayForwardingCache.Load().(*cachedGatewayForwardingSettings)
+	return ok && cached != nil && cached.openAIImmediateLifecycleEvents &&
+		(cached.expiresAt == 0 || time.Now().UnixNano() < cached.expiresAt)
 }
 
 func (s *OpenAIGatewayService) openAITTFTMode(ctx context.Context) string {
@@ -1883,6 +1906,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	var firstTokenMs *int
 	responseID := ""
 	ttftMode := s.openAITTFTMode(ctx)
+	immediateLifecycle := s.openAIImmediateLifecycleEvents(ctx)
 	clientDisconnected := false
 	sawDone := false
 	sawTerminalEvent := false
@@ -2165,7 +2189,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 				trimmedData = strings.TrimSpace(string(sanitizedData))
 				line = "data: " + string(sanitizedData)
 			}
-			lineStartsClientOutput = forceFlushFailedEvent || openAIStreamDataStartsClientOutput(trimmedData, eventType)
+			lineStartsClientOutput = forceFlushFailedEvent || openAIStreamStartsClientOutput(trimmedData, eventType, immediateLifecycle)
 			if lineStartsClientOutput && trimmedData != "[DONE]" && !openAIStreamEventTypeIsTerminal(eventType) {
 				semanticOutputSeen = true
 			}
@@ -2200,6 +2224,8 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			}
 			// 真实输出开始，心跳的使命结束。停拍是幂等的，且会与心跳 goroutine
 			// 建立 happens-before —— 之后 ResponseWriter 由本循环独占。
+			// ponytail: openai_immediate_lifecycle_events 开启时这里在 created 处就停拍，
+			// 透传路径在之后的推理静默期没有心跳；中间层空闲超时短于推理时长时需补输出后保活。
 			if !clientOutputStarted {
 				stopKeepalive()
 			}

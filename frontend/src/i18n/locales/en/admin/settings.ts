@@ -508,6 +508,8 @@ export default {
         openaiTTFTMode: 'OpenAI Responses first-token metric',
         openaiTTFTModeSemantic: 'Legacy-compatible (semantic event)',
         openaiTTFTModeVisible: 'Actual visible output',
+        openaiImmediateLifecycleEvents: 'Forward OpenAI Responses created / in_progress immediately',
+        openaiImmediateLifecycleEventsHint: 'Off by default: both events are held until the first real output so in-stream overloads can silently fail over to another account. When on, they are forwarded as soon as they arrive, matching direct OpenAI, so clients can tell the request was accepted; later in-stream failures (e.g. overload) then reach the client instead of failing over. Takes effect on save.',
         openaiTTFTModeHint: 'The default records first_token_ms at the first non-preamble semantic event. Actual visible output records it only when non-empty text, tool arguments, or image content arrives.',
         fingerprintUnification: 'Fingerprint Unification',
         fingerprintUnificationHint: 'Unify X-Stainless-* headers across users sharing the same OAuth account. Disabling passes through each client\'s original headers.',

@@ -501,6 +501,8 @@ export default {
         openaiTTFTMode: 'OpenAI Responses 首 token 统计口径',
         openaiTTFTModeSemantic: '历史兼容（语义事件）',
         openaiTTFTModeVisible: '真实可见输出',
+        openaiImmediateLifecycleEvents: 'OpenAI Responses 立即下发 created / in_progress',
+        openaiImmediateLifecycleEventsHint: '默认关闭：两个事件会暂存到首个实际输出，以便上游流内过载时静默换号重试。开启后收到即下发，与直连 OpenAI 一致，客户端可据此判断请求已被接受；代价是之后的流内失败（如过载）不再静默换号，直接交给客户端重试。保存后立即生效。',
         openaiTTFTModeHint: '默认使用历史兼容口径，首个非预置语义事件即记录 first_token_ms。选择真实可见输出后，仅在首个非空文本、工具参数或图片内容到达时记录。',
         fingerprintUnification: '指纹统一化',
         fingerprintUnificationHint: '统一共享同一 OAuth 账号的用户的 X-Stainless-* 请求头。关闭后透传客户端原始请求头。',
