@@ -508,6 +508,14 @@ type OpenAIGatewayService struct {
 	// 剥离跨账号回带（openai_codex_turn_state.go）。
 	openaiCodexTurnStateOrigins sync.Map
 	openaiCodexTurnStateWrites  atomic.Uint64
+	onReportScheduleResultForTest func(account *Account, model string, success bool, firstTokenMs *int, err error)
+}
+
+// SetOnReportScheduleResultForTest registers a callback invoked during ReportOpenAIAccountScheduleResult for test verification.
+func (s *OpenAIGatewayService) SetOnReportScheduleResultForTest(fn func(account *Account, model string, success bool, firstTokenMs *int, err error)) {
+	if s != nil {
+		s.onReportScheduleResultForTest = fn
+	}
 }
 
 // NewOpenAIGatewayService creates a new OpenAIGatewayService

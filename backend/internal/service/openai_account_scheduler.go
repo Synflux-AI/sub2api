@@ -2516,6 +2516,13 @@ func (s *OpenAIGatewayService) ReportOpenAIAccountScheduleResult(account *Accoun
 	if account == nil {
 		return false
 	}
+	if s != nil && s.onReportScheduleResultForTest != nil {
+		var observed error
+		if len(observedErr) > 0 {
+			observed = observedErr[0]
+		}
+		s.onReportScheduleResultForTest(account, model, success, firstTokenMs, observed)
+	}
 	accountID := account.ID
 	healthTripped := false
 	if s != nil && s.rateLimitService != nil {

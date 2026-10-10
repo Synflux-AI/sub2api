@@ -208,11 +208,11 @@ func (h *OpenAIGatewayHandler) AlphaSearch(c *gin.Context) {
 
 		var failoverErr *service.UpstreamFailoverError
 		if !errors.As(err, &failoverErr) {
-			h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, requestedModel, false, result), false, nil, err)
 			if failoverClientGone(c) {
 				reqLog.Info("openai_alpha_search.forward_aborted_client_disconnected", zap.Int64("account_id", account.ID), zap.Error(err))
 				return
 			}
+			h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, requestedModel, false, result), false, nil, err)
 			if c.Writer.Size() == writerSizeBeforeForward {
 				h.errorResponse(c, http.StatusBadGateway, "upstream_error", "Upstream request failed")
 			}
@@ -220,16 +220,16 @@ func (h *OpenAIGatewayHandler) AlphaSearch(c *gin.Context) {
 			return
 		}
 
-		h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, requestedModel, false, result), false, nil, err)
-		if c.Writer.Size() != writerSizeBeforeForward {
-			h.handleFailoverExhausted(c, failoverErr, true)
-			return
-		}
 		if failoverClientGone(c) {
 			reqLog.Info("openai_alpha_search.failover_aborted_client_disconnected",
 				zap.Int64("account_id", account.ID),
 				zap.Int("upstream_status", failoverErr.StatusCode),
 			)
+			return
+		}
+		h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, requestedModel, false, result), false, nil, err)
+		if c.Writer.Size() != writerSizeBeforeForward {
+			h.handleFailoverExhausted(c, failoverErr, true)
 			return
 		}
 		if failoverErr.RetryableOnSameAccount {

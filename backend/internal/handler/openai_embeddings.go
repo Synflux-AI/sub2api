@@ -224,11 +224,6 @@ func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
 		if err != nil {
 			var failoverErr *service.UpstreamFailoverError
 			if errors.As(err, &failoverErr) {
-				if c.Writer.Size() != writerSizeBeforeForward {
-					h.handleFailoverExhausted(c, failoverErr, true)
-					return
-				}
-				h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, reqModel, false, result), false, nil, err)
 				if failoverClientGone(c) {
 					reqLog.Info("openai_embeddings.failover_aborted_client_disconnected",
 						zap.Int64("account_id", account.ID),
@@ -236,6 +231,11 @@ func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
 					)
 					return
 				}
+				if c.Writer.Size() != writerSizeBeforeForward {
+					h.handleFailoverExhausted(c, failoverErr, true)
+					return
+				}
+				h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, reqModel, false, result), false, nil, err)
 				h.gatewayService.RecordOpenAIAccountSwitch()
 				failedAccountIDs[account.ID] = struct{}{}
 				lastFailoverErr = failoverErr
@@ -251,6 +251,13 @@ func (h *OpenAIGatewayHandler) Embeddings(c *gin.Context) {
 					zap.Int("max_switches", maxAccountSwitches),
 				)
 				continue
+			}
+			if failoverClientGone(c) {
+				reqLog.Info("openai_embeddings.forward_aborted_client_disconnected",
+					zap.Int64("account_id", account.ID),
+					zap.Error(err),
+				)
+				return
 			}
 			h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, reqModel, false, result), false, nil, err)
 			if c.Writer.Size() == writerSizeBeforeForward {
