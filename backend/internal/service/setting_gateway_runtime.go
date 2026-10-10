@@ -55,6 +55,7 @@ const backendModeDBTimeout = 5 * time.Second
 // cachedGatewayForwardingSettings 缓存网关转发行为设置（进程内缓存，60s TTL）
 type cachedGatewayForwardingSettings struct {
 	openAITTFTMode                   string
+	openAIImmediateLifecycleEvents   bool
 	fingerprintUnification           bool
 	metadataPassthrough              bool
 	cchSigning                       bool
@@ -860,6 +861,7 @@ type gatewayForwardingSettingsResult struct {
 	openAITTFTMode                                                                        string
 	fp, mp, cch, claudeOAuthSystemPromptInjection, cacheTTL1h, rewriteMessageCacheControl bool
 	clientDatelineNormalization                                                           bool
+	openAIImmediateLifecycleEvents                                                        bool
 	claudeOAuthSystemPrompt, claudeOAuthSystemPromptBlocks                                string
 }
 
@@ -877,6 +879,7 @@ func (s *SettingService) getGatewayForwardingSettingsCached(ctx context.Context)
 				cacheTTL1h:                       cached.anthropicCacheTTL1hInjection,
 				rewriteMessageCacheControl:       cached.rewriteMessageCacheControl,
 				clientDatelineNormalization:      cached.clientDatelineNormalization,
+				openAIImmediateLifecycleEvents:   cached.openAIImmediateLifecycleEvents,
 			}
 		}
 	}
@@ -894,6 +897,7 @@ func (s *SettingService) getGatewayForwardingSettingsCached(ctx context.Context)
 					cacheTTL1h:                       cached.anthropicCacheTTL1hInjection,
 					rewriteMessageCacheControl:       cached.rewriteMessageCacheControl,
 					clientDatelineNormalization:      cached.clientDatelineNormalization,
+					openAIImmediateLifecycleEvents:   cached.openAIImmediateLifecycleEvents,
 				}, nil
 			}
 		}
@@ -910,6 +914,7 @@ func (s *SettingService) getGatewayForwardingSettingsCached(ctx context.Context)
 			SettingKeyEnableAnthropicCacheTTL1hInjection,
 			SettingKeyRewriteMessageCacheControl,
 			SettingKeyEnableClientDatelineNormalization,
+			SettingKeyOpenAIImmediateLifecycleEvents,
 		})
 		if err != nil {
 			slog.Warn("failed to get gateway forwarding settings", "error", err)
@@ -948,8 +953,10 @@ func (s *SettingService) getGatewayForwardingSettingsCached(ctx context.Context)
 		if v, ok := values[SettingKeyEnableClientDatelineNormalization]; ok && v != "" {
 			clientDatelineNormalization = v == "true"
 		}
+		immediateLifecycleEvents := values[SettingKeyOpenAIImmediateLifecycleEvents] == "true"
 		gatewayForwardingCache.Store(&cachedGatewayForwardingSettings{
 			openAITTFTMode:                   ttftMode,
+			openAIImmediateLifecycleEvents:   immediateLifecycleEvents,
 			fingerprintUnification:           fp,
 			metadataPassthrough:              mp,
 			cchSigning:                       cch,
@@ -972,6 +979,7 @@ func (s *SettingService) getGatewayForwardingSettingsCached(ctx context.Context)
 			cacheTTL1h:                       cacheTTL1h,
 			rewriteMessageCacheControl:       rewriteMessageCacheControl,
 			clientDatelineNormalization:      clientDatelineNormalization,
+			openAIImmediateLifecycleEvents:   immediateLifecycleEvents,
 		}, nil
 	})
 	if r, ok := val.(gatewayForwardingSettingsResult); ok {
@@ -983,6 +991,11 @@ func (s *SettingService) getGatewayForwardingSettingsCached(ctx context.Context)
 // GetOpenAITTFTMode 返回 Responses first_token_ms 的统计口径。
 func (s *SettingService) GetOpenAITTFTMode(ctx context.Context) string {
 	return s.getGatewayForwardingSettingsCached(ctx).openAITTFTMode
+}
+
+// IsOpenAIImmediateLifecycleEventsEnabled 检查 Responses created / in_progress 是否立即下发。默认关闭。
+func (s *SettingService) IsOpenAIImmediateLifecycleEventsEnabled(ctx context.Context) bool {
+	return s.getGatewayForwardingSettingsCached(ctx).openAIImmediateLifecycleEvents
 }
 
 // GetGatewayForwardingSettings returns cached gateway forwarding settings.
