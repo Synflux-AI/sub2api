@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -207,6 +208,66 @@ func TestOpenAIStreamMetadataAndKeepaliveBeforeOverloadFailOver(t *testing.T) {
 			require.False(t, c.Writer.Written())
 			require.Empty(t, rec.Body.String())
 		})
+	}
+}
+
+// 线上过载的真实形态：created / in_progress 之后紧跟 seq=2 的 error 帧。
+// openai_immediate_lifecycle_events 打开时 lifecycle 事件立即下发，过载随之交给客户端，不再静默换号。
+func TestOpenAIImmediateLifecycleEventsForwardsCreatedBeforeOverload(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	stream := strings.Join([]string{
+		"event: response.created",
+		`data: {"type":"response.created","sequence_number":0,"response":{"id":"resp_1","status":"in_progress"}}`,
+		"",
+		"event: response.in_progress",
+		`data: {"type":"response.in_progress","sequence_number":1,"response":{"id":"resp_1","status":"in_progress"}}`,
+		"",
+		"event: error",
+		`data: {"type":"error","sequence_number":2,"error":{"type":"service_unavailable_error","code":"server_is_overloaded","message":"Our servers are currently overloaded. Please try again later."}}`,
+		"",
+		"event: response.failed",
+		`data: {"type":"response.failed","sequence_number":3,"response":{"id":"resp_1","status":"failed","error":{"code":"server_is_overloaded","message":"Our servers are currently overloaded. Please try again later."}}}`,
+		"",
+	}, "\n")
+
+	for _, path := range []string{"native", "passthrough"} {
+		for _, immediate := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/immediate=%v", path, immediate), func(t *testing.T) {
+				gatewayForwardingCache.Store(&cachedGatewayForwardingSettings{openAITTFTMode: OpenAITTFTModeSemantic, openAIImmediateLifecycleEvents: immediate, expiresAt: time.Now().Add(time.Minute).UnixNano()})
+				t.Cleanup(func() {
+					gatewayForwardingCache.Store(&cachedGatewayForwardingSettings{openAITTFTMode: OpenAITTFTModeSemantic, expiresAt: time.Now().Add(time.Minute).UnixNano()})
+				})
+				svc := &OpenAIGatewayService{cfg: &config.Config{Gateway: config.GatewayConfig{MaxLineSize: defaultMaxLineSize}}}
+				rec := httptest.NewRecorder()
+				c, _ := gin.CreateTestContext(rec)
+				c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
+				resp := &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(stream)), Header: http.Header{}}
+				account := &Account{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Name: "acc"}
+
+				var err error
+				if path == "native" {
+					_, err = svc.handleStreamingResponse(c.Request.Context(), resp, c, account, time.Now(), "model", "model")
+				} else {
+					_, err = svc.handleStreamingResponsePassthrough(c.Request.Context(), resp, c, account, time.Now(), "model", "model")
+				}
+				require.Error(t, err)
+				var failoverErr *UpstreamFailoverError
+				body := rec.Body.String()
+				if !immediate {
+					require.ErrorAs(t, err, &failoverErr)
+					require.Empty(t, body)
+					return
+				}
+				require.False(t, errors.As(err, &failoverErr))
+				created := strings.Index(body, "event: response.created")
+				inProgress := strings.Index(body, "event: response.in_progress")
+				failed := strings.Index(body, "event: response.failed")
+				require.True(t, created >= 0 && created < inProgress && inProgress < failed, body)
+				require.Equal(t, 1, strings.Count(body, "event: response.failed"))
+				// 降载码改写为 server_error，Codex 走内置重试而不是终止会话。
+				require.NotContains(t, body, "server_is_overloaded")
+			})
+		}
 	}
 }
 
