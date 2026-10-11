@@ -14,7 +14,8 @@ type UserChanges struct {
 	Old           map[string]any
 	GroupsAdded   []int64
 	GroupsRemoved []int64
-	// Rates 只在改前改后的专属倍率都读到时才有，读失败不记，免得把读失败记成清空。
+	// Rates 只在改前改后的专属倍率都读到时才有；读失败时 Fields 仍含 group_rates、Rates 为空，
+	// 免得把读失败记成清空，也不把真实的修改记成没变。
 	Rates []UserGroupRateChange
 }
 
@@ -58,8 +59,16 @@ func diffUserChanges(before, after *User, input *UpdateUserInput, oldRates map[i
 	}
 	mark("allowed_groups", len(changes.GroupsAdded)+len(changes.GroupsRemoved) > 0, nil)
 
+	// 比对改前改后的全部分组：提交空表会清掉所有专属倍率，只看请求里的键会漏掉
 	if input.GroupRates != nil && oldRates != nil && after.GroupRates != nil {
-		for _, id := range slices.Sorted(maps.Keys(input.GroupRates)) {
+		ids := slices.Sorted(maps.Keys(oldRates))
+		for id := range after.GroupRates {
+			if _, ok := oldRates[id]; !ok {
+				ids = append(ids, id)
+			}
+		}
+		slices.Sort(ids)
+		for _, id := range ids {
 			old, hadOld := oldRates[id]
 			now, hasNew := after.GroupRates[id]
 			if hadOld == hasNew && old == now {
@@ -74,7 +83,10 @@ func diffUserChanges(before, after *User, input *UpdateUserInput, oldRates map[i
 			}
 			changes.Rates = append(changes.Rates, change)
 		}
+		mark("group_rates", len(changes.Rates) > 0, nil)
+	} else {
+		// 读不到改前或改后的倍率，就说不清变没变：照样标出提交了倍率，Rates 留空，读的一方回退去看请求体
+		mark("group_rates", input.GroupRates != nil, nil)
 	}
-	mark("group_rates", len(changes.Rates) > 0, nil)
 	return changes
 }

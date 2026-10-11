@@ -35,6 +35,16 @@ func TestUserChangesAuditExtra(t *testing.T) {
 	}))
 	// 什么都没变也写 changed，表示这条记录有改前值可比
 	require.Equal(t, map[string]any{"changed": ""}, userChangesAuditExtra(service.UserChanges{}))
+
+	// 放不下的分组整项丢掉，不截在 ID 中间
+	many := make([]int64, 40)
+	for i := range many {
+		many[i] = int64(1000 + i)
+	}
+	listed := userChangesAuditExtra(service.UserChanges{GroupsAdded: many})["groups_added"].(string)
+	require.LessOrEqual(t, len(listed), 128)
+	require.Equal(t, "1000,1001", listed[:9])
+	require.Regexp(t, `^(\d{4},)*\d{4}$`, listed)
 }
 
 type auditChangesAdminService struct {

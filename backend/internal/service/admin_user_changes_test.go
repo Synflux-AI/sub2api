@@ -59,3 +59,41 @@ func TestAdminService_UpdateUser_NoChanges(t *testing.T) {
 	require.Empty(t, changes.Fields)
 	require.Empty(t, changes.Old)
 }
+
+func TestAdminService_UpdateUser_ReportsClearedRatesAndUnknownRates(t *testing.T) {
+	// 提交空表清掉全部专属倍率：改前有的都要记成恢复默认
+	rateRepo := &userGroupRateRepoStubForGroupRate{userRates: map[int64]map[int64]float64{42: {101: 0.3}}}
+	svc := &adminServiceImpl{
+		userRepo:          &userRepoStub{user: &User{ID: 42, Email: "u@example.com"}},
+		userGroupRateRepo: &clearAllRatesRepo{rateRepo},
+		redeemCodeRepo:    &redeemRepoStub{},
+	}
+	var changes UserChanges
+	_, err := svc.UpdateUser(context.Background(), 42, &UpdateUserInput{GroupRates: map[int64]*float64{}, Changes: &changes})
+	require.NoError(t, err)
+	old := 0.3
+	require.Equal(t, []string{"group_rates"}, changes.Fields)
+	require.Equal(t, []UserGroupRateChange{{GroupID: 101, Old: &old}}, changes.Rates)
+
+	// 没有倍率仓库时读不到倍率：照样标出提交了倍率，不记成没变
+	svc = &adminServiceImpl{userRepo: &userRepoStub{user: &User{ID: 42, Email: "u@example.com"}}, redeemCodeRepo: &redeemRepoStub{}}
+	rate := 0.45
+	changes = UserChanges{}
+	_, err = svc.UpdateUser(context.Background(), 42, &UpdateUserInput{GroupRates: map[int64]*float64{101: &rate}, Changes: &changes})
+	require.NoError(t, err)
+	require.Equal(t, []string{"group_rates"}, changes.Fields)
+	require.Empty(t, changes.Rates)
+}
+
+// clearAllRatesRepo 模拟仓库收到空表时清掉该用户全部专属倍率
+type clearAllRatesRepo struct {
+	*userGroupRateRepoStubForGroupRate
+}
+
+func (r *clearAllRatesRepo) SyncUserGroupRates(ctx context.Context, userID int64, rates map[int64]*float64) error {
+	if len(rates) == 0 {
+		r.userRates[userID] = map[int64]float64{}
+		return nil
+	}
+	return r.userGroupRateRepoStubForGroupRate.SyncUserGroupRates(ctx, userID, rates)
+}
