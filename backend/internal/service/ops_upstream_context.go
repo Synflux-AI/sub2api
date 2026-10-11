@@ -469,6 +469,12 @@ func appendOpsUpstreamError(c *gin.Context, ev OpsUpstreamErrorEvent) {
 	}
 	ev.Platform = strings.TrimSpace(ev.Platform)
 	normalizeOpsUpstreamProxyAttribution(&ev)
+	// 账户配置了上游ID头名时以它为准（与用量明细同一口径），否则保留各路径自带的标识。
+	if c.Request != nil {
+		if id := OpsUpstreamRequestIDFromContext(c.Request.Context(), ev.AccountID); id != "" {
+			ev.UpstreamRequestID = id
+		}
+	}
 	ev.UpstreamRequestID = strings.TrimSpace(ev.UpstreamRequestID)
 	ev.UpstreamResponseBody = strings.TrimSpace(ev.UpstreamResponseBody)
 	ev.Kind = strings.TrimSpace(ev.Kind)

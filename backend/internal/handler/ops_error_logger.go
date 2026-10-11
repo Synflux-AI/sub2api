@@ -489,21 +489,19 @@ func setOpsEndpointContext(c *gin.Context, upstreamModel string, requestType int
 	c.Set(opsRequestTypeKey, requestType)
 }
 
-func setOpsSelectedAccount(c *gin.Context, accountID int64, platform ...string) {
-	if c == nil || accountID <= 0 {
+func setOpsSelectedAccount(c *gin.Context, account *service.Account) {
+	if c == nil || account == nil || account.ID <= 0 {
 		return
 	}
 	service.ClearOpsUpstreamModel(c)
-	c.Set(opsAccountIDKey, accountID)
+	c.Set(opsAccountIDKey, account.ID)
 	if c.Request != nil {
-		ctx := context.WithValue(c.Request.Context(), ctxkey.AccountID, accountID)
-		if len(platform) > 0 {
-			p := strings.TrimSpace(platform[0])
-			if p != "" {
-				ctx = context.WithValue(ctx, ctxkey.Platform, p)
-			}
+		ctx := context.WithValue(c.Request.Context(), ctxkey.AccountID, account.ID)
+		if p := strings.TrimSpace(account.Platform); p != "" {
+			ctx = context.WithValue(ctx, ctxkey.Platform, p)
 		}
 		c.Request = c.Request.WithContext(ctx)
+		service.RegisterOpsAccountUpstreamRequestIDHeader(ctx, account)
 	}
 }
 
@@ -1113,6 +1111,9 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 			releaseOpsCaptureWriter(w)
 		}()
 		c.Writer = w
+		if c.Request != nil {
+			c.Request = c.Request.WithContext(service.WithOpsUpstreamRequestIDCapture(c.Request.Context()))
+		}
 		c.Next()
 		w.finalizeCapture()
 

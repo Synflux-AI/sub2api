@@ -84,6 +84,22 @@ describe('OpsErrorLogTable trace id column', () => {
   })
 })
 
+describe('OpsErrorLogTable upstream request id column', () => {
+  it('renders the upstream request id', () => {
+    const wrapper = mountTable({ upstream_request_id: 'upstream-visible-123' })
+
+    expect(wrapper.find('thead').text()).toContain('admin.ops.errorLog.upstreamRequestId')
+    expect(wrapper.text()).toContain('upstream-visible-123')
+  })
+
+  it('renders a placeholder when the upstream request id is missing', () => {
+    const wrapper = mountTable({})
+
+    expect(wrapper.find('[title="upstream-visible-123"]').exists()).toBe(false)
+    expect(wrapper.find('thead').text()).toContain('admin.ops.errorLog.upstreamRequestId')
+  })
+})
+
 describe('OpsErrorLogTable column order', () => {
   it('puts time and response content first for ops without changing time sorting', async () => {
     const wrapper = mountTable({})
@@ -126,6 +142,7 @@ describe('OpsErrorLogTable i18n keys exist in the errorLog namespace', () => {
       const errorLog = msgs?.admin?.ops?.errorLog
       expect(errorLog?.apiKey).toBeTruthy()
       expect(errorLog?.keyDeletedBadge).toBeTruthy()
+      expect(errorLog?.upstreamRequestId).toBeTruthy()
     })
   }
 })

@@ -278,6 +278,7 @@ export default {
         status: 'Status',
         message: 'Message',
         traceId: 'Trace ID',
+        upstreamRequestId: 'Upstream ID',
         ip: 'IP',
         latency: 'Request Duration',
         action: 'Action',
