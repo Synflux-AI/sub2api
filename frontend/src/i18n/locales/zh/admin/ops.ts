@@ -278,6 +278,7 @@ export default {
         status: '状态码',
         message: '响应内容',
         traceId: 'Trace ID',
+        upstreamRequestId: '上游ID',
         ip: 'IP',
         latency: '请求时长',
         clientIp: '客户端 IP',

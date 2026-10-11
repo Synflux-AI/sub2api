@@ -947,6 +947,8 @@ export interface OpsErrorLog {
   request_id: string
   trace_id: string
   message: string
+  // 最后一次上游尝试的请求标识（账户配置了上游ID头名时取该头），仅管理端返回
+  upstream_request_id?: string
 
   user_id?: number | null
   user_email: string

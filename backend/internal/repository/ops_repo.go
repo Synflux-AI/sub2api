@@ -272,7 +272,8 @@ SELECT
   COALESCE(e.user_agent, ''),
   e.request_type,
   COALESCE(ak.name, ''),
-  ak.deleted_at
+  ak.deleted_at,
+  ` + opsErrorLogUpstreamRequestIDExpr + `
 FROM ops_error_logs e
 LEFT JOIN accounts a ON e.account_id = a.id
 LEFT JOIN groups g ON e.group_id = g.id
@@ -345,6 +346,7 @@ LIMIT $` + itoa(len(args)+1) + ` OFFSET $` + itoa(len(args)+2)
 			&requestType,
 			&apiKeyName,
 			&apiKeyDeletedAt,
+			&item.UpstreamRequestID,
 		); err != nil {
 			return nil, err
 		}
@@ -400,6 +402,18 @@ LIMIT $` + itoa(len(args)+1) + ` OFFSET $` + itoa(len(args)+2)
 		PageSize: pageSize,
 	}, nil
 }
+
+// opsErrorLogUpstreamRequestIDExpr 取 upstream_errors 中最后一次带上游请求标识的尝试，
+// 作为该错误的“上游ID”。标识在写入事件时已按账户配置的头名解析（未配置时为各路径自带的标识）。
+const opsErrorLogUpstreamRequestIDExpr = `COALESCE((
+    SELECT ev.value->>'upstream_request_id'
+    FROM jsonb_array_elements(
+        CASE WHEN jsonb_typeof(e.upstream_errors) = 'array' THEN e.upstream_errors ELSE '[]'::jsonb END
+    ) WITH ORDINALITY AS ev(value, ord)
+    WHERE COALESCE(ev.value->>'upstream_request_id', '') <> ''
+    ORDER BY ev.ord DESC
+    LIMIT 1
+  ), '')`
 
 func (r *opsRepository) GetErrorLogByID(ctx context.Context, id int64) (*service.OpsErrorLogDetail, error) {
 	if r == nil || r.db == nil {
@@ -458,7 +472,8 @@ SELECT
   e.time_to_first_token_ms,
   COALESCE(e.api_key_prefix, ''),
   COALESCE(ak.name, ''),
-  ak.deleted_at
+  ak.deleted_at,
+  ` + opsErrorLogUpstreamRequestIDExpr + `
 FROM ops_error_logs e
 LEFT JOIN users u ON e.user_id = u.id
 LEFT JOIN accounts a ON e.account_id = a.id
@@ -535,6 +550,7 @@ LIMIT 1`
 		&out.APIKeyPrefix,
 		&detailAPIKeyName,
 		&detailAPIKeyDeletedAt,
+		&out.UpstreamRequestID,
 	)
 	if err != nil {
 		return nil, err

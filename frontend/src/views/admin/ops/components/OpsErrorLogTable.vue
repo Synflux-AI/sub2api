@@ -140,6 +140,24 @@
           <span v-else class="text-sm text-gray-400 dark:text-gray-500">-</span>
         </template>
 
+        <template #cell-upstream_request_id="{ row }">
+          <div v-if="row.upstream_request_id" class="flex max-w-[160px] items-center gap-1.5">
+            <span class="truncate font-mono text-xs text-gray-500 dark:text-gray-400" :title="row.upstream_request_id">
+              {{ row.upstream_request_id }}
+            </span>
+            <button
+              type="button"
+              class="shrink-0 rounded p-0.5 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-dark-700 dark:hover:text-gray-300"
+              :class="copiedUpstreamRequestId === row.upstream_request_id ? 'text-green-500 hover:text-green-500' : ''"
+              :title="copiedUpstreamRequestId === row.upstream_request_id ? t('keys.copied') : t('keys.copyToClipboard')"
+              @click.stop="copyUpstreamRequestId(row.upstream_request_id)"
+            >
+              <Icon :name="copiedUpstreamRequestId === row.upstream_request_id ? 'check' : 'copy'" size="sm" class="h-3.5 w-3.5" />
+            </button>
+          </div>
+          <span v-else class="text-sm text-gray-400 dark:text-gray-500">-</span>
+        </template>
+
         <template #cell-user_agent="{ row }">
           <span
             v-if="row.user_agent"
@@ -188,8 +206,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import Icon from '@/components/icons/Icon.vue'
 import DataTable from '@/components/common/DataTable.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import Pagination from '@/components/common/Pagination.vue'
@@ -200,8 +219,19 @@ import type { Column } from '@/components/common/types'
 import { getSeverityClass, formatDateTime } from '../utils/opsFormatters'
 import { mapErrorCategory } from '@/utils/errorCategory'
 import { mapErrorSortKey, statusCodeBadgeClass } from '@/utils/errorBadges'
+import { useClipboard } from '@/composables/useClipboard'
 
 const { t } = useI18n()
+const copiedUpstreamRequestId = ref<string | null>(null)
+async function copyUpstreamRequestId(value: string) {
+  // 点击时才取 clipboard（内部依赖 app store），表格本身不依赖 pinia 即可渲染
+  const { copyToClipboard } = useClipboard()
+  if (!(await copyToClipboard(value, t('admin.usage.upstreamRequestIdCopied')))) return
+  copiedUpstreamRequestId.value = value
+  window.setTimeout(() => {
+    if (copiedUpstreamRequestId.value === value) copiedUpstreamRequestId.value = null
+  }, 2000)
+}
 
 // 列序对齐管理端用量明细:身份(用户→Key→账号)→ 请求形态(平台→模型→端点→分组→类型)
 // → 结果(状态→消息)→ 时间→UA→IP→操作
@@ -218,6 +248,7 @@ const allColumns = computed<Column[]>(() => [
   { key: 'status', label: t('admin.ops.errorLog.status'), sortable: true },
   { key: 'message', label: t('admin.ops.errorLog.message') },
   { key: 'trace_id', label: t('admin.ops.errorLog.traceId') },
+  { key: 'upstream_request_id', label: t('admin.ops.errorLog.upstreamRequestId') },
   { key: 'created_at', label: t('admin.ops.errorLog.time'), sortable: true },
   { key: 'user_agent', label: t('usage.userAgent') },
   { key: 'client_ip', label: t('admin.ops.errorLog.ip') },

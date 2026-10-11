@@ -729,6 +729,7 @@ const errAllColumns = computed(() => [
   { key: 'status', label: t('admin.ops.errorLog.status') },
   { key: 'message', label: t('admin.ops.errorLog.message') },
   { key: 'trace_id', label: t('admin.ops.errorLog.traceId') },
+  { key: 'upstream_request_id', label: t('admin.ops.errorLog.upstreamRequestId') },
   { key: 'created_at', label: t('admin.ops.errorLog.time') },
   { key: 'user_agent', label: t('usage.userAgent') },
   { key: 'client_ip', label: t('admin.ops.errorLog.ip') },

@@ -52,6 +52,8 @@ type OpsErrorLog struct {
 	RequestID       string `json:"request_id"`
 	TraceID         string `json:"trace_id"`
 	Message         string `json:"message"`
+	// UpstreamRequestID 是最后一次上游尝试的请求标识（取自 upstream_errors），仅管理端可见。
+	UpstreamRequestID string `json:"upstream_request_id,omitempty"`
 
 	UserID      *int64 `json:"user_id"`
 	UserEmail   string `json:"user_email"`
