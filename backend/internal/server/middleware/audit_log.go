@@ -58,6 +58,9 @@ var auditExtraAllowedKeys = map[string]struct{}{
 	"http_status": {}, "latency_ms": {}, "token_applied": {}, "retryable": {},
 	"event_id": {}, "requested_count": {}, "deleted_events": {}, "deleted_jobs": {},
 	"matched_count": {}, "snapshot_max_id": {}, "filter_hash": {}, "confirm": {},
+	// 修改用户时实际发生的变化与改前值
+	"changed": {}, "old_role": {}, "old_status": {}, "old_concurrency": {}, "old_rpm_limit": {},
+	"groups_added": {}, "groups_removed": {}, "rates_changed": {},
 }
 
 // SetAuditExtra adds allowlisted, scalar details to the current audit entry.
