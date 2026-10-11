@@ -638,6 +638,7 @@ export interface SystemSettings {
 
   // Gateway forwarding behavior
   openai_ttft_mode: string;
+  openai_immediate_lifecycle_events: boolean;
   enable_fingerprint_unification: boolean;
   enable_metadata_passthrough: boolean;
   enable_cch_signing: boolean;
@@ -972,6 +973,7 @@ export interface UpdateSettingsRequest {
   scheduling_ttft_monitor_enabled?: boolean;
   scheduling_ttft_degrade_enabled?: boolean;
   openai_ttft_mode?: string;
+  openai_immediate_lifecycle_events?: boolean;
   enable_fingerprint_unification?: boolean;
   enable_metadata_passthrough?: boolean;
   enable_cch_signing?: boolean;

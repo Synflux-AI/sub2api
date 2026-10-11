@@ -5517,6 +5517,32 @@
                 </p>
               </div>
 
+              <!-- OpenAI Responses created / in_progress 立即下发 -->
+              <div class="flex items-center justify-between">
+                <div>
+                  <label
+                    class="text-sm font-medium text-gray-700 dark:text-gray-300"
+                  >
+                    {{
+                      t(
+                        "admin.settings.gatewayForwarding.openaiImmediateLifecycleEvents",
+                      )
+                    }}
+                  </label>
+                  <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                    {{
+                      t(
+                        "admin.settings.gatewayForwarding.openaiImmediateLifecycleEventsHint",
+                      )
+                    }}
+                  </p>
+                </div>
+                <Toggle
+                  v-model="form.openai_immediate_lifecycle_events"
+                  data-testid="openai-immediate-lifecycle-events"
+                />
+              </div>
+
               <!-- Fingerprint Unification -->
               <div class="flex items-center justify-between">
                 <div>
@@ -10172,6 +10198,7 @@ const form = reactive<SettingsForm>({
   openai_advanced_scheduler_weight_session_sticky: "",
   // Gateway forwarding behavior
   openai_ttft_mode: "semantic",
+  openai_immediate_lifecycle_events: false,
   enable_fingerprint_unification: true,
   enable_metadata_passthrough: false,
   enable_cch_signing: false,
@@ -11821,6 +11848,7 @@ async function saveSettings() {
       scheduling_price_aware_enabled: form.scheduling_price_aware_enabled,
       openai_ttft_mode:
         form.openai_ttft_mode === "visible" ? "visible" : "semantic",
+      openai_immediate_lifecycle_events: form.openai_immediate_lifecycle_events,
       enable_fingerprint_unification: form.enable_fingerprint_unification,
       enable_metadata_passthrough: form.enable_metadata_passthrough,
       enable_cch_signing: form.enable_cch_signing,
