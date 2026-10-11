@@ -41,7 +41,8 @@ func TestUserChangesAuditExtra(t *testing.T) {
 	for i := range many {
 		many[i] = int64(1000 + i)
 	}
-	listed := userChangesAuditExtra(service.UserChanges{GroupsAdded: many})["groups_added"].(string)
+	listed, ok := userChangesAuditExtra(service.UserChanges{GroupsAdded: many})["groups_added"].(string)
+	require.True(t, ok)
 	require.LessOrEqual(t, len(listed), 128)
 	require.Equal(t, "1000,1001", listed[:9])
 	require.Regexp(t, `^(\d{4},)*\d{4}$`, listed)
