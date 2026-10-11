@@ -382,6 +382,7 @@ func (h *UserHandler) Update(c *gin.Context) {
 	}
 
 	// 使用指针类型直接传递，nil 表示未提供该字段
+	var changes service.UserChanges
 	user, err := h.adminService.UpdateUser(c.Request.Context(), userID, &service.UpdateUserInput{
 		Email:                req.Email,
 		Password:             req.Password,
@@ -396,13 +397,71 @@ func (h *UserHandler) Update(c *gin.Context) {
 		RestrictPublicGroups: req.RestrictPublicGroups,
 		GroupRates:           req.GroupRates,
 		ActorAdminID:         getAdminIDFromContext(c),
+		Changes:              &changes,
 	})
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
+	middleware.SetAuditExtra(c, userChangesAuditExtra(changes))
 
 	response.Success(c, dto.UserFromServiceAdmin(user))
+}
+
+// userChangesAuditExtra 把这次实际改了什么写进审计附加信息。附加信息只收标量，
+// 分组拼成 "101,102"，倍率拼成 "101:0.3>,103:>0.45"（> 左边改前、右边改后，空表示默认倍率）。
+// changed 每次都写，空串表示提交了但什么都没变，读审计的一方据此区分有没有记录改前值。
+// changed 含 group_rates 却没有 rates_changed，表示倍率没读到、说不清改了什么。
+func userChangesAuditExtra(changes service.UserChanges) map[string]any {
+	extra := map[string]any{"changed": strings.Join(changes.Fields, ",")}
+	for field, old := range changes.Old {
+		extra["old_"+field] = old
+	}
+	ids := func(list []int64) []string {
+		parts := make([]string, len(list))
+		for i, id := range list {
+			parts[i] = strconv.FormatInt(id, 10)
+		}
+		return parts
+	}
+	if len(changes.GroupsAdded) > 0 {
+		extra["groups_added"] = joinAuditList(ids(changes.GroupsAdded))
+	}
+	if len(changes.GroupsRemoved) > 0 {
+		extra["groups_removed"] = joinAuditList(ids(changes.GroupsRemoved))
+	}
+	if len(changes.Rates) > 0 {
+		rate := func(v *float64) string {
+			if v == nil {
+				return ""
+			}
+			return strconv.FormatFloat(*v, 'f', -1, 64)
+		}
+		parts := make([]string, len(changes.Rates))
+		for i, r := range changes.Rates {
+			parts[i] = fmt.Sprintf("%d:%s>%s", r.GroupID, rate(r.Old), rate(r.New))
+		}
+		extra["rates_changed"] = joinAuditList(parts)
+	}
+	return extra
+}
+
+// joinAuditList 按逗号拼接，放不下的项整项丢掉。SetAuditExtra 会把字符串截到 128 个字符，
+// 截在一个 ID 中间会被读成另一个分组；一次动几十个分组时列表不全，但不会错。
+func joinAuditList(parts []string) string {
+	const limit = 128
+	out := ""
+	for _, part := range parts {
+		next := part
+		if out != "" {
+			next = out + "," + part
+		}
+		if len(next) > limit {
+			break
+		}
+		out = next
+	}
+	return out
 }
 
 // Delete handles deleting a user

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"sort"
 	"strings"
 	"time"
@@ -219,6 +220,15 @@ func (s *adminServiceImpl) UpdateUser(ctx context.Context, id int64, input *Upda
 	oldRole := user.Role
 	oldRPMLimit := user.RPMLimit
 	oldAllowedGroups := append([]int64(nil), user.AllowedGroups...)
+	before := *user
+	before.AllowedGroups = oldAllowedGroups
+	// 审计要比对改前的专属倍率；读不到就不记倍率变化
+	var oldRates map[int64]float64
+	if input.Changes != nil && input.GroupRates != nil && s.userGroupRateRepo != nil {
+		if rates, err := s.userGroupRateRepo.GetByUserID(ctx, id); err == nil {
+			oldRates = maps.Clone(rates)
+		}
+	}
 
 	// fields 与下面的 input.X 判空条件一一对应：管理员没提交的列不写回，
 	// 避免这份快照回滚并发的扣费、状态变更或批量限额调整。
@@ -316,6 +326,10 @@ func (s *adminServiceImpl) UpdateUser(ctx context.Context, id int64, input *Upda
 		if user.Concurrency != oldConcurrency || user.Status != oldStatus || user.Role != oldRole || user.RPMLimit != oldRPMLimit || user.RestrictPublicGroups != oldRestrictPublicGroups || !sameInt64Set(user.AllowedGroups, oldAllowedGroups) {
 			s.authCacheInvalidator.InvalidateAuthCacheByUserID(ctx, user.ID)
 		}
+	}
+
+	if input.Changes != nil {
+		*input.Changes = diffUserChanges(&before, user, input, oldRates)
 	}
 
 	concurrencyDiff := user.Concurrency - oldConcurrency
