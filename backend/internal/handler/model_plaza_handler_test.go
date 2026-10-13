@@ -262,3 +262,15 @@ func TestFilterPlazaVisibleGroups_SubscribedExclusiveGroup(t *testing.T) {
 		require.Equal(t, int64(42), visible[0].ID)
 	}
 }
+
+func TestModelPlazaHandler_AdminContextPricingValidatesParams(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := &ModelPlazaHandler{}
+	for _, query := range []string{"", "?group_id=1", "?model=a&group_id=x", "?model=a&group_id=0"} {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/admin/channels/context-pricing"+query, nil)
+		h.AdminContextPricing(c)
+		require.Equal(t, http.StatusBadRequest, w.Code, query)
+	}
+}

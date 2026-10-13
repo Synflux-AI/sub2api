@@ -2,7 +2,9 @@ package handler
 
 import (
 	"log/slog"
+	"strconv"
 
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -253,4 +255,36 @@ func toModelPlazaOfficialPricing(p *service.PlazaOfficialPricing) *modelPlazaOff
 		CacheReadPrice:    p.CacheReadPrice,
 		Intervals:         toUserPricingIntervals(p.Intervals),
 	}
+}
+
+// AdminContextPricing 返回一批模型的上下文阶梯单价（管理端只读，供外部运营工具按分组展示长上下文价）。
+// 口径同模型广场：group_id 缺省为官方阶梯，否则为该分组的实收阶梯（随分组长上下文开关）；只列多档的模型。
+// GET /api/v1/admin/channels/context-pricing?group_id=10&model=a&model=b
+func (h *ModelPlazaHandler) AdminContextPricing(c *gin.Context) {
+	models := c.QueryArray("model")
+	if len(models) == 0 {
+		response.ErrorFrom(c, infraerrors.BadRequest("MISSING_PARAMETER", "model parameter is required").
+			WithMetadata(map[string]string{"param": "model"}))
+		return
+	}
+	var groupID int64
+	if raw := c.Query("group_id"); raw != "" {
+		id, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || id <= 0 {
+			response.ErrorFrom(c, infraerrors.BadRequest("INVALID_PARAMETER", "group_id must be a positive integer").
+				WithMetadata(map[string]string{"param": "group_id"}))
+			return
+		}
+		groupID = id
+	}
+	intervals, err := h.plazaService.ContextPricingIntervals(c.Request.Context(), groupID, models)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	out := make(map[string][]userPricingIntervalDTO, len(intervals))
+	for model, ivs := range intervals {
+		out[model] = toUserPricingIntervals(ivs)
+	}
+	response.Success(c, gin.H{"intervals": out})
 }

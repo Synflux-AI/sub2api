@@ -2,9 +2,12 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
+
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 )
 
 // PlazaOfficialPricing 模型广场展示用的官方参考价（USD per token），与计费同源：
@@ -372,4 +375,50 @@ func (s *ModelPlazaService) lookupOfficialPricing(ctx context.Context, modelName
 	}
 	memo[modelName] = result
 	return result
+}
+
+// ErrPlazaGroupNotFound 查阶梯的分组不存在或未启用。
+var ErrPlazaGroupNotFound = infraerrors.NotFound("GROUP_NOT_FOUND", "group not found or inactive")
+
+// ContextPricingIntervals 按与广场相同的口径（fillDisplayPricing / lookupOfficialPricing）查一批模型的上下文阶梯：
+// groupID 为 0 时是官方阶梯（无分组、无渠道），否则是该分组的实收阶梯（随分组的长上下文开关）。
+// 只返回多档的模型；单档、非 token 计费或查不到定价的模型不在结果里。单价是倍率 1 下的 USD / token。
+func (s *ModelPlazaService) ContextPricingIntervals(ctx context.Context, groupID int64, models []string) (map[string][]PricingInterval, error) {
+	if s.billingService == nil || s.resolver == nil {
+		return map[string][]PricingInterval{}, nil
+	}
+	in := ContextPricingScheduleInput{}
+	if groupID != 0 {
+		groups, err := s.groupRepo.ListActive(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("list active groups: %w", err)
+		}
+		for i := range groups {
+			if groups[i].ID == groupID {
+				in.Group = &groups[i]
+				break
+			}
+		}
+		if in.Group == nil {
+			return nil, ErrPlazaGroupNotFound
+		}
+		if in.Group.Platform != PlatformComposite {
+			in.Platform = in.Group.Platform
+		}
+	}
+	out := make(map[string][]PricingInterval, len(models))
+	for _, model := range models {
+		in.Model = model
+		sched, err := s.billingService.ResolveContextPricingSchedule(ctx, s.resolver, in)
+		if errors.Is(err, ErrModelPricingUnavailable) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if sched != nil && len(sched.Tiers) > 1 {
+			out[model] = plazaIntervalsFromTiers(sched.Tiers)
+		}
+	}
+	return out, nil
 }

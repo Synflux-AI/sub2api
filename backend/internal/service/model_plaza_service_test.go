@@ -509,3 +509,38 @@ func TestListGroups_TimePricingPassthrough(t *testing.T) {
 	// 展示单价为标准时段价
 	require.InDelta(t, 0.28e-6, *m.Pricing.InputPrice, 1e-15)
 }
+
+func TestContextPricingIntervals_OfficialAndGroupToggle(t *testing.T) {
+	// 与 ListGroups 同口径：官方阶梯不看分组；分组阶梯随分组的长上下文开关；单档与查不到定价的模型不返回。
+	channels := []Channel{{
+		ID: 1, Name: "ch", Status: StatusActive, GroupIDs: []int64{10, 20},
+		ModelPricing: []ChannelModelPricing{{Platform: PlatformOpenAI, Models: []string{"gpt-5.4"}, BillingMode: BillingModeToken}},
+	}}
+	groups := []Group{
+		{ID: 10, Name: "on", Platform: PlatformOpenAI, RateMultiplier: 1, LongContextPricingEnabled: true},
+		{ID: 20, Name: "off", Platform: PlatformOpenAI, RateMultiplier: 2, LongContextPricingEnabled: false},
+	}
+	svc := newPlazaServiceWithBilling(channels, groups, map[int64]string{10: PlatformOpenAI, 20: PlatformOpenAI},
+		newStubPricingServiceFromJSON(t, openAILadderCatalogJSON))
+	ctx := context.Background()
+
+	official, err := svc.ContextPricingIntervals(ctx, 0, []string{"gpt-5.4", "no-such-model"})
+	require.NoError(t, err)
+	require.Len(t, official, 1)
+	require.Len(t, official["gpt-5.4"], 2)
+	require.Equal(t, ">272K", official["gpt-5.4"][1].TierLabel)
+	require.Equal(t, 272000, official["gpt-5.4"][1].MinTokens)
+	require.InDelta(t, 5e-6, *official["gpt-5.4"][1].InputPrice, 1e-15)
+
+	on, err := svc.ContextPricingIntervals(ctx, 10, []string{"gpt-5.4"})
+	require.NoError(t, err)
+	require.Len(t, on["gpt-5.4"], 2)
+	require.InDelta(t, 22.5e-6, *on["gpt-5.4"][1].OutputPrice, 1e-15)
+
+	off, err := svc.ContextPricingIntervals(ctx, 20, []string{"gpt-5.4"})
+	require.NoError(t, err)
+	require.Empty(t, off, "分组关闭长上下文时只有一档")
+
+	_, err = svc.ContextPricingIntervals(ctx, 99, []string{"gpt-5.4"})
+	require.ErrorIs(t, err, ErrPlazaGroupNotFound)
+}
