@@ -1,7 +1,7 @@
 package handler
 
 // CN 分组 /v1/messages 调度闸门回归（修复:正常途径创建的 CN 分组曾恒 403）：
-// sanitizeGroupMessagesDispatchFields 对非 openai/composite 平台强制 AllowMessagesDispatch
+// sanitizeGroupMessagesDispatchFields 对非 openai/composite/gemini 平台强制 AllowMessagesDispatch
 // =false，故 CN 分组必须与 grok 一样在闸门处豁免，否则原生 Anthropic 直通
 //（Claude Code 主用例）永远不可达。composite 分组解析到 grok/CN 目标时按
 // 目标平台豁免，解析到 openai 目标仍受其可配置开关控制。

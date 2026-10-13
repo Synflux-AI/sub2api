@@ -1668,7 +1668,7 @@
           </p>
         </div>
 
-        <!-- OpenAI Messages 调度配置（OpenAI 与 Composite 平台） -->
+        <!-- Messages 调度配置（OpenAI、Composite 与 Gemini 平台；模型映射只对 OpenAI） -->
         <div
           v-if="supportsMessagesDispatchPlatform(createForm.platform)"
           class="border-t border-gray-200 dark:border-dark-400 pt-4 mt-4"
@@ -3371,7 +3371,7 @@
           </p>
         </div>
 
-        <!-- OpenAI Messages 调度配置（OpenAI 与 Composite 平台） -->
+        <!-- Messages 调度配置（OpenAI、Composite 与 Gemini 平台；模型映射只对 OpenAI） -->
         <div
           v-if="supportsMessagesDispatchPlatform(editForm.platform)"
           class="border-t border-gray-200 dark:border-dark-400 pt-4 mt-4"

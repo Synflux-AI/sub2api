@@ -116,7 +116,8 @@ func sanitizeGroupMessagesDispatchFields(g *Group) {
 	if g == nil || g.Platform == PlatformOpenAI {
 		return
 	}
-	if g.Platform != PlatformComposite {
+	// gemini 分组的 /v1/messages 靠协议转换实现，同样由这个开关放行（见 routes 的 geminiMessagesDispatchDenied）。
+	if g.Platform != PlatformComposite && g.Platform != PlatformGemini {
 		g.AllowMessagesDispatch = false
 	}
 	g.DefaultMappedModel = ""
