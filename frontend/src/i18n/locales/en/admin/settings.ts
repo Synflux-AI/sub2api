@@ -1348,6 +1348,8 @@ export default {
       openaiExperimentalScheduler: {
         title: 'OpenAI experimental scheduler policy',
         description: "Disabled by default. When enabled, this only changes the gateway's experimental account-selection policy for OpenAI traffic; it does not indicate an upstream OpenAI capability.",
+        modelCooldownFailOpenTitle: 'Schedule through model cooldown',
+        modelCooldownFailOpenDescription: 'Off by default. When every available account for a model is in its short cooldown (10s/45s after consecutive failures), still schedule a cooling account instead of returning 503 immediately; healthy accounts are still preferred when available. Disabled, rate-limited, and already-failed-over accounts are unaffected. Useful for groups with a single account per model; changes take effect within about 5 seconds.',
         lowRatePriorityTitle: 'Prefer lower rates',
         lowRatePriorityDescription: 'When enabled, accounts with lower billing rates are preferred. If rates are equal, account priority, current load, and other scheduling factors are considered. This switch is ignored when the experimental scheduler is enabled.',
         oauthRateTitle: 'OAuth scheduling reference rate',

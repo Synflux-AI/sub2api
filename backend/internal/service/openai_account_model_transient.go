@@ -162,6 +162,26 @@ func (s *openAIAccountModelTransientState) isBlocked(accountID int64, model stri
 	return !entry.blockUntil.IsZero() && now.Before(entry.blockUntil)
 }
 
+// activeBlockCount 返回当前仍在冷却窗口内的「账号+模型」条目数。只读，不刷新
+// lastTouched：它只用于选号失败后判断是否值得跑 fail-open 第二轮。
+func (s *openAIAccountModelTransientState) activeBlockCount(now time.Time) int {
+	if s == nil {
+		return 0
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	count := 0
+	for _, entry := range s.entries {
+		if !entry.blockUntil.IsZero() && now.Before(entry.blockUntil) {
+			count++
+		}
+	}
+	return count
+}
+
 func (s *openAIAccountModelTransientState) size() int {
 	if s == nil {
 		return 0

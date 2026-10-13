@@ -514,6 +514,7 @@ const baseSettingsResponse = {
   payment_visible_method_alipay_enabled: true,
   payment_visible_method_wxpay_enabled: true,
   openai_low_upstream_rate_priority_enabled: false,
+  openai_model_cooldown_fail_open_enabled: false,
   openai_oauth_scheduling_rate_multiplier: 1,
   openai_advanced_scheduler_enabled: false,
   openai_advanced_scheduler_sticky_weighted_enabled: false,
@@ -1762,6 +1763,34 @@ describe("admin SettingsView payment visible method controls", () => {
     expect(updateSettings).toHaveBeenCalledWith(expect.objectContaining({
       openai_oauth_scheduling_rate_multiplier: null,
     }));
+  });
+
+  it("loads and submits the model cooldown fail-open switch in both scheduling modes", async () => {
+    getSettings.mockResolvedValue({
+      ...baseSettingsResponse,
+      openai_model_cooldown_fail_open_enabled: true,
+    });
+    const wrapper = mountView();
+    await flushPromises();
+
+    const toggle = wrapper.get('[data-testid="openai-model-cooldown-fail-open-toggle"]');
+    expect(wrapper.text()).toContain("modelCooldownFailOpenTitle");
+
+    await wrapper
+      .get('[data-testid="openai-advanced-scheduler-toggle"]')
+      .setValue(true);
+    expect(
+      wrapper.find('[data-testid="openai-model-cooldown-fail-open-toggle"]').exists(),
+    ).toBe(true);
+
+    await toggle.setValue(false);
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+    expect(updateSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        openai_model_cooldown_fail_open_enabled: false,
+      }),
+    );
   });
 
   it("places and explains rate controls for both scheduling modes", async () => {

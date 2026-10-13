@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"go.uber.org/zap"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -45,6 +46,7 @@ const (
 
 type cachedOpenAIAdvancedSchedulerSetting struct {
 	lowUpstreamRatePriorityEnabled bool
+	modelCooldownFailOpenEnabled   bool
 	oauthSchedulingRateMultiplier  *float64
 	enabled                        bool
 	stickyWeightedEnabled          bool
@@ -56,6 +58,7 @@ type cachedOpenAIAdvancedSchedulerSetting struct {
 
 type openAIAdvancedSchedulerRuntimeSettings struct {
 	lowUpstreamRatePriorityEnabled bool
+	modelCooldownFailOpenEnabled   bool
 	oauthSchedulingRateMultiplier  *float64
 	enabled                        bool
 	stickyWeightedEnabled          bool
@@ -1457,7 +1460,7 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 			filterStats.exclude("platform_mismatch")
 			continue
 		}
-		if s.service.isOpenAIAccountRequestRuntimeBlocked(account, req.RequestedModel) {
+		if s.service.isOpenAIAccountRequestRuntimeBlocked(ctx, account, req.RequestedModel) {
 			filterStats.exclude("runtime_blocked")
 			continue
 		}
@@ -1784,7 +1787,7 @@ func (s *defaultOpenAIAccountScheduler) isAccountRequestCompatibleReason(ctx con
 	if req.RequirePrivacySet && !account.IsPrivacySet() {
 		return false, "privacy_not_set"
 	}
-	if s != nil && s.service != nil && s.service.isOpenAIAccountRequestRuntimeBlocked(account, req.RequestedModel) {
+	if s != nil && s.service != nil && s.service.isOpenAIAccountRequestRuntimeBlocked(ctx, account, req.RequestedModel) {
 		return false, "runtime_blocked"
 	}
 	if s != nil && s.service != nil && s.service.isOpenAIProxyStreamQuarantined(ctx, account) {
@@ -1888,6 +1891,7 @@ func (s *OpenAIGatewayService) openAIAdvancedSchedulerRuntimeSettings(ctx contex
 		if time.Now().UnixNano() < cached.expiresAt {
 			return openAIAdvancedSchedulerRuntimeSettings{
 				lowUpstreamRatePriorityEnabled: cached.lowUpstreamRatePriorityEnabled,
+				modelCooldownFailOpenEnabled:   cached.modelCooldownFailOpenEnabled,
 				oauthSchedulingRateMultiplier:  cached.oauthSchedulingRateMultiplier,
 				enabled:                        cached.enabled,
 				stickyWeightedEnabled:          cached.stickyWeightedEnabled,
@@ -1903,6 +1907,7 @@ func (s *OpenAIGatewayService) openAIAdvancedSchedulerRuntimeSettings(ctx contex
 			if time.Now().UnixNano() < cached.expiresAt {
 				return openAIAdvancedSchedulerRuntimeSettings{
 					lowUpstreamRatePriorityEnabled: cached.lowUpstreamRatePriorityEnabled,
+					modelCooldownFailOpenEnabled:   cached.modelCooldownFailOpenEnabled,
 					oauthSchedulingRateMultiplier:  cached.oauthSchedulingRateMultiplier,
 					enabled:                        cached.enabled,
 					stickyWeightedEnabled:          cached.stickyWeightedEnabled,
@@ -1914,6 +1919,7 @@ func (s *OpenAIGatewayService) openAIAdvancedSchedulerRuntimeSettings(ctx contex
 		}
 
 		lowUpstreamRatePriorityEnabled := false
+		modelCooldownFailOpenEnabled := false
 		oauthSchedulingRateMultiplier := parseOpenAIOAuthSchedulingRateMultiplier(nil)
 		enabled := false
 		stickyWeightedEnabled := false
@@ -1926,6 +1932,7 @@ func (s *OpenAIGatewayService) openAIAdvancedSchedulerRuntimeSettings(ctx contex
 
 			if values, err := repo.GetMultiple(dbCtx, openAIAdvancedSchedulerRuntimeSettingKeys()); err == nil {
 				lowUpstreamRatePriorityEnabled = strings.EqualFold(strings.TrimSpace(values[SettingKeyOpenAILowUpstreamRatePriorityEnabled]), "true")
+				modelCooldownFailOpenEnabled = strings.EqualFold(strings.TrimSpace(values[SettingKeyOpenAIModelCooldownFailOpenEnabled]), "true")
 				oauthSchedulingRateMultiplier = parseOpenAIOAuthSchedulingRateMultiplier(values)
 				enabled = strings.EqualFold(strings.TrimSpace(values[openAIAdvancedSchedulerSettingKey]), "true")
 				stickyWeightedEnabled = strings.EqualFold(strings.TrimSpace(values[SettingKeyOpenAIAdvancedSchedulerStickyWeightedEnabled]), "true")
@@ -1943,6 +1950,7 @@ func (s *OpenAIGatewayService) openAIAdvancedSchedulerRuntimeSettings(ctx contex
 					}
 				}
 				lowUpstreamRatePriorityEnabled = strings.EqualFold(strings.TrimSpace(fallbackValues[SettingKeyOpenAILowUpstreamRatePriorityEnabled]), "true")
+				modelCooldownFailOpenEnabled = strings.EqualFold(strings.TrimSpace(fallbackValues[SettingKeyOpenAIModelCooldownFailOpenEnabled]), "true")
 				oauthSchedulingRateMultiplier = parseOpenAIOAuthSchedulingRateMultiplier(fallbackValues)
 				enabled = strings.EqualFold(strings.TrimSpace(fallbackValues[openAIAdvancedSchedulerSettingKey]), "true")
 				stickyWeightedEnabled = strings.EqualFold(strings.TrimSpace(fallbackValues[SettingKeyOpenAIAdvancedSchedulerStickyWeightedEnabled]), "true")
@@ -1954,6 +1962,7 @@ func (s *OpenAIGatewayService) openAIAdvancedSchedulerRuntimeSettings(ctx contex
 
 		openAIAdvancedSchedulerSettingCache.Store(&cachedOpenAIAdvancedSchedulerSetting{
 			lowUpstreamRatePriorityEnabled: lowUpstreamRatePriorityEnabled,
+			modelCooldownFailOpenEnabled:   modelCooldownFailOpenEnabled,
 			oauthSchedulingRateMultiplier:  oauthSchedulingRateMultiplier,
 			enabled:                        enabled,
 			stickyWeightedEnabled:          stickyWeightedEnabled,
@@ -1964,6 +1973,7 @@ func (s *OpenAIGatewayService) openAIAdvancedSchedulerRuntimeSettings(ctx contex
 		})
 		return openAIAdvancedSchedulerRuntimeSettings{
 			lowUpstreamRatePriorityEnabled: lowUpstreamRatePriorityEnabled,
+			modelCooldownFailOpenEnabled:   modelCooldownFailOpenEnabled,
 			oauthSchedulingRateMultiplier:  oauthSchedulingRateMultiplier,
 			enabled:                        enabled,
 			stickyWeightedEnabled:          stickyWeightedEnabled,
@@ -1979,6 +1989,12 @@ func (s *OpenAIGatewayService) openAIAdvancedSchedulerRuntimeSettings(ctx contex
 
 func (s *OpenAIGatewayService) isOpenAIAdvancedSchedulerEnabled(ctx context.Context) bool {
 	return s.openAIAdvancedSchedulerRuntimeSettings(ctx).enabled
+}
+
+// isOpenAIModelCooldownFailOpenEnabled 对应管理台「模型冷却兜底调度」开关，与高级调度器
+// 共用 5s 缓存，改动后 5s 内各副本生效。默认关闭。
+func (s *OpenAIGatewayService) isOpenAIModelCooldownFailOpenEnabled(ctx context.Context) bool {
+	return s.openAIAdvancedSchedulerRuntimeSettings(ctx).modelCooldownFailOpenEnabled
 }
 
 func (s *OpenAIGatewayService) isOpenAILowUpstreamRatePriorityEnabled(ctx context.Context) bool {
@@ -2003,6 +2019,7 @@ func (s *OpenAIGatewayService) isOpenAIAdvancedSchedulerSubscriptionPriorityEnab
 func openAIAdvancedSchedulerRuntimeSettingKeys() []string {
 	keys := []string{
 		SettingKeyOpenAILowUpstreamRatePriorityEnabled,
+		SettingKeyOpenAIModelCooldownFailOpenEnabled,
 		SettingKeyOpenAIOAuthSchedulingRateMultiplier,
 		openAIAdvancedSchedulerSettingKey,
 		SettingKeyOpenAIAdvancedSchedulerStickyWeightedEnabled,
@@ -2160,6 +2177,12 @@ func (s *OpenAIGatewayService) SelectAccountWithSchedulerForImages(
 // zeroing out capacity. The retry re-runs the exact same selection with the
 // quarantine checks bypassed, so healthy proxies always win the first pass
 // and quarantined ones only serve when nothing else can.
+//
+// 开启「模型冷却兜底调度」（SettingKeyOpenAIModelCooldownFailOpenEnabled）后，
+// 「账号+模型」短期冷却（openai_account_model_transient.go）按同一思路降级成偏好：
+// 首轮照常避开冷却中的号；只有首轮（含代理熔断 fail-open 那一轮）无号可选且确有
+// 冷却在生效时，才再跑一轮忽略这一项冷却。分组里某模型只有一个号时，它因此不会
+// 被冷却成本地 503，而是照常被调度、把上游的真实结果交给客户端。
 func (s *OpenAIGatewayService) selectAccountWithScheduler(
 	ctx context.Context,
 	groupID *int64,
@@ -2175,23 +2198,50 @@ func (s *OpenAIGatewayService) selectAccountWithScheduler(
 	previousResponseCanMove bool,
 	useUpstreamTokenCost bool,
 ) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
-	selection, decision, err := s.selectAccountWithSchedulerOnce(ctx, groupID, previousResponseID, sessionHash, requestedModel, excludedIDs, requiredTransport, requiredCapability, requiredImageCapability, requireCompact, platform, previousResponseCanMove, useUpstreamTokenCost)
-	if err == nil || openAIProxyStreamQuarantineBypassed(ctx) {
-		return selection, decision, err
+	selectOnce := func(ctx context.Context) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
+		return s.selectAccountWithSchedulerOnce(ctx, groupID, previousResponseID, sessionHash, requestedModel, excludedIDs, requiredTransport, requiredCapability, requiredImageCapability, requireCompact, platform, previousResponseCanMove, useUpstreamTokenCost)
 	}
-	if !errors.Is(err, ErrNoAvailableAccounts) && !errors.Is(err, ErrNoAvailableCompactAccounts) {
+	noAvailable := func(err error) bool {
+		return errors.Is(err, ErrNoAvailableAccounts) || errors.Is(err, ErrNoAvailableCompactAccounts)
+	}
+	selection, decision, err := selectOnce(ctx)
+	if !noAvailable(err) {
 		return selection, decision, err
 	}
 	// The circuit only ever quarantines PlatformOpenAI accounts.
-	if NormalizeOpenAICompatiblePlatform(platform) != PlatformOpenAI {
+	if !openAIProxyStreamQuarantineBypassed(ctx) && NormalizeOpenAICompatiblePlatform(platform) == PlatformOpenAI {
+		if blocked := s.getOpenAIProxyStreamCircuit().activeBlockCount(time.Now()); blocked > 0 {
+			s.logOpenAIProxyStreamQuarantineFailOpen(requestedModel, blocked)
+			ctx = withOpenAIProxyStreamQuarantineBypass(ctx)
+			selection, decision, err = selectOnce(ctx)
+			if !noAvailable(err) {
+				return selection, decision, err
+			}
+		}
+	}
+	if openAIModelTransientCooldownBypassed(ctx) || !s.isOpenAIModelCooldownFailOpenEnabled(ctx) {
 		return selection, decision, err
 	}
-	blocked := s.getOpenAIProxyStreamCircuit().activeBlockCount(time.Now())
+	blocked := s.getOpenAIAccountModelTransientState().activeBlockCount(time.Now())
 	if blocked == 0 {
 		return selection, decision, err
 	}
-	s.logOpenAIProxyStreamQuarantineFailOpen(requestedModel, blocked)
-	return s.selectAccountWithSchedulerOnce(withOpenAIProxyStreamQuarantineBypass(ctx), groupID, previousResponseID, sessionHash, requestedModel, excludedIDs, requiredTransport, requiredCapability, requiredImageCapability, requireCompact, platform, previousResponseCanMove, useUpstreamTokenCost)
+	retrySelection, retryDecision, retryErr := selectOnce(withOpenAIModelTransientCooldownBypass(ctx))
+	if retryErr != nil {
+		// 第二轮也无号可选，说明冷却不是唯一原因；返回首轮的错误，保留它的过滤统计。
+		if noAvailable(retryErr) {
+			return selection, decision, err
+		}
+		return retrySelection, retryDecision, retryErr
+	}
+	if retrySelection != nil && retrySelection.Account != nil {
+		openaiGatewayLog(ctx).Warn("openai.model_transient_cooldown_fail_open",
+			zap.Int64("account_id", retrySelection.Account.ID),
+			zap.String("model", requestedModel),
+			zap.Int("active_cooldowns", blocked),
+		)
+	}
+	return retrySelection, retryDecision, nil
 }
 
 type openAIGroupPrivacyRequirementContextKey struct{}

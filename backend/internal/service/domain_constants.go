@@ -679,6 +679,9 @@ const (
 	SettingKeyAllowUngroupedKeyScheduling = "allow_ungrouped_key_scheduling"
 	// SettingKeyOpenAILowUpstreamRatePriorityEnabled 旧调度是否按上游 token 倍率优先。
 	SettingKeyOpenAILowUpstreamRatePriorityEnabled = "openai_low_upstream_rate_priority_enabled"
+	// SettingKeyOpenAIModelCooldownFailOpenEnabled 某模型可用账号全部处于「账号+模型」短期冷却时，
+	// 是否仍调度冷却中的账号，而不是在本地返回 503（默认 false）。
+	SettingKeyOpenAIModelCooldownFailOpenEnabled = "openai_model_cooldown_fail_open_enabled"
 	// SettingKeyOpenAIOAuthSchedulingRateMultiplier OAuth 账号参与成本调度时使用的参考倍率。
 	SettingKeyOpenAIOAuthSchedulingRateMultiplier = "openai_oauth_scheduling_rate_multiplier"
 	// SettingKeyOpenAIAdvancedSchedulerStickyWeightedEnabled OpenAI 高级调度下是否启用粘性加权。

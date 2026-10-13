@@ -515,6 +515,7 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	updates[SettingKeySchedulingTTFTMonitorEnabled] = strconv.FormatBool(settings.SchedulingTTFTMonitorEnabled)
 	updates[SettingKeySchedulingTTFTDegradeEnabled] = strconv.FormatBool(settings.SchedulingTTFTDegradeEnabled)
 	updates[SettingKeyOpenAILowUpstreamRatePriorityEnabled] = strconv.FormatBool(settings.OpenAILowUpstreamRatePriorityEnabled)
+	updates[SettingKeyOpenAIModelCooldownFailOpenEnabled] = strconv.FormatBool(settings.OpenAIModelCooldownFailOpenEnabled)
 	updates[SettingKeyOpenAIOAuthSchedulingRateMultiplier] = ""
 	if rate := settings.OpenAIOAuthSchedulingRateMultiplier; rate != nil {
 		updates[SettingKeyOpenAIOAuthSchedulingRateMultiplier] = strconv.FormatFloat(*rate, 'f', -1, 64)

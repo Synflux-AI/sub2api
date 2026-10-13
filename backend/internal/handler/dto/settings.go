@@ -247,6 +247,7 @@ type SystemSettings struct {
 	SchedulingTTFTMonitorEnabled                           bool     `json:"scheduling_ttft_monitor_enabled"`
 	SchedulingTTFTDegradeEnabled                           bool     `json:"scheduling_ttft_degrade_enabled"`
 	OpenAILowUpstreamRatePriorityEnabled                   bool     `json:"openai_low_upstream_rate_priority_enabled"`
+	OpenAIModelCooldownFailOpenEnabled                     bool     `json:"openai_model_cooldown_fail_open_enabled"`
 	OpenAIOAuthSchedulingRateMultiplier                    *float64 `json:"openai_oauth_scheduling_rate_multiplier"`
 	OpenAIAdvancedSchedulerEnabled                         bool     `json:"openai_advanced_scheduler_enabled"`
 	OpenAIAdvancedSchedulerStickyWeightedEnabled           bool     `json:"openai_advanced_scheduler_sticky_weighted_enabled"`
