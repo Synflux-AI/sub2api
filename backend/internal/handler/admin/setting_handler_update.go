@@ -283,6 +283,7 @@ type UpdateSettingsRequest struct {
 	SchedulingTTFTMonitorEnabled                       *bool    `json:"scheduling_ttft_monitor_enabled"`
 	SchedulingTTFTDegradeEnabled                       *bool    `json:"scheduling_ttft_degrade_enabled"`
 	OpenAILowUpstreamRatePriorityEnabled               *bool    `json:"openai_low_upstream_rate_priority_enabled"`
+	OpenAIModelCooldownFailOpenEnabled                 *bool    `json:"openai_model_cooldown_fail_open_enabled"`
 	OpenAIOAuthSchedulingRateMultiplier                *float64 `json:"openai_oauth_scheduling_rate_multiplier"`
 	OpenAIAdvancedSchedulerEnabled                     *bool    `json:"openai_advanced_scheduler_enabled"`
 	OpenAIAdvancedSchedulerStickyWeightedEnabled       *bool    `json:"openai_advanced_scheduler_sticky_weighted_enabled"`
@@ -1895,6 +1896,12 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			}
 			return previousSettings.OpenAILowUpstreamRatePriorityEnabled
 		}(),
+		OpenAIModelCooldownFailOpenEnabled: func() bool {
+			if req.OpenAIModelCooldownFailOpenEnabled != nil {
+				return *req.OpenAIModelCooldownFailOpenEnabled
+			}
+			return previousSettings.OpenAIModelCooldownFailOpenEnabled
+		}(),
 		OpenAIOAuthSchedulingRateMultiplier: func() *float64 {
 			// Omitted fields preserve the override; explicit null clears it.
 			if _, sent := sentFields[service.SettingKeyOpenAIOAuthSchedulingRateMultiplier]; sent {
@@ -2427,6 +2434,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		SchedulingTTFTMonitorEnabled:                           updatedSettings.SchedulingTTFTMonitorEnabled,
 		SchedulingTTFTDegradeEnabled:                           updatedSettings.SchedulingTTFTDegradeEnabled,
 		OpenAILowUpstreamRatePriorityEnabled:                   updatedSettings.OpenAILowUpstreamRatePriorityEnabled,
+		OpenAIModelCooldownFailOpenEnabled:                     updatedSettings.OpenAIModelCooldownFailOpenEnabled,
 		OpenAIOAuthSchedulingRateMultiplier:                    updatedSettings.OpenAIOAuthSchedulingRateMultiplier,
 		OpenAIAdvancedSchedulerEnabled:                         updatedSettings.OpenAIAdvancedSchedulerEnabled,
 		OpenAIAdvancedSchedulerStickyWeightedEnabled:           updatedSettings.OpenAIAdvancedSchedulerStickyWeightedEnabled,

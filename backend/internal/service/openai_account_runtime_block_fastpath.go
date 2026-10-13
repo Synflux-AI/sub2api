@@ -562,7 +562,10 @@ func (s *OpenAIGatewayService) clearOpenAIAccountRuntimeBlockIfUnchanged(account
 // block is dropped with generation+deadline CAS. Model-scoped transient blocks
 // are left alone. This is fail-open if a DB write failed or the snapshot has
 // not caught up yet: empty cooldown fields drop the local account-level block.
-func (s *OpenAIGatewayService) isOpenAIAccountRequestRuntimeBlocked(account *Account, requestedModel string) bool {
+//
+// ctx 带 withOpenAIModelTransientCooldownBypass 时只跳过「账号+模型」短期冷却，
+// 账号级屏蔽照常生效，见 selectAccountWithScheduler 的 fail-open 第二轮。
+func (s *OpenAIGatewayService) isOpenAIAccountRequestRuntimeBlocked(ctx context.Context, account *Account, requestedModel string) bool {
 	if s == nil {
 		return false
 	}
@@ -573,7 +576,29 @@ func (s *OpenAIGatewayService) isOpenAIAccountRequestRuntimeBlocked(account *Acc
 		}
 		s.clearOpenAIAccountRuntimeBlockIfUnchanged(account.ID, snapshot)
 	}
+	if openAIModelTransientCooldownBypassed(ctx) {
+		return false
+	}
 	return s.isOpenAIAccountModelRuntimeBlocked(account, requestedModel)
+}
+
+type openAIModelTransientCooldownBypassKey struct{}
+
+// withOpenAIModelTransientCooldownBypass 标记本次选号忽略「账号+模型」短期冷却。
+//
+// 这个冷却只是「有别的号可选时先避开抖动的号」的偏好：分组里某模型只剩一个候选
+// （典型是 linky→crs15 这种单中转账号）时，它会把一个请求级的错误放大成整组
+// 10s/45s 的本地 503，连一次上游都不打。
+func withOpenAIModelTransientCooldownBypass(ctx context.Context) context.Context {
+	return context.WithValue(ctx, openAIModelTransientCooldownBypassKey{}, true)
+}
+
+func openAIModelTransientCooldownBypassed(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	bypassed, _ := ctx.Value(openAIModelTransientCooldownBypassKey{}).(bool)
+	return bypassed
 }
 
 func (s *OpenAIGatewayService) recordOpenAIOAuth429() {

@@ -66,7 +66,7 @@ func TestOpenAIModelNotFound_PoolModeSkipsModelCooldown(t *testing.T) {
 			require.Empty(t, repo.modelRateLimitCalls)
 			require.Zero(t, repo.tempCalls)
 			require.False(t, svc.isOpenAIAccountRuntimeBlocked(account))
-			require.False(t, svc.isOpenAIAccountRequestRuntimeBlocked(account, tc.model))
+			require.False(t, svc.isOpenAIAccountRequestRuntimeBlocked(context.Background(), account, tc.model))
 			require.True(t, account.IsSchedulableForModelWithContext(context.Background(), tc.model))
 		})
 	}

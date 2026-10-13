@@ -326,6 +326,7 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		SchedulingTTFTMonitorEnabled:                           settings.SchedulingTTFTMonitorEnabled,
 		SchedulingTTFTDegradeEnabled:                           settings.SchedulingTTFTDegradeEnabled,
 		OpenAILowUpstreamRatePriorityEnabled:                   settings.OpenAILowUpstreamRatePriorityEnabled,
+		OpenAIModelCooldownFailOpenEnabled:                     settings.OpenAIModelCooldownFailOpenEnabled,
 		OpenAIOAuthSchedulingRateMultiplier:                    settings.OpenAIOAuthSchedulingRateMultiplier,
 		OpenAIAdvancedSchedulerEnabled:                         settings.OpenAIAdvancedSchedulerEnabled,
 		OpenAIAdvancedSchedulerStickyWeightedEnabled:           settings.OpenAIAdvancedSchedulerStickyWeightedEnabled,
