@@ -194,6 +194,11 @@ func RegisterGatewayRoutes(
 				h.OpenAIGateway.Messages(c)
 				return
 			}
+			if geminiMessagesDispatchDenied(c) {
+				service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalFeatureGate)
+				middleware.AnthropicErrorWriter(c, http.StatusForbidden, "This group does not allow /v1/messages dispatch")
+				return
+			}
 			h.Gateway.Messages(c)
 		})
 		// System One carries only JSON text, so it uses the text body limit.
@@ -544,6 +549,16 @@ func getGroupPlatform(c *gin.Context) string {
 		}
 	}
 	return apiKey.Group.Platform
+}
+
+// geminiMessagesDispatchDenied: gemini 分组（含 composite 解析到 gemini）的 /v1/messages 是把
+// Claude 格式转成 generateContent 实现的，与 openai 分组一样要分组打开 allow_messages_dispatch 才放行。
+func geminiMessagesDispatchDenied(c *gin.Context) bool {
+	if getGroupPlatform(c) != service.PlatformGemini {
+		return false
+	}
+	apiKey, _ := middleware.GetAPIKeyFromContext(c)
+	return !apiKey.Group.AllowMessagesDispatch
 }
 
 func compositeTargetPlatformMiddleware(resolver *service.CompositeRouteResolver) gin.HandlerFunc {

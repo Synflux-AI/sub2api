@@ -9,9 +9,10 @@ import {
 } from "../groupsMessagesDispatch";
 
 describe("groupsMessagesDispatch", () => {
-  it("supports OpenAI and composite groups", () => {
+  it("supports OpenAI, composite and Gemini groups", () => {
     expect(supportsMessagesDispatchPlatform("openai")).toBe(true);
     expect(supportsMessagesDispatchPlatform("composite")).toBe(true);
+    expect(supportsMessagesDispatchPlatform("gemini")).toBe(true);
     expect(supportsMessagesDispatchPlatform("anthropic")).toBe(false);
   });
 

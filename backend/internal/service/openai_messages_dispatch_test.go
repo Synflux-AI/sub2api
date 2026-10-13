@@ -70,6 +70,21 @@ func TestSanitizeGroupMessagesDispatchFields_ClearsNonOpenAIPlatform(t *testing.
 	require.Equal(t, OpenAIMessagesDispatchModelConfig{}, group.MessagesDispatchModelConfig)
 }
 
+func TestSanitizeGroupMessagesDispatchFields_PreservesGeminiDispatchToggle(t *testing.T) {
+	t.Parallel()
+
+	group := &Group{
+		Platform:              PlatformGemini,
+		AllowMessagesDispatch: true,
+		DefaultMappedModel:    "gpt-5.6-sol",
+	}
+
+	sanitizeGroupMessagesDispatchFields(group)
+
+	require.True(t, group.AllowMessagesDispatch)
+	require.Empty(t, group.DefaultMappedModel)
+}
+
 func TestSanitizeGroupMessagesDispatchFields_PreservesCompositeDispatchToggle(t *testing.T) {
 	t.Parallel()
 

@@ -466,3 +466,43 @@ func TestGatewayRoutesOpenAICountTokensPathIsRegistered(t *testing.T) {
 	router.ServeHTTP(w, req)
 	require.NotEqual(t, http.StatusNotFound, w.Code)
 }
+
+func TestGatewayRoutesGeminiMessagesRequireDispatchToggle(t *testing.T) {
+	router := newGatewayRoutesTestRouter(service.PlatformGemini)
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"gemini-3.5-flash","max_tokens":16,"messages":[{"role":"user","content":"hi"}]}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusForbidden, w.Code)
+	require.Contains(t, w.Body.String(), "does not allow /v1/messages dispatch")
+}
+
+func TestGeminiMessagesDispatchDenied(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, tc := range []struct {
+		name     string
+		platform string
+		resolved string
+		allow    bool
+		denied   bool
+	}{
+		{"gemini 默认关", service.PlatformGemini, "", false, true},
+		{"gemini 打开开关", service.PlatformGemini, "", true, false},
+		{"composite 解析到 gemini", service.PlatformComposite, service.PlatformGemini, false, true},
+		{"composite 解析到 gemini 且打开开关", service.PlatformComposite, service.PlatformGemini, true, false},
+		{"anthropic 不受影响", service.PlatformAnthropic, "", false, false},
+	} {
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+		if tc.resolved != "" {
+			c.Request = c.Request.WithContext(service.WithResolvedTargetPlatform(c.Request.Context(), tc.resolved))
+		}
+		c.Set(string(servermiddleware.ContextKeyAPIKey), &service.APIKey{
+			Group: &service.Group{Platform: tc.platform, AllowMessagesDispatch: tc.allow},
+		})
+
+		require.Equal(t, tc.denied, geminiMessagesDispatchDenied(c), tc.name)
+	}
+}
