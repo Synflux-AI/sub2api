@@ -56,7 +56,7 @@ func (h *RedeemHandler) Redeem(c *gin.Context) {
 		return
 	}
 
-	response.Success(c, dto.RedeemCodeFromService(result))
+	response.Success(c, dto.RedeemCodeFromService(result).Localized(c.GetHeader("Accept-Language")))
 }
 
 // GetHistory returns the user's redemption history
@@ -78,7 +78,7 @@ func (h *RedeemHandler) GetHistory(c *gin.Context) {
 
 	out := make([]dto.RedeemCode, 0, len(codes))
 	for i := range codes {
-		out = append(out, *dto.RedeemCodeFromService(&codes[i]))
+		out = append(out, *dto.RedeemCodeFromService(&codes[i]).Localized(c.GetHeader("Accept-Language")))
 	}
 	response.Paginated(c, out, total, page, pageSize)
 }
