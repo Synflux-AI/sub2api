@@ -53,6 +53,10 @@ export interface PlazaModel {
   long_context_basis?: PlazaLongContextBasis
   /** 仅配置了分时倍率的模型返回。 */
   time_pricing?: PlazaTimePricing
+  /** 该模型命中分组模型倍率规则时返回，替换分组默认与用户专属倍率。 */
+  rate_multiplier?: number
+  /** 当前用户改过该模型倍率时返回，优先于 rate_multiplier。 */
+  user_rate_multiplier?: number
 }
 
 export interface ModelPlazaGroup {

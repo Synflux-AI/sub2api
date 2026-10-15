@@ -756,4 +756,24 @@ describe('PlazaModelPricingTable 分时计价', () => {
     expect(wrapper.findAll('tbody tr')).toHaveLength(1)
     expect(wrapper.find('[title*="modelPlaza.table.timePricingRowHint"]').exists()).toBe(false)
   })
+
+  it('uses per-model rates: user model override > group model rate > user rate > group rate', () => {
+    const wrapper = mountTable(
+      [
+        tokenModel({ name: 'model-user', rate_multiplier: 0.6, user_rate_multiplier: 0.4 }),
+        tokenModel({ name: 'model-group', rate_multiplier: 0.6 }),
+        tokenModel({ name: 'model-plain' })
+      ],
+      0.8,
+      0.5
+    )
+    const rates = wrapper.findAll('[data-testid="plaza-model-rate"]').map((el) => el.text())
+    // 排序按名称降序：model-user、model-plain、model-group
+    expect(rates).toEqual(['0.4x', '0.5x', '0.6x'])
+    const text = wrapper.text()
+    // 输入价 $3/M × 模型倍率
+    expect(text).toContain('$1.20')
+    expect(text).toContain('$1.50')
+    expect(text).toContain('$1.80')
+  })
 })

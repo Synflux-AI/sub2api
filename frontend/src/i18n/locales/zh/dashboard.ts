@@ -621,6 +621,10 @@ export default {
 
   // Available Channels (user-facing)
   availableChannels: {
+    modelRates: {
+      badge: '{count} 个模型单独倍率',
+      title: '以下模型在本分组单独设置了倍率（替换分组倍率）：'
+    },
     title: '可用渠道',
     description: '查看您可访问的渠道与其支持的模型、定价',
     searchPlaceholder: '搜索渠道或模型...',
@@ -708,6 +712,7 @@ export default {
       timePricingRowHintPeak: '；本行价格未含高峰倍率，与高峰时段 {window} 重叠的部分实付再乘 ×{multiplier}',
       timePricingWeekdays: '工作日',
       timePricingRateHint: '生效倍率 {rate} × 时段倍率 {multiplier}',
+      modelRateHint: '该模型在本分组单独设置了倍率',
       paidPrice: '实付价格(折后)',
       officialPrice: '官方价格',
       rate: '折扣倍率',

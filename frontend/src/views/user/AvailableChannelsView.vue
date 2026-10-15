@@ -38,6 +38,7 @@
           :rows="filteredChannels"
           :loading="loading"
           :user-group-rates="userGroupRates"
+          :user-group-model-rates="userGroupModelRates"
           pricing-key-prefix="availableChannels.pricing"
           :no-pricing-label="t('availableChannels.noPricing')"
           :no-models-label="t('availableChannels.noModels')"
@@ -65,6 +66,7 @@ const appStore = useAppStore()
 
 const channels = ref<UserAvailableChannel[]>([])
 const userGroupRates = ref<Record<number, number>>({})
+const userGroupModelRates = ref<Record<number, Record<string, number>>>({})
 const loading = ref(false)
 const searchQuery = ref('')
 
@@ -107,15 +109,20 @@ async function loadChannels() {
   try {
     // 渠道列表和用户专属倍率并发拉取。专属倍率失败不阻塞渠道展示——
     // 失败时只是无法渲染专属倍率角标，降级为仅显示默认倍率。
-    const [list, rates] = await Promise.all([
+    const [list, rates, modelRates] = await Promise.all([
       userChannelsAPI.getAvailable(),
       userGroupsAPI.getUserGroupRates().catch((err: unknown) => {
         console.error('Failed to load user group rates:', err)
         return {} as Record<number, number>
       }),
+      userGroupsAPI.getUserGroupModelRates().catch((err: unknown) => {
+        console.error('Failed to load user group model rates:', err)
+        return {} as Record<number, Record<string, number>>
+      }),
     ])
     channels.value = list
     userGroupRates.value = rates
+    userGroupModelRates.value = modelRates
   } catch (err: unknown) {
     appStore.showError(extractApiErrorMessage(err, t('common.error')))
   } finally {

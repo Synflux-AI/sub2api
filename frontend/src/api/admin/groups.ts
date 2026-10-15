@@ -338,6 +338,8 @@ export interface GroupRateMultiplierEntry {
   user_status: string
   rate_multiplier?: number | null
   rpm_override?: number | null
+  /** 用户对分组模型倍率规则的修改：规则模式串 -> 倍率；未出现的模式串继承分组 */
+  model_rate_multipliers?: Record<string, number> | null
 }
 
 /**
@@ -387,6 +389,23 @@ export async function batchSetGroupRateMultipliers(
   const { data } = await apiClient.put<{ message: string }>(
     `/admin/groups/${id}/rate-multipliers`,
     { entries }
+  )
+  return data
+}
+
+/**
+ * Replace one user's overrides of the group's model rate rules.
+ * Keys must be patterns of the group's model rate rules; `{}` means every model inherits the group.
+ * Does not touch rate_multiplier or rpm_override.
+ */
+export async function setUserGroupModelRateMultipliers(
+  groupId: number,
+  userId: number,
+  modelRateMultipliers: Record<string, number>
+): Promise<{ message: string }> {
+  const { data } = await apiClient.put<{ message: string }>(
+    `/admin/groups/${groupId}/users/${userId}/model-rate-multipliers`,
+    { model_rate_multipliers: modelRateMultipliers }
   )
   return data
 }
@@ -493,6 +512,7 @@ export const groupsAPI = {
   getGroupRateMultipliers,
   clearGroupRateMultipliers,
   batchSetGroupRateMultipliers,
+  setUserGroupModelRateMultipliers,
   getGroupRPMOverrides,
   clearGroupRPMOverrides,
   batchSetGroupRPMOverrides,

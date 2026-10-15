@@ -616,6 +616,10 @@ export default {
 
   // Available Channels (user-facing)
   availableChannels: {
+    modelRates: {
+      badge: '{count} model rates',
+      title: 'These models have their own rate in this group (replacing the group rate):'
+    },
     title: 'Available Channels',
     description: 'Channels you can access, along with their supported models and pricing',
     searchPlaceholder: 'Search channels or models...',
@@ -704,6 +708,7 @@ export default {
         '; prices in this row exclude the peak-hour rate — where this period overlaps the peak hours {window}, the overlapping portion is additionally multiplied by ×{multiplier}',
       timePricingWeekdays: 'Weekdays',
       timePricingRateHint: 'Effective rate {rate} × period multiplier {multiplier}',
+      modelRateHint: 'This model has its own rate in this group',
       paidPrice: 'Your Price (Discounted)',
       officialPrice: 'Official Price',
       rate: 'Rate',

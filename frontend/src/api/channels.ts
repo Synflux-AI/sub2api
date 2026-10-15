@@ -20,6 +20,8 @@ export interface UserAvailableGroup {
   peak_rate_multiplier: number
   /** true = 专属分组（小范围授权）；false = 公开分组。 */
   is_exclusive: boolean
+  /** 分组逐模型售价倍率；用户对规则的修改通过 /groups/model-rates 获取后在前端 join。 */
+  model_rate_multipliers?: import('@/types').GroupModelRateMultiplier[]
 }
 
 export interface UserPricingInterval {

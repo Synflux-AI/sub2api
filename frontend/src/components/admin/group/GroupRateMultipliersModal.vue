@@ -13,7 +13,16 @@
         <span class="text-gray-600 dark:text-gray-400">
           {{ t('admin.groups.columns.rateMultiplier') }}: {{ group.rate_multiplier }}x
         </span>
+        <template v-if="hasModelRules">
+          <span class="text-gray-400">|</span>
+          <span class="text-gray-600 dark:text-gray-400" data-testid="group-model-rule-summary">
+            {{ t('admin.groups.modelRates.userModalSummary', { count: modelRuleCount }) }}
+          </span>
+        </template>
       </div>
+      <p v-if="hasModelRules" class="text-xs text-gray-500 dark:text-gray-400">
+        {{ t('admin.groups.modelRates.userModalHint') }}
+      </p>
 
       <!-- 操作区 -->
       <div class="rounded-lg border border-gray-200 p-3 dark:border-dark-600">
@@ -63,7 +72,7 @@
           <button
             type="button"
             class="btn btn-primary shrink-0"
-            :disabled="!selectedUser || newRate == null || newRate <= 0"
+            :disabled="!canAddUser"
             @click="handleAddLocal"
           >
             {{ t('common.add') }}
@@ -137,14 +146,15 @@
                     <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.groups.columns.userStatus') }}</th>
                     <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.groups.columns.rateMultiplier') }}</th>
                     <th v-if="showFinalRate" class="px-3 py-2 text-left text-xs font-medium text-primary-600 dark:text-primary-400">{{ t('admin.groups.finalRate') }}</th>
+                    <th v-if="hasModelRules" class="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.groups.modelRates.column') }}</th>
                     <th class="w-10 px-2 py-2"></th>
                   </tr>
                 </thead>
                 <tbody class="divide-y divide-gray-100 dark:divide-dark-600">
+                  <template v-for="entry in paginatedLocalEntries" :key="entry.user_id">
                   <tr
-                    v-for="entry in paginatedLocalEntries"
-                    :key="entry.user_id"
                     class="hover:bg-gray-50 dark:hover:bg-dark-700/50"
+                    data-testid="user-rate-row"
                   >
                     <td class="px-3 py-2 text-gray-600 dark:text-gray-400">{{ entry.user_email }}</td>
                     <td class="whitespace-nowrap px-3 py-2 text-gray-400 dark:text-gray-500">{{ entry.user_id }}</td>
@@ -177,6 +187,26 @@
                     <td v-if="showFinalRate" class="whitespace-nowrap px-3 py-2 font-medium text-primary-600 dark:text-primary-400">
                       {{ computeFinalRate(entry.rate_multiplier) }}
                     </td>
+                    <td v-if="hasModelRules" class="whitespace-nowrap px-3 py-2">
+                      <button
+                        type="button"
+                        class="inline-flex items-center gap-1 text-xs font-medium text-primary-600 hover:text-primary-700 dark:text-primary-400"
+                        data-testid="user-model-rate-toggle"
+                        @click="toggleExpanded(entry.user_id)"
+                      >
+                        <Icon :name="expandedUsers.has(entry.user_id) ? 'chevronUp' : 'chevronDown'" size="xs" />
+                        {{ overrideCount(entry) > 0
+                          ? t('admin.groups.modelRates.overrideCount', { count: overrideCount(entry) })
+                          : t('admin.groups.modelRates.allInherited') }}
+                      </button>
+                      <Icon
+                        v-if="hasInheritedAboveUserRate(entry)"
+                        name="exclamationTriangle"
+                        size="xs"
+                        class="ml-1 inline text-amber-500"
+                        :title="t('admin.groups.modelRates.inheritedAboveUserRate')"
+                      />
+                    </td>
                     <td class="px-2 py-2">
                       <button
                         type="button"
@@ -187,6 +217,62 @@
                       </button>
                     </td>
                   </tr>
+                  <tr v-if="hasModelRules && expandedUsers.has(entry.user_id)" data-testid="user-model-rate-panel">
+                    <td :colspan="columnCount" class="bg-gray-50 px-6 py-3 dark:bg-dark-700/40">
+                      <table class="w-full text-xs">
+                        <thead>
+                          <tr class="text-left text-gray-500 dark:text-gray-400">
+                            <th class="py-1 pr-3 font-medium">{{ t('admin.groups.modelRates.models') }}</th>
+                            <th class="py-1 pr-3 font-medium">{{ t('admin.groups.modelRates.groupValue') }}</th>
+                            <th class="py-1 pr-3 font-medium">{{ t('admin.groups.modelRates.userValue') }}</th>
+                            <th class="py-1 font-medium"></th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr
+                            v-for="row in modelRows(entry)"
+                            :key="row.pattern"
+                            data-testid="user-model-rate-item"
+                          >
+                            <td class="py-1 pr-3 font-mono text-gray-800 dark:text-gray-200">{{ row.pattern }}</td>
+                            <td class="py-1 pr-3 text-gray-500 dark:text-gray-400">{{ row.groupRate }}x</td>
+                            <td class="py-1 pr-3">
+                              <input
+                                type="number"
+                                step="0.001"
+                                min="0.001"
+                                autocomplete="off"
+                                :value="row.override ?? ''"
+                                :placeholder="t('admin.groups.modelRates.inheritPlaceholder', { rate: row.groupRate })"
+                                class="hide-spinner w-28 rounded border border-gray-200 bg-white px-2 py-0.5 text-center text-xs transition-colors focus:border-primary-500 focus:outline-none dark:border-dark-500 dark:bg-dark-700"
+                                :class="row.override !== null ? 'font-medium text-primary-700 dark:text-primary-300' : ''"
+                                data-testid="user-model-rate-input"
+                                @change="updateModelOverride(entry.user_id, row.pattern, ($event.target as HTMLInputElement).value)"
+                              />
+                              <span
+                                v-if="row.inheritedAboveUserRate"
+                                class="ml-2 text-amber-600 dark:text-amber-400"
+                                data-testid="user-model-rate-warning"
+                              >{{ t('admin.groups.modelRates.inheritedAboveUserRateShort', { rate: entry.rate_multiplier }) }}</span>
+                            </td>
+                            <td class="py-1 text-right">
+                              <button
+                                v-if="row.override !== null"
+                                type="button"
+                                class="text-primary-600 hover:text-primary-700 dark:text-primary-400"
+                                data-testid="user-model-rate-reset"
+                                @click="resetModelOverride(entry.user_id, row.pattern)"
+                              >
+                                {{ t('admin.groups.modelRates.resetInherit') }}
+                              </button>
+                              <span v-else class="text-gray-400">{{ t('admin.groups.modelRates.inherited') }}</span>
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </td>
+                  </tr>
+                  </template>
                 </tbody>
               </table>
             </div>
@@ -250,8 +336,17 @@ import Pagination from '@/components/common/Pagination.vue'
 import Icon from '@/components/icons/Icon.vue'
 import PlatformIcon from '@/components/common/PlatformIcon.vue'
 import { platformLabel } from '@/utils/platformColors'
+import {
+  buildUserModelRateRows,
+  diffUserModelRateSaves,
+  pruneUserModelRateOverrides,
+  userModelRateOverridesEqual,
+  type UserModelRateOverrides,
+} from './userModelRates'
 
-interface LocalEntry extends GroupRateMultiplierEntry {}
+interface LocalEntry extends GroupRateMultiplierEntry {
+  model_rate_multipliers: UserModelRateOverrides
+}
 
 const props = defineProps<{
   show: boolean
@@ -278,6 +373,20 @@ const newRate = ref<number | null>(null)
 const currentPage = ref(1)
 const pageSize = ref(10)
 const batchFactor = ref<number | null>(null)
+const expandedUsers = ref(new Set<number>())
+
+const modelRules = computed(() => props.group?.model_rate_multipliers ?? [])
+const hasModelRules = computed(() => modelRules.value.length > 0)
+const modelRuleCount = computed(() => modelRules.value.reduce((n, rule) => n + (rule.models?.length ?? 0), 0))
+// 表格列数（展开行 colspan 用）：邮箱/ID/名称/备注/状态/倍率/删除 + 可选列
+const columnCount = computed(() => 7 + (showFinalRateColumn() ? 1 : 0) + (hasModelRules.value ? 1 : 0))
+
+const canAddUser = computed(() => {
+  if (!selectedUser.value) return false
+  const rate = newRate.value as number | string | null
+  if (rate === null || rate === '') return hasModelRules.value
+  return Number.isFinite(Number(rate)) && Number(rate) > 0
+})
 
 let searchTimeout: ReturnType<typeof setTimeout>
 let loadVersion = 0
@@ -292,9 +401,10 @@ const platformColorClass = computed(() => {
 })
 
 // 是否显示"最终倍率"预览列
-const showFinalRate = computed(() => {
+function showFinalRateColumn() {
   return batchFactor.value != null && batchFactor.value > 0 && batchFactor.value !== 1
-})
+}
+const showFinalRate = computed(showFinalRateColumn)
 
 // 计算最终倍率预览
 const computeFinalRate = (rate: number | null | undefined) => {
@@ -306,8 +416,13 @@ const computeFinalRate = (rate: number | null | undefined) => {
 // 检测是否有未保存的修改
 const isDirty = computed(() => {
   if (localEntries.value.length !== serverEntries.value.length) return true
-  const serverMap = new Map(serverEntries.value.map(e => [e.user_id, e.rate_multiplier ?? null]))
-  return localEntries.value.some(e => serverMap.get(e.user_id) !== (e.rate_multiplier ?? null))
+  const serverMap = new Map(serverEntries.value.map(e => [e.user_id, e]))
+  return localEntries.value.some(e => {
+    const server = serverMap.get(e.user_id)
+    if (!server) return true
+    return (server.rate_multiplier ?? null) !== (e.rate_multiplier ?? null) ||
+      !userModelRateOverridesEqual(server.model_rate_multipliers, e.model_rate_multipliers)
+  })
 })
 
 const paginatedLocalEntries = computed(() => {
@@ -316,7 +431,43 @@ const paginatedLocalEntries = computed(() => {
 })
 
 const cloneEntries = (entries: GroupRateMultiplierEntry[]): LocalEntry[] => {
-  return entries.map(e => ({ ...e }))
+  return entries.map(e => ({ ...e, model_rate_multipliers: { ...(e.model_rate_multipliers || {}) } }))
+}
+
+const modelRows = (entry: LocalEntry) =>
+  buildUserModelRateRows(modelRules.value, entry.rate_multiplier, entry.model_rate_multipliers)
+
+const overrideCount = (entry: LocalEntry) => Object.keys(entry.model_rate_multipliers).length
+
+const hasInheritedAboveUserRate = (entry: LocalEntry) =>
+  modelRows(entry).some(row => row.inheritedAboveUserRate)
+
+const toggleExpanded = (userId: number) => {
+  const next = new Set(expandedUsers.value)
+  if (next.has(userId)) next.delete(userId)
+  else next.add(userId)
+  expandedUsers.value = next
+}
+
+// 改模型倍率：清空输入即恢复继承；非法值忽略（保留原值）
+const updateModelOverride = (userId: number, pattern: string, value: string) => {
+  const entry = localEntries.value.find(e => e.user_id === userId)
+  if (!entry) return
+  if (value.trim() === '') {
+    resetModelOverride(userId, pattern)
+    return
+  }
+  const num = parseFloat(value)
+  if (!Number.isFinite(num) || num <= 0) return
+  entry.model_rate_multipliers = { ...entry.model_rate_multipliers, [pattern]: num }
+}
+
+const resetModelOverride = (userId: number, pattern: string) => {
+  const entry = localEntries.value.find(e => e.user_id === userId)
+  if (!entry) return
+  const next = { ...entry.model_rate_multipliers }
+  delete next[pattern]
+  entry.model_rate_multipliers = next
 }
 
 const loadEntries = async () => {
@@ -328,8 +479,11 @@ const loadEntries = async () => {
   try {
     const raw = await adminAPI.groups.getGroupRateMultipliers(props.group.id)
     if (version !== loadVersion) return
-    // 仅显示已设置 rate_multiplier 的条目；rpm_override 在另一个弹窗管理，保留不动
-    serverEntries.value = raw.filter(e => e.rate_multiplier != null)
+    // 仅显示已设置 rate_multiplier 或模型倍率修改的条目；rpm_override 在另一个弹窗管理，保留不动。
+    // 只保留分组现有规则上的修改，避免残留键让弹窗一打开就显示「未保存」。
+    serverEntries.value = raw
+      .map(e => ({ ...e, model_rate_multipliers: pruneUserModelRateOverrides(props.group?.model_rate_multipliers, e.model_rate_multipliers) }))
+      .filter(e => e.rate_multiplier != null || Object.keys(e.model_rate_multipliers).length > 0)
     localEntries.value = cloneEntries(serverEntries.value)
     adjustPage()
   } catch (error) {
@@ -353,6 +507,7 @@ watch([() => props.show, () => props.group?.id], ([show]) => {
   if (show && props.group) {
     currentPage.value = 1
     batchFactor.value = null
+    expandedUsers.value = new Set()
     searchQuery.value = ''
     searchResults.value = []
     selectedUser.value = null
@@ -394,8 +549,10 @@ const selectUser = (user: AdminUser) => {
 
 // 本地添加（或覆盖已有用户）
 const handleAddLocal = () => {
-  if (!selectedUser.value || newRate.value == null || newRate.value <= 0) return
+  if (!canAddUser.value || !selectedUser.value) return
   const user = selectedUser.value
+  const raw = newRate.value as number | string | null
+  const rate = raw === null || raw === '' ? null : Number(raw)
   const idx = localEntries.value.findIndex(e => e.user_id === user.id)
   const entry: LocalEntry = {
     user_id: user.id,
@@ -403,13 +560,17 @@ const handleAddLocal = () => {
     user_email: user.email,
     user_notes: user.notes || '',
     user_status: user.status || 'active',
-    rate_multiplier: newRate.value,
-    rpm_override: null
+    rate_multiplier: rate,
+    rpm_override: null,
+    // 覆盖已有用户时保留其模型倍率修改
+    model_rate_multipliers: idx >= 0 ? { ...localEntries.value[idx].model_rate_multipliers } : {}
   }
   if (idx >= 0) {
     localEntries.value[idx] = entry
   } else {
     localEntries.value.push(entry)
+    // 只设模型倍率的新用户直接展开，便于逐模型修改
+    if (rate === null) toggleExpanded(user.id)
   }
   searchQuery.value = ''
   selectedUser.value = null
@@ -439,10 +600,16 @@ const removeLocal = (userId: number) => {
 // 批量乘数应用到本地
 const applyBatchFactor = () => {
   if (!batchFactor.value || batchFactor.value <= 0) return
+  const factor = batchFactor.value
+  const scale = (rate: number) => parseFloat((rate * factor).toFixed(6))
   for (const entry of localEntries.value) {
     if (entry.rate_multiplier != null) {
-      entry.rate_multiplier = parseFloat((entry.rate_multiplier * batchFactor.value).toFixed(6))
+      entry.rate_multiplier = scale(entry.rate_multiplier)
     }
+    // 用户改过的模型倍率同属专属价，一并缩放；继承的模型仍跟随分组
+    entry.model_rate_multipliers = Object.fromEntries(
+      Object.entries(entry.model_rate_multipliers).map(([pattern, rate]) => [pattern, scale(rate)])
+    )
   }
   batchFactor.value = null
 }
@@ -459,9 +626,11 @@ const handleCancel = () => {
   adjustPage()
 }
 
-// 保存：一次性提交所有数据（只提交 rate_multiplier；rpm_override 由独立弹窗管理）
+// 保存：先整组同步 rate_multiplier（rpm_override 由独立弹窗管理），
+// 再逐个替换有变化用户的模型倍率修改（被移除的用户恢复全部继承）。
 const handleSave = async () => {
   if (!props.group) return
+  const groupId = props.group.id
   saving.value = true
   try {
     const entries = localEntries.value
@@ -470,7 +639,10 @@ const handleSave = async () => {
         user_id: e.user_id,
         rate_multiplier: e.rate_multiplier as number
       }))
-    await adminAPI.groups.batchSetGroupRateMultipliers(props.group.id, entries)
+    await adminAPI.groups.batchSetGroupRateMultipliers(groupId, entries)
+    for (const save of diffUserModelRateSaves(serverEntries.value, localEntries.value)) {
+      await adminAPI.groups.setUserGroupModelRateMultipliers(groupId, save.user_id, save.model_rate_multipliers)
+    }
     appStore.showSuccess(t('admin.groups.rateSaved'))
     emit('success')
     emit('close')

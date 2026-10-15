@@ -27,9 +27,19 @@ export async function getUserGroupRates(): Promise<Record<number, number>> {
   return data || {}
 }
 
+/**
+ * Get current user's overrides of group model rate rules
+ * @returns Map of group_id to { rule pattern: rate_multiplier }
+ */
+export async function getUserGroupModelRates(): Promise<Record<number, Record<string, number>>> {
+  const { data } = await apiClient.get<Record<number, Record<string, number>> | null>('/groups/model-rates')
+  return data || {}
+}
+
 export const userGroupsAPI = {
   getAvailable,
-  getUserGroupRates
+  getUserGroupRates,
+  getUserGroupModelRates
 }
 
 export default userGroupsAPI

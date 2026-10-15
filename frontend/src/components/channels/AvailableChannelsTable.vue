@@ -103,6 +103,10 @@
                     :user-rate-multiplier="userGroupRates[g.id] ?? null"
                     always-show-rate
                   />
+                  <GroupModelRatesBadge
+                    :rules="g.model_rate_multipliers"
+                    :user-model-rates="userGroupModelRates[g.id] ?? null"
+                  />
                   <span
                     v-if="hasPeakRate(g)"
                     class="inline-flex items-center gap-1 rounded-md bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-900/20 dark:text-amber-300"
@@ -136,6 +140,10 @@
                     :rate-multiplier="g.rate_multiplier"
                     :user-rate-multiplier="userGroupRates[g.id] ?? null"
                     always-show-rate
+                  />
+                  <GroupModelRatesBadge
+                    :rules="g.model_rate_multipliers"
+                    :user-model-rates="userGroupModelRates[g.id] ?? null"
                   />
                   <span
                     v-if="hasPeakRate(g)"
@@ -242,6 +250,10 @@
                         :user-rate-multiplier="userGroupRates[g.id] ?? null"
                         always-show-rate
                       />
+                      <GroupModelRatesBadge
+                        :rules="g.model_rate_multipliers"
+                        :user-model-rates="userGroupModelRates[g.id] ?? null"
+                      />
                       <span
                         v-if="hasPeakRate(g)"
                         class="inline-flex items-center gap-1 rounded-md bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-900/20 dark:text-amber-300"
@@ -276,6 +288,10 @@
                         :rate-multiplier="g.rate_multiplier"
                         :user-rate-multiplier="userGroupRates[g.id] ?? null"
                         always-show-rate
+                      />
+                      <GroupModelRatesBadge
+                        :rules="g.model_rate_multipliers"
+                        :user-model-rates="userGroupModelRates[g.id] ?? null"
                       />
                       <span
                         v-if="hasPeakRate(g)"
@@ -320,11 +336,13 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/icons/Icon.vue'
 import PlatformIcon from '@/components/common/PlatformIcon.vue'
 import GroupBadge from '@/components/common/GroupBadge.vue'
 import SupportedModelChip from './SupportedModelChip.vue'
+import GroupModelRatesBadge from './GroupModelRatesBadge.vue'
 import type { UserAvailableChannel, UserAvailableGroup, UserChannelPlatformSection } from '@/api/channels'
 import type { GroupPlatform, SubscriptionType } from '@/types'
 import { platformBadgeClass } from '@/utils/platformColors'
@@ -347,11 +365,15 @@ const props = defineProps<{
   emptyLabel: string
   /** 用户专属倍率（group_id → multiplier）；无专属时由 GroupBadge 仅显示默认倍率。 */
   userGroupRates: Record<number, number>
+  /** 用户对分组模型倍率规则的修改（group_id → 模式串 → 倍率）；缺省视为全部继承。 */
+  userGroupModelRates?: Record<number, Record<string, number>>
 }>()
 
 // Suppress unused warning — props is accessed via template automatically but
 // the explicit reference here keeps the linter from flagging userGroupRates.
 void props.userGroupRates
+
+const userGroupModelRates = computed(() => props.userGroupModelRates ?? {})
 
 const { t } = useI18n()
 

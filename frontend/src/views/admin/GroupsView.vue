@@ -261,9 +261,16 @@
             </div>
           </template>
 
-          <template #cell-rate_multiplier="{ value }">
+          <template #cell-rate_multiplier="{ value, row }">
             <span class="text-sm text-gray-700 dark:text-gray-300"
               >{{ value }}x</span
+            >
+            <span
+              v-if="row.model_rate_multipliers?.length"
+              class="ml-1 rounded bg-primary-50 px-1.5 py-0.5 text-xs text-primary-700 dark:bg-primary-900/30 dark:text-primary-300"
+              :title="t('admin.groups.modelRates.columnBadgeTitle')"
+              data-testid="group-model-rate-badge"
+              >{{ t("admin.groups.modelRates.columnBadge", { count: row.model_rate_multipliers.length }) }}</span
             >
           </template>
 
@@ -1547,6 +1554,12 @@
             <PricingEntryCard v-for="(entry, index) in createForm.model_pricing" :key="index" :entry="entry" :platform="createForm.platform" hide-token-intervals @update="createForm.model_pricing[index] = $event" @remove="createForm.model_pricing.splice(index, 1)" />
           </div>
         </div>
+
+        <GroupModelRateMultipliersField
+          v-model:entries="createForm.model_rate_multipliers"
+          :platform="createForm.platform"
+          :group-rate="createForm.rate_multiplier"
+        />
 
         <!-- Grok Voice 显式定价（仅 grok 平台） -->
         <div
@@ -3251,6 +3264,12 @@
           </div>
         </div>
 
+        <GroupModelRateMultipliersField
+          v-model:entries="editForm.model_rate_multipliers"
+          :platform="editForm.platform"
+          :group-rate="editForm.rate_multiplier"
+        />
+
         <!-- Grok Voice 显式定价（仅 grok 平台） -->
         <div
           v-if="editForm.platform === 'grok'"
@@ -4413,6 +4432,13 @@ import GroupCapacityBadge from "@/components/common/GroupCapacityBadge.vue";
 import ReasoningEffortPolicyFields from "@/components/admin/group/ReasoningEffortPolicyFields.vue";
 import CodexManifestAccountsField from "@/components/admin/group/CodexManifestAccountsField.vue";
 import PricingEntryCard from "@/components/admin/channel/PricingEntryCard.vue";
+import GroupModelRateMultipliersField from "@/components/admin/group/GroupModelRateMultipliersField.vue";
+import {
+  modelRatesFromAPI,
+  modelRatesToAPI,
+  validateModelRateForm,
+  type ModelRateFormEntry,
+} from "@/views/admin/groupsModelRateMultipliers";
 import type { PricingFormEntry } from "@/components/admin/channel/types";
 import {
   apiIntervalsToForm,
@@ -5061,6 +5087,7 @@ const createForm = reactive({
   force_openai_fast: false,
   free_openai_fast: false,
   model_pricing: [] as PricingFormEntry[],
+  model_rate_multipliers: [] as ModelRateFormEntry[],
   // 图片生成计费配置
   allow_image_generation: false,
   allow_batch_image_generation: false,
@@ -5429,6 +5456,7 @@ const editForm = reactive({
   force_openai_fast: false,
   free_openai_fast: false,
   model_pricing: [] as PricingFormEntry[],
+  model_rate_multipliers: [] as ModelRateFormEntry[],
   // 图片生成计费配置
   allow_image_generation: false,
   allow_batch_image_generation: false,
@@ -5909,6 +5937,7 @@ const closeCreateModal = () => {
   createForm.force_openai_fast = false;
   createForm.free_openai_fast = false;
   createForm.model_pricing = [];
+  createForm.model_rate_multipliers = [];
   createForm.web_search_price_per_call = null;
   createForm.search_price_per_1k = null;
   createForm.audio_realtime_price_per_min = null;
@@ -5994,6 +6023,15 @@ const validateGroupReasoningMultipliers = (pricing: PricingFormEntry[]): boolean
   return true;
 };
 
+const validateGroupModelRates = (entries: ModelRateFormEntry[]): boolean => {
+  const error = validateModelRateForm(entries);
+  if (error) {
+    appStore.showError(t(`admin.groups.modelRates.${error.key}`, { model: error.model ?? "" }));
+    return false;
+  }
+  return true;
+};
+
 const handleCreateGroup = async () => {
   if (!createForm.name.trim()) {
     appStore.showError(t("admin.groups.nameRequired"));
@@ -6010,6 +6048,7 @@ const handleCreateGroup = async () => {
     return;
   }
   if (!validateGroupReasoningMultipliers(createForm.model_pricing)) return;
+  if (!validateGroupModelRates(createForm.model_rate_multipliers)) return;
   // 模型白名单：开启且没有任何条目时阻止提交，与后端 400 对齐。
   if (
     createModelAllowlistState.enabled &&
@@ -6038,6 +6077,7 @@ const handleCreateGroup = async () => {
         createForm.platform,
         createForm.free_openai_fast,
       ),
+      model_rate_multipliers: modelRatesToAPI(createForm.model_rate_multipliers),
       model_pricing: groupPricingToAPI(
         createForm.model_pricing,
         createForm.platform,
@@ -6185,6 +6225,7 @@ const handleEdit = async (group: AdminGroup) => {
   editForm.force_openai_fast = group.force_openai_fast ?? false;
   editForm.free_openai_fast = group.free_openai_fast ?? false;
   editForm.model_pricing = groupPricingFromAPI(group.model_pricing);
+  editForm.model_rate_multipliers = modelRatesFromAPI(group.model_rate_multipliers);
   editForm.allow_image_generation = group.allow_image_generation ?? false;
   editForm.allow_batch_image_generation =
     group.allow_batch_image_generation ?? false;
@@ -6320,6 +6361,7 @@ const closeEditModal = () => {
   editForm.force_openai_fast = false;
   editForm.free_openai_fast = false;
   editForm.model_pricing = [];
+  editForm.model_rate_multipliers = [];
   editForm.web_search_price_per_call = null;
   editForm.search_price_per_1k = null;
   editForm.audio_realtime_price_per_min = null;
@@ -6350,6 +6392,7 @@ const handleUpdateGroup = async () => {
     return;
   }
   if (!validateGroupReasoningMultipliers(editForm.model_pricing)) return;
+  if (!validateGroupModelRates(editForm.model_rate_multipliers)) return;
   // 模型白名单：开启且没有任何条目时阻止提交，与后端 400 对齐。
   if (
     editModelAllowlistState.enabled &&
@@ -6382,6 +6425,7 @@ const handleUpdateGroup = async () => {
         editForm.platform,
         editForm.free_openai_fast,
       ),
+      model_rate_multipliers: modelRatesToAPI(editForm.model_rate_multipliers),
       model_pricing: groupPricingToAPI(
         editForm.model_pricing,
         editForm.platform,

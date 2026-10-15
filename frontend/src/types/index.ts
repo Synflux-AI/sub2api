@@ -570,6 +570,15 @@ export interface GroupLocaleText {
   description?: string
 }
 
+/**
+ * 分组逐模型售价倍率规则。models 支持精确模型名与末尾 `*` 前缀通配（匹配语义同 model_pricing），
+ * 命中的模型用 rate_multiplier 替换分组默认倍率（不相乘）。
+ */
+export interface GroupModelRateMultiplier {
+  models: string[]
+  rate_multiplier: number
+}
+
 /** 以语言代码（en、zh…）为键的分组文案译文。 */
 export type GroupI18n = Record<string, GroupLocaleText>
 
@@ -644,6 +653,8 @@ export interface AdminGroup extends Group {
   force_openai_fast: boolean
   free_openai_fast: boolean
   model_pricing: import('@/api/admin/channels').ChannelModelPricing[]
+  // 逐模型售价倍率：命中的模型替换 rate_multiplier，优先级高于用户专属倍率
+  model_rate_multipliers?: GroupModelRateMultiplier[]
   // 分组利润控制（openai/anthropic/gemini/grok/antigravity 分组可启用；margin/buffer 为小数存储）。
   // 仅管理员可见：与 rate_multiplier 相乘即可反推上游成本上限，不得下放到 Group。
   profit_control_enabled: boolean
@@ -819,6 +830,7 @@ export interface CreateGroupRequest {
   force_openai_fast?: boolean
   free_openai_fast?: boolean
   model_pricing?: import('@/api/admin/channels').ChannelModelPricing[]
+  model_rate_multipliers?: GroupModelRateMultiplier[]
   allow_image_generation?: boolean
   allow_batch_image_generation?: boolean
   image_rate_independent?: boolean
@@ -887,6 +899,7 @@ export interface UpdateGroupRequest {
   force_openai_fast?: boolean
   free_openai_fast?: boolean
   model_pricing?: import('@/api/admin/channels').ChannelModelPricing[]
+  model_rate_multipliers?: GroupModelRateMultiplier[]
   allow_image_generation?: boolean
   allow_batch_image_generation?: boolean
   image_rate_independent?: boolean
