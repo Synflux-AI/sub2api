@@ -37,6 +37,7 @@ func newSimpleModeGroupRouter(svc *stubAdminService) *gin.Engine {
 	r.GET("/groups/:id/rate-multipliers", h.GetGroupRateMultipliers)
 	r.PUT("/groups/:id/rate-multipliers", h.BatchSetGroupRateMultipliers)
 	r.DELETE("/groups/:id/rate-multipliers", h.ClearGroupRateMultipliers)
+	r.PUT("/groups/:id/users/:user_id/model-rate-multipliers", h.SetUserGroupModelRateMultipliers)
 	r.PUT("/groups/:id/rpm-overrides", h.BatchSetGroupRPMOverrides)
 	r.DELETE("/groups/:id/rpm-overrides", h.ClearGroupRPMOverrides)
 	r.DELETE("/groups/:id", h.Delete)
@@ -284,6 +285,7 @@ func TestGroupHandlerSimpleModeBlocksAdvancedOperations(t *testing.T) {
 		{http.MethodGet, "/groups/1/rate-multipliers", ""},
 		{http.MethodPut, "/groups/1/rate-multipliers", `{"entries":[]}`},
 		{http.MethodDelete, "/groups/1/rate-multipliers", ""},
+		{http.MethodPut, "/groups/1/users/2/model-rate-multipliers", `{"model_rate_multipliers":{}}`},
 		{http.MethodPut, "/groups/1/rpm-overrides", `{"entries":[]}`},
 		{http.MethodDelete, "/groups/1/rpm-overrides", ""},
 		{http.MethodGet, "/groups/1/stats", ""},
@@ -306,4 +308,27 @@ func TestGroupHandlerSimpleModeBlocksAdvancedOperations(t *testing.T) {
 			require.Zero(t, svc.advancedGroupOperationCalls)
 		})
 	}
+}
+
+func TestGroupHandlerSetUserGroupModelRateMultipliers(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc := newStubAdminService()
+	h := NewGroupHandlerWithConfig(svc, nil, nil, &config.Config{})
+	r := gin.New()
+	r.PUT("/groups/:id/users/:user_id/model-rate-multipliers", h.SetUserGroupModelRateMultipliers)
+
+	res := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/groups/3/users/4/model-rate-multipliers", bytes.NewBufferString(`{"model_rate_multipliers":{"model-a":0.5}}`))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(res, req)
+	require.Equal(t, http.StatusOK, res.Code)
+	require.Equal(t, int64(3), svc.lastUserModelRateGroupID)
+	require.Equal(t, int64(4), svc.lastUserModelRateUserID)
+	require.Equal(t, map[string]float64{"model-a": 0.5}, svc.lastUserModelRates)
+
+	res = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPut, "/groups/3/users/x/model-rate-multipliers", bytes.NewBufferString(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(res, req)
+	require.Equal(t, http.StatusBadRequest, res.Code)
 }

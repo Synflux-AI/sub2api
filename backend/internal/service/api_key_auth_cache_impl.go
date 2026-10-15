@@ -34,8 +34,9 @@ import (
 // 合并后快照同时含上游 manifest 配置与本仓库扩展字段,与任一方旧版本均不兼容,升 24 强制失效。
 // v25: 再次撞号——上游 v24(group model_allowlist,由 models_list_config 改名并改为强制语义)与本仓库 v24
 // 字段集不同,合并后快照同时含上游 model_allowlist 与本仓库扩展字段,与任一方旧版本均不兼容,升 25 强制失效。
+// v26: 本仓库新增 group model_rate_multipliers(分组逐模型售价倍率),旧快照缺该字段会按分组默认倍率计费。
 // 注:本仓库与上游各自独立演进该版本号,每次 sync 合并若双方都动过快照结构,需继续递增。
-const apiKeyAuthSnapshotVersion = 25
+const apiKeyAuthSnapshotVersion = 26
 
 type apiKeyAuthCacheConfig struct {
 	l1Size        int
@@ -435,6 +436,7 @@ func (s *APIKeyService) snapshotFromAPIKey(ctx context.Context, apiKey *APIKey) 
 			AudioSTTPricePerHour:            apiKey.Group.AudioSTTPricePerHour,
 			LongContextPricingEnabled:       apiKey.Group.LongContextPricingEnabled,
 			ModelPricing:                    apiKey.Group.ModelPricing,
+			ModelRateMultipliers:            cloneGroupModelRateMultipliers(apiKey.Group.ModelRateMultipliers),
 			ClaudeCodeOnly:                  apiKey.Group.ClaudeCodeOnly,
 			CodexCLIOnly:                    apiKey.Group.CodexCLIOnly,
 			FallbackGroupID:                 apiKey.Group.FallbackGroupID,
@@ -543,6 +545,7 @@ func (s *APIKeyService) snapshotToAPIKey(key string, snapshot *APIKeyAuthSnapsho
 			AudioSTTPricePerHour:            snapshot.Group.AudioSTTPricePerHour,
 			LongContextPricingEnabled:       snapshot.Group.LongContextPricingEnabled,
 			ModelPricing:                    snapshot.Group.ModelPricing,
+			ModelRateMultipliers:            cloneGroupModelRateMultipliers(snapshot.Group.ModelRateMultipliers),
 			ClaudeCodeOnly:                  snapshot.Group.ClaudeCodeOnly,
 			CodexCLIOnly:                    snapshot.Group.CodexCLIOnly,
 			FallbackGroupID:                 snapshot.Group.FallbackGroupID,

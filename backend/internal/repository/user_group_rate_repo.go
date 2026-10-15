@@ -3,6 +3,8 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -94,10 +96,10 @@ func (r *userGroupRateRepository) GetByUserIDs(ctx context.Context, userIDs []in
 	return result, nil
 }
 
-// GetByGroupID 获取指定分组下所有用户的专属配置（rate 与 rpm_override 任一非 NULL 即返回）
+// GetByGroupID 获取指定分组下所有用户的专属配置（rate、rpm_override、模型倍率覆盖任一非空即有行）
 func (r *userGroupRateRepository) GetByGroupID(ctx context.Context, groupID int64) ([]service.UserGroupRateEntry, error) {
 	query := `
-		SELECT ugr.user_id, u.username, u.email, COALESCE(u.notes, ''), u.status, ugr.rate_multiplier, ugr.rpm_override
+		SELECT ugr.user_id, u.username, u.email, COALESCE(u.notes, ''), u.status, ugr.rate_multiplier, ugr.rpm_override, ugr.model_rate_multipliers
 		FROM user_group_rate_multipliers ugr
 		JOIN users u ON u.id = ugr.user_id AND u.deleted_at IS NULL
 		WHERE ugr.group_id = $1
@@ -114,7 +116,11 @@ func (r *userGroupRateRepository) GetByGroupID(ctx context.Context, groupID int6
 		var entry service.UserGroupRateEntry
 		var rate sql.NullFloat64
 		var rpm sql.NullInt32
-		if err := rows.Scan(&entry.UserID, &entry.UserName, &entry.UserEmail, &entry.UserNotes, &entry.UserStatus, &rate, &rpm); err != nil {
+		var modelRates []byte
+		if err := rows.Scan(&entry.UserID, &entry.UserName, &entry.UserEmail, &entry.UserNotes, &entry.UserStatus, &rate, &rpm, &modelRates); err != nil {
+			return nil, err
+		}
+		if entry.ModelRateMultipliers, err = decodeUserGroupModelRates(modelRates); err != nil {
 			return nil, err
 		}
 		if rate.Valid {
@@ -183,7 +189,7 @@ func (r *userGroupRateRepository) SyncUserGroupRates(ctx context.Context, userID
 			return err
 		}
 		_, err := r.sql.ExecContext(ctx,
-			`DELETE FROM user_group_rate_multipliers WHERE user_id = $1 AND rate_multiplier IS NULL AND rpm_override IS NULL`,
+			`DELETE FROM user_group_rate_multipliers WHERE user_id = $1 AND rate_multiplier IS NULL AND rpm_override IS NULL AND model_rate_multipliers = '{}'::jsonb`,
 			userID)
 		return err
 	}
@@ -209,7 +215,7 @@ func (r *userGroupRateRepository) SyncUserGroupRates(ctx context.Context, userID
 			return err
 		}
 		if _, err := r.sql.ExecContext(ctx,
-			`DELETE FROM user_group_rate_multipliers WHERE user_id = $1 AND group_id = ANY($2) AND rate_multiplier IS NULL AND rpm_override IS NULL`,
+			`DELETE FROM user_group_rate_multipliers WHERE user_id = $1 AND group_id = ANY($2) AND rate_multiplier IS NULL AND rpm_override IS NULL AND model_rate_multipliers = '{}'::jsonb`,
 			userID, pq.Array(clearGroupIDs)); err != nil {
 			return err
 		}
@@ -271,7 +277,7 @@ func (r *userGroupRateRepository) SyncGroupRateMultipliers(ctx context.Context, 
 	// 清空后若整行 NULL 则删除。
 	if _, err := r.sql.ExecContext(ctx, `
 		DELETE FROM user_group_rate_multipliers
-		WHERE group_id = $1 AND rate_multiplier IS NULL AND rpm_override IS NULL
+		WHERE group_id = $1 AND rate_multiplier IS NULL AND rpm_override IS NULL AND model_rate_multipliers = '{}'::jsonb
 	`, groupID); err != nil {
 		return err
 	}
@@ -349,7 +355,7 @@ func (r *userGroupRateRepository) SyncGroupRPMOverrides(ctx context.Context, gro
 	// 清空后若整行 NULL 则删除。
 	if _, err := r.sql.ExecContext(ctx, `
 		DELETE FROM user_group_rate_multipliers
-		WHERE group_id = $1 AND rate_multiplier IS NULL AND rpm_override IS NULL
+		WHERE group_id = $1 AND rate_multiplier IS NULL AND rpm_override IS NULL AND model_rate_multipliers = '{}'::jsonb
 	`, groupID); err != nil {
 		return err
 	}
@@ -382,7 +388,7 @@ func (r *userGroupRateRepository) ClearGroupRPMOverrides(ctx context.Context, gr
 	}
 	_, err := r.sql.ExecContext(ctx, `
 		DELETE FROM user_group_rate_multipliers
-		WHERE group_id = $1 AND rate_multiplier IS NULL AND rpm_override IS NULL
+		WHERE group_id = $1 AND rate_multiplier IS NULL AND rpm_override IS NULL AND model_rate_multipliers = '{}'::jsonb
 	`, groupID)
 	return err
 }
@@ -397,4 +403,113 @@ func (r *userGroupRateRepository) DeleteByGroupID(ctx context.Context, groupID i
 func (r *userGroupRateRepository) DeleteByUserID(ctx context.Context, userID int64) error {
 	_, err := r.sql.ExecContext(ctx, `DELETE FROM user_group_rate_multipliers WHERE user_id = $1`, userID)
 	return err
+}
+
+// GetRateConfigByUserAndGroup 一次读出用户在分组下的专属倍率与模型倍率覆盖；无行时返回 nil。
+func (r *userGroupRateRepository) GetRateConfigByUserAndGroup(ctx context.Context, userID, groupID int64) (*service.UserGroupRateConfig, error) {
+	query := `SELECT rate_multiplier, model_rate_multipliers FROM user_group_rate_multipliers WHERE user_id = $1 AND group_id = $2`
+	var rate sql.NullFloat64
+	var modelRates []byte
+	err := scanSingleRow(ctx, r.sql, query, []any{userID, groupID}, &rate, &modelRates)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	cfg := &service.UserGroupRateConfig{}
+	if rate.Valid {
+		v := rate.Float64
+		cfg.RateMultiplier = &v
+	}
+	if cfg.ModelRateMultipliers, err = decodeUserGroupModelRates(modelRates); err != nil {
+		return nil, err
+	}
+	return cfg, nil
+}
+
+// SetUserGroupModelRates 整体替换用户在分组下的模型倍率覆盖（不触动 rate_multiplier 与 rpm_override）。
+// 空 map 表示全部恢复继承；替换后若整行为空则删除。
+func (r *userGroupRateRepository) SetUserGroupModelRates(ctx context.Context, userID, groupID int64, rates map[string]float64) error {
+	payload, err := encodeUserGroupModelRates(rates)
+	if err != nil {
+		return err
+	}
+	if len(rates) == 0 {
+		if _, err := r.sql.ExecContext(ctx, `
+			UPDATE user_group_rate_multipliers
+			SET model_rate_multipliers = '{}'::jsonb, updated_at = NOW()
+			WHERE user_id = $1 AND group_id = $2
+		`, userID, groupID); err != nil {
+			return err
+		}
+		_, err := r.sql.ExecContext(ctx, `
+			DELETE FROM user_group_rate_multipliers
+			WHERE user_id = $1 AND group_id = $2 AND rate_multiplier IS NULL AND rpm_override IS NULL AND model_rate_multipliers = '{}'::jsonb
+		`, userID, groupID)
+		return err
+	}
+	now := time.Now()
+	_, err = r.sql.ExecContext(ctx, `
+		INSERT INTO user_group_rate_multipliers (user_id, group_id, model_rate_multipliers, created_at, updated_at)
+		VALUES ($1, $2, $3::jsonb, $4, $4)
+		ON CONFLICT (user_id, group_id)
+		DO UPDATE SET model_rate_multipliers = EXCLUDED.model_rate_multipliers, updated_at = EXCLUDED.updated_at
+	`, userID, groupID, payload, now)
+	return err
+}
+
+// PruneGroupModelRates 删除该分组所有用户覆盖里不在 patterns 中的键（分组删改模型规则后调用），
+// 随后清理整行为空的记录。patterns 必须是分组规则里原样保存的模式串。
+func (r *userGroupRateRepository) PruneGroupModelRates(ctx context.Context, groupID int64, patterns []string) error {
+	if patterns == nil {
+		patterns = []string{}
+	}
+	if _, err := r.sql.ExecContext(ctx, `
+		UPDATE user_group_rate_multipliers
+		SET model_rate_multipliers = COALESCE((
+				SELECT jsonb_object_agg(kv.key, kv.value)
+				FROM jsonb_each(model_rate_multipliers) AS kv
+				WHERE kv.key = ANY($2)
+			), '{}'::jsonb),
+			updated_at = NOW()
+		WHERE group_id = $1
+			AND model_rate_multipliers <> '{}'::jsonb
+			AND EXISTS (
+				SELECT 1 FROM jsonb_object_keys(model_rate_multipliers) AS k
+				WHERE NOT (k = ANY($2))
+			)
+	`, groupID, pq.Array(patterns)); err != nil {
+		return err
+	}
+	_, err := r.sql.ExecContext(ctx, `
+		DELETE FROM user_group_rate_multipliers
+		WHERE group_id = $1 AND rate_multiplier IS NULL AND rpm_override IS NULL AND model_rate_multipliers = '{}'::jsonb
+	`, groupID)
+	return err
+}
+
+func decodeUserGroupModelRates(raw []byte) (map[string]float64, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	var out map[string]float64
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, fmt.Errorf("decode user group model rate multipliers: %w", err)
+	}
+	if len(out) == 0 {
+		return nil, nil
+	}
+	return out, nil
+}
+
+func encodeUserGroupModelRates(rates map[string]float64) (string, error) {
+	if len(rates) == 0 {
+		return "{}", nil
+	}
+	b, err := json.Marshal(rates)
+	if err != nil {
+		return "", fmt.Errorf("encode user group model rate multipliers: %w", err)
+	}
+	return string(b), nil
 }

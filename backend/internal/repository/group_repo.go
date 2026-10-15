@@ -128,6 +128,7 @@ func createGroupRecord(ctx context.Context, client *dbent.Client, groupIn *servi
 		SetNillableAudioSttPricePerHour(groupIn.AudioSTTPricePerHour).
 		SetLongContextPricingEnabled(groupIn.LongContextPricingEnabled).
 		SetModelPricing(modelPricing).
+		SetModelRateMultipliers(service.NormalizeGroupModelRateMultipliersForStorage(groupIn.ModelRateMultipliers)).
 		SetDefaultValidityDays(groupIn.DefaultValidityDays).
 		SetClaudeCodeOnly(groupIn.ClaudeCodeOnly).
 		SetCodexCliOnly(groupIn.CodexCLIOnly).
@@ -315,6 +316,7 @@ func (r *groupRepository) Update(ctx context.Context, groupIn *service.Group) er
 		SetVideoModelPrices(service.NormalizeVideoModelPrices(groupIn.VideoModelPrices)).
 		SetLongContextPricingEnabled(groupIn.LongContextPricingEnabled).
 		SetModelPricing(modelPricing).
+		SetModelRateMultipliers(service.NormalizeGroupModelRateMultipliersForStorage(groupIn.ModelRateMultipliers)).
 		SetDefaultValidityDays(groupIn.DefaultValidityDays).
 		SetClaudeCodeOnly(groupIn.ClaudeCodeOnly).
 		SetCodexCliOnly(groupIn.CodexCLIOnly).

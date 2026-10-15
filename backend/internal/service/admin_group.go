@@ -409,6 +409,10 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 	if err != nil {
 		return nil, err
 	}
+	modelRateMultipliers, err := normalizeGroupModelRateMultipliers(input.ModelRateMultipliers)
+	if err != nil {
+		return nil, err
+	}
 	maxReasoningEffort, err := normalizeMaxReasoningEffortForPlatform(platform, input.MaxReasoningEffort)
 	if err != nil {
 		return nil, infraerrors.Newf(http.StatusBadRequest, "INVALID_MAX_REASONING_EFFORT", "%v", err)
@@ -580,6 +584,7 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 		MonthlyLimitUSD:                 monthlyLimit,
 		LongContextPricingEnabled:       input.LongContextPricingEnabled,
 		ModelPricing:                    modelPricing,
+		ModelRateMultipliers:            modelRateMultipliers,
 		AllowImageGeneration:            allowImageGeneration,
 		AllowBatchImageGeneration:       allowBatchImageGeneration,
 		ImageRateIndependent:            input.ImageRateIndependent,
@@ -813,6 +818,13 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 			return nil, normalizeErr
 		}
 		group.ModelPricing = modelPricing
+	}
+	if input.ModelRateMultipliers != nil {
+		modelRateMultipliers, normalizeErr := normalizeGroupModelRateMultipliers(*input.ModelRateMultipliers)
+		if normalizeErr != nil {
+			return nil, normalizeErr
+		}
+		group.ModelRateMultipliers = modelRateMultipliers
 	}
 
 	// 订阅相关字段
@@ -1076,6 +1088,9 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 	if err := s.groupRepo.Update(ctx, group); err != nil {
 		return nil, err
 	}
+	if input.ModelRateMultipliers != nil {
+		s.pruneUserGroupModelRates(ctx, group)
+	}
 
 	if s.authCacheInvalidator != nil {
 		s.authCacheInvalidator.InvalidateAuthCacheByGroupID(ctx, id)
@@ -1293,6 +1308,48 @@ func (s *adminServiceImpl) BatchSetGroupRateMultipliers(ctx context.Context, gro
 		}
 	}
 	return s.userGroupRateRepo.SyncGroupRateMultipliers(ctx, groupID, entries)
+}
+
+func (s *adminServiceImpl) userGroupModelRateRepo() (UserGroupModelRateRepository, bool) {
+	repo, ok := s.userGroupRateRepo.(UserGroupModelRateRepository)
+	return repo, ok && repo != nil
+}
+
+// SetUserGroupModelRateMultipliers 整体替换用户在分组下的模型倍率覆盖。
+// 键必须是分组现有模型倍率规则的模式串；空 map 表示该用户所有模型恢复继承分组。
+func (s *adminServiceImpl) SetUserGroupModelRateMultipliers(ctx context.Context, groupID, userID int64, rates map[string]float64) error {
+	if err := s.ValidateSimpleModeGroupOperation(AdminGroupOperationMultiplier); err != nil {
+		return err
+	}
+	if groupID <= 0 || userID <= 0 {
+		return infraerrors.BadRequest("INVALID_USER_GROUP", "group_id and user_id must be positive")
+	}
+	repo, ok := s.userGroupModelRateRepo()
+	if !ok {
+		return infraerrors.New(http.StatusServiceUnavailable, "USER_MODEL_RATE_UNAVAILABLE", "user model rate multipliers are not supported by the configured repository")
+	}
+	group, err := s.groupRepo.GetByIDLite(ctx, groupID)
+	if err != nil {
+		return err
+	}
+	normalized, err := normalizeUserGroupModelRates(group, rates)
+	if err != nil {
+		return err
+	}
+	return repo.SetUserGroupModelRates(ctx, userID, groupID, normalized)
+}
+
+// pruneUserGroupModelRates 在分组模型倍率规则保存后，删掉用户覆盖里已不存在的模式串，
+// 避免日后重新加回同名规则时旧覆盖意外复活。分组已落库，失败只记日志：残留键在
+// 计费时不会被查（只查命中的分组规则模式串）。
+func (s *adminServiceImpl) pruneUserGroupModelRates(ctx context.Context, group *Group) {
+	repo, ok := s.userGroupModelRateRepo()
+	if !ok || group == nil {
+		return
+	}
+	if err := repo.PruneGroupModelRates(ctx, group.ID, group.ModelRatePatterns()); err != nil {
+		logger.LegacyPrintf("service.admin", "prune user group model rates failed: group_id=%d err=%v", group.ID, err)
+	}
 }
 
 func (s *adminServiceImpl) ClearGroupRPMOverrides(ctx context.Context, groupID int64) error {

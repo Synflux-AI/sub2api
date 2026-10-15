@@ -826,6 +826,18 @@ func (_u *GroupUpdate) ClearModelPricing() *GroupUpdate {
 	return _u
 }
 
+// SetModelRateMultipliers sets the "model_rate_multipliers" field.
+func (_u *GroupUpdate) SetModelRateMultipliers(v []domain.GroupModelRateMultiplier) *GroupUpdate {
+	_u.mutation.SetModelRateMultipliers(v)
+	return _u
+}
+
+// AppendModelRateMultipliers appends value to the "model_rate_multipliers" field.
+func (_u *GroupUpdate) AppendModelRateMultipliers(v []domain.GroupModelRateMultiplier) *GroupUpdate {
+	_u.mutation.AppendModelRateMultipliers(v)
+	return _u
+}
+
 // SetClaudeCodeOnly sets the "claude_code_only" field.
 func (_u *GroupUpdate) SetClaudeCodeOnly(v bool) *GroupUpdate {
 	_u.mutation.SetClaudeCodeOnly(v)
@@ -1827,6 +1839,14 @@ func (_u *GroupUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if _u.mutation.ModelPricingCleared() {
 		_spec.ClearField(group.FieldModelPricing, field.TypeJSON)
+	}
+	if value, ok := _u.mutation.ModelRateMultipliers(); ok {
+		_spec.SetField(group.FieldModelRateMultipliers, field.TypeJSON, value)
+	}
+	if value, ok := _u.mutation.AppendedModelRateMultipliers(); ok {
+		_spec.AddModifier(func(u *sql.UpdateBuilder) {
+			sqljson.Append(u, group.FieldModelRateMultipliers, value)
+		})
 	}
 	if value, ok := _u.mutation.ClaudeCodeOnly(); ok {
 		_spec.SetField(group.FieldClaudeCodeOnly, field.TypeBool, value)
@@ -3046,6 +3066,18 @@ func (_u *GroupUpdateOne) ClearModelPricing() *GroupUpdateOne {
 	return _u
 }
 
+// SetModelRateMultipliers sets the "model_rate_multipliers" field.
+func (_u *GroupUpdateOne) SetModelRateMultipliers(v []domain.GroupModelRateMultiplier) *GroupUpdateOne {
+	_u.mutation.SetModelRateMultipliers(v)
+	return _u
+}
+
+// AppendModelRateMultipliers appends value to the "model_rate_multipliers" field.
+func (_u *GroupUpdateOne) AppendModelRateMultipliers(v []domain.GroupModelRateMultiplier) *GroupUpdateOne {
+	_u.mutation.AppendModelRateMultipliers(v)
+	return _u
+}
+
 // SetClaudeCodeOnly sets the "claude_code_only" field.
 func (_u *GroupUpdateOne) SetClaudeCodeOnly(v bool) *GroupUpdateOne {
 	_u.mutation.SetClaudeCodeOnly(v)
@@ -4077,6 +4109,14 @@ func (_u *GroupUpdateOne) sqlSave(ctx context.Context) (_node *Group, err error)
 	}
 	if _u.mutation.ModelPricingCleared() {
 		_spec.ClearField(group.FieldModelPricing, field.TypeJSON)
+	}
+	if value, ok := _u.mutation.ModelRateMultipliers(); ok {
+		_spec.SetField(group.FieldModelRateMultipliers, field.TypeJSON, value)
+	}
+	if value, ok := _u.mutation.AppendedModelRateMultipliers(); ok {
+		_spec.AddModifier(func(u *sql.UpdateBuilder) {
+			sqljson.Append(u, group.FieldModelRateMultipliers, value)
+		})
 	}
 	if value, ok := _u.mutation.ClaudeCodeOnly(); ok {
 		_spec.SetField(group.FieldClaudeCodeOnly, field.TypeBool, value)

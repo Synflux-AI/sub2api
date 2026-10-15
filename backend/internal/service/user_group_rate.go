@@ -12,6 +12,26 @@ type UserGroupRateEntry struct {
 	UserStatus     string   `json:"user_status"`
 	RateMultiplier *float64 `json:"rate_multiplier,omitempty"`
 	RPMOverride    *int     `json:"rpm_override,omitempty"`
+	// ModelRateMultipliers 用户对分组模型倍率规则的覆盖：分组规则模式串 -> 倍率；未出现的模式串继承分组。
+	ModelRateMultipliers map[string]float64 `json:"model_rate_multipliers,omitempty"`
+}
+
+// UserGroupRateConfig 计费热路径一次读出的用户分组倍率配置。
+type UserGroupRateConfig struct {
+	RateMultiplier       *float64           // 用户专属倍率；nil 表示未设置
+	ModelRateMultipliers map[string]float64 // 模型倍率覆盖，键为分组规则模式串
+}
+
+// UserGroupModelRateRepository 用户在分组下的模型倍率覆盖读写。
+// 作为可选能力由 SQL 仓储实现，调用方以类型断言获取（与 GetByUserIDs 的批量读取同一做法），
+// 未实现时计费只按用户专属倍率解析、管理接口返回不可用。
+type UserGroupModelRateRepository interface {
+	// GetRateConfigByUserAndGroup 一次读出专属倍率与模型倍率覆盖；无行时返回 nil
+	GetRateConfigByUserAndGroup(ctx context.Context, userID, groupID int64) (*UserGroupRateConfig, error)
+	// SetUserGroupModelRates 整体替换用户在分组下的模型倍率覆盖；空 map 表示全部恢复继承
+	SetUserGroupModelRates(ctx context.Context, userID, groupID int64, rates map[string]float64) error
+	// PruneGroupModelRates 删除该分组所有用户覆盖中不在 patterns 里的模式串
+	PruneGroupModelRates(ctx context.Context, groupID int64, patterns []string) error
 }
 
 // GroupRateMultiplierInput 批量设置分组倍率的输入条目

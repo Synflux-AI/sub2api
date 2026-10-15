@@ -30,6 +30,9 @@ type stubAdminService struct {
 	guardedDeletedGroupIDs              []int64
 	deleteGroupIfEmptyErr               error
 	advancedGroupOperationCalls         int
+	lastUserModelRateGroupID            int64
+	lastUserModelRateUserID             int64
+	lastUserModelRates                  map[string]float64
 	lastListGroupsIsExclusive           *bool
 	createdProxies                      []*service.CreateProxyInput
 	updatedProxyIDs                     []int64
@@ -412,6 +415,12 @@ func (s *stubAdminService) ClearGroupRateMultipliers(_ context.Context, _ int64)
 
 func (s *stubAdminService) BatchSetGroupRateMultipliers(_ context.Context, _ int64, _ []service.GroupRateMultiplierInput) error {
 	s.advancedGroupOperationCalls++
+	return nil
+}
+
+func (s *stubAdminService) SetUserGroupModelRateMultipliers(_ context.Context, groupID, userID int64, rates map[string]float64) error {
+	s.advancedGroupOperationCalls++
+	s.lastUserModelRateGroupID, s.lastUserModelRateUserID, s.lastUserModelRates = groupID, userID, rates
 	return nil
 }
 

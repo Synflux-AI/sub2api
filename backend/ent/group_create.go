@@ -586,6 +586,12 @@ func (_c *GroupCreate) SetModelPricing(v jsontext.Value) *GroupCreate {
 	return _c
 }
 
+// SetModelRateMultipliers sets the "model_rate_multipliers" field.
+func (_c *GroupCreate) SetModelRateMultipliers(v []domain.GroupModelRateMultiplier) *GroupCreate {
+	_c.mutation.SetModelRateMultipliers(v)
+	return _c
+}
+
 // SetClaudeCodeOnly sets the "claude_code_only" field.
 func (_c *GroupCreate) SetClaudeCodeOnly(v bool) *GroupCreate {
 	_c.mutation.SetClaudeCodeOnly(v)
@@ -1147,6 +1153,10 @@ func (_c *GroupCreate) defaults() error {
 		v := group.DefaultLongContextPricingEnabled
 		_c.mutation.SetLongContextPricingEnabled(v)
 	}
+	if _, ok := _c.mutation.ModelRateMultipliers(); !ok {
+		v := group.DefaultModelRateMultipliers
+		_c.mutation.SetModelRateMultipliers(v)
+	}
 	if _, ok := _c.mutation.ClaudeCodeOnly(); !ok {
 		v := group.DefaultClaudeCodeOnly
 		_c.mutation.SetClaudeCodeOnly(v)
@@ -1367,6 +1377,9 @@ func (_c *GroupCreate) check() error {
 	}
 	if _, ok := _c.mutation.LongContextPricingEnabled(); !ok {
 		return &ValidationError{Name: "long_context_pricing_enabled", err: errors.New(`ent: missing required field "Group.long_context_pricing_enabled"`)}
+	}
+	if _, ok := _c.mutation.ModelRateMultipliers(); !ok {
+		return &ValidationError{Name: "model_rate_multipliers", err: errors.New(`ent: missing required field "Group.model_rate_multipliers"`)}
 	}
 	if _, ok := _c.mutation.ClaudeCodeOnly(); !ok {
 		return &ValidationError{Name: "claude_code_only", err: errors.New(`ent: missing required field "Group.claude_code_only"`)}
@@ -1646,6 +1659,10 @@ func (_c *GroupCreate) createSpec() (*Group, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.ModelPricing(); ok {
 		_spec.SetField(group.FieldModelPricing, field.TypeJSON, value)
 		_node.ModelPricing = value
+	}
+	if value, ok := _c.mutation.ModelRateMultipliers(); ok {
+		_spec.SetField(group.FieldModelRateMultipliers, field.TypeJSON, value)
+		_node.ModelRateMultipliers = value
 	}
 	if value, ok := _c.mutation.ClaudeCodeOnly(); ok {
 		_spec.SetField(group.FieldClaudeCodeOnly, field.TypeBool, value)
@@ -2618,6 +2635,18 @@ func (u *GroupUpsert) UpdateModelPricing() *GroupUpsert {
 // ClearModelPricing clears the value of the "model_pricing" field.
 func (u *GroupUpsert) ClearModelPricing() *GroupUpsert {
 	u.SetNull(group.FieldModelPricing)
+	return u
+}
+
+// SetModelRateMultipliers sets the "model_rate_multipliers" field.
+func (u *GroupUpsert) SetModelRateMultipliers(v []domain.GroupModelRateMultiplier) *GroupUpsert {
+	u.Set(group.FieldModelRateMultipliers, v)
+	return u
+}
+
+// UpdateModelRateMultipliers sets the "model_rate_multipliers" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateModelRateMultipliers() *GroupUpsert {
+	u.SetExcluded(group.FieldModelRateMultipliers)
 	return u
 }
 
@@ -3865,6 +3894,20 @@ func (u *GroupUpsertOne) UpdateModelPricing() *GroupUpsertOne {
 func (u *GroupUpsertOne) ClearModelPricing() *GroupUpsertOne {
 	return u.Update(func(s *GroupUpsert) {
 		s.ClearModelPricing()
+	})
+}
+
+// SetModelRateMultipliers sets the "model_rate_multipliers" field.
+func (u *GroupUpsertOne) SetModelRateMultipliers(v []domain.GroupModelRateMultiplier) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetModelRateMultipliers(v)
+	})
+}
+
+// UpdateModelRateMultipliers sets the "model_rate_multipliers" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateModelRateMultipliers() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateModelRateMultipliers()
 	})
 }
 
@@ -5339,6 +5382,20 @@ func (u *GroupUpsertBulk) UpdateModelPricing() *GroupUpsertBulk {
 func (u *GroupUpsertBulk) ClearModelPricing() *GroupUpsertBulk {
 	return u.Update(func(s *GroupUpsert) {
 		s.ClearModelPricing()
+	})
+}
+
+// SetModelRateMultipliers sets the "model_rate_multipliers" field.
+func (u *GroupUpsertBulk) SetModelRateMultipliers(v []domain.GroupModelRateMultiplier) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetModelRateMultipliers(v)
+	})
+}
+
+// UpdateModelRateMultipliers sets the "model_rate_multipliers" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateModelRateMultipliers() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateModelRateMultipliers()
 	})
 }
 

@@ -75,6 +75,9 @@ type Group struct {
 	// Token intervals are selected only when LongContextPricingEnabled is true.
 	LongContextPricingEnabled bool
 	ModelPricing              []ChannelModelPricing
+	// ModelRateMultipliers 逐模型售价倍率：命中的模型替换 RateMultiplier，优先级高于用户专属倍率。
+	// 解析顺序见 resolveBillingBaseRate。
+	ModelRateMultipliers []GroupModelRateMultiplier
 
 	// Claude Code 客户端限制
 	ClaudeCodeOnly  bool

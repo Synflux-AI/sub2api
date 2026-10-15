@@ -88,6 +88,7 @@ func emitUsageBusinessEvent(ctx context.Context, log *UsageLog) {
 	appendIf(zap.Float64("total_cost", log.TotalCost), log.TotalCost != 0)
 	appendIf(zap.Float64("actual_cost", log.ActualCost), log.ActualCost != 0)
 	appendIf(zap.Float64("rate_multiplier", log.RateMultiplier), log.RateMultiplier != 0)
+	usageAppendNonEmpty(&fields, "rate_source", log.RateSource)
 	usageAppendFloat64Ptr(&fields, "account_rate_multiplier", log.AccountRateMultiplier)
 	usageAppendFloat64Ptr(&fields, "account_stats_cost", log.AccountStatsCost)
 

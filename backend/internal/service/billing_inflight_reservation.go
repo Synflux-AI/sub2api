@@ -391,7 +391,8 @@ type inflightEstimateDeps struct {
 	billing        *BillingService
 	resolver       *ModelPricingResolver
 	resolveMapping func(ctx context.Context, groupID int64, model string) ChannelMappingResult
-	userGroupRate  func(ctx context.Context, userID, groupID int64, groupDefault float64) float64
+	// baseRate 与计费同源的 base 售价倍率解析（按计费模型，不含高峰因子），见 ResolveBillingBaseRate。
+	baseRate func(ctx context.Context, apiKey *APIKey, userID int64, billingModel string) (float64, BillingRateSource)
 	// accountMappedModels 返回调度器可选账号对 model 的账号级映射结果（去重，不含 model 本身）。
 	// 准入时账号尚未选定，计费侧 billableModelWithFallback 会回退到实际转发模型（UpstreamModel，
 	// 即账号映射后的模型），因此这里取所有候选映射模型的最高估算。
@@ -488,15 +489,21 @@ func inflightBillingModelCandidates(ctx context.Context, deps inflightEstimateDe
 	return primary, fallbacks, upstreamInput
 }
 
-func (d inflightEstimateDeps) rates(ctx context.Context, apiKey *APIKey) (text, image float64) {
+// rates 返回 model 作为计费模型时的 token / 图片售价倍率。每个候选计费模型各自解析倍率
+// （分组模型倍率可能让不同候选落在不同倍率上），estimate 再对候选取最高，保证预扣不低于实扣。
+func (d inflightEstimateDeps) rates(ctx context.Context, apiKey *APIKey, model string) (text, image float64) {
 	rate := 1.0
 	if d.cfg != nil && d.cfg.Default.RateMultiplier > 0 {
 		rate = d.cfg.Default.RateMultiplier
 	}
 	if apiKey != nil && apiKey.GroupID != nil && apiKey.Group != nil {
 		rate = apiKey.Group.RateMultiplier
-		if d.userGroupRate != nil && apiKey.User != nil {
-			rate = d.userGroupRate(ctx, apiKey.User.ID, *apiKey.GroupID, rate)
+		if d.baseRate != nil {
+			var userID int64
+			if apiKey.User != nil {
+				userID = apiKey.User.ID
+			}
+			rate, _ = d.baseRate(ctx, apiKey, userID, model)
 		}
 	}
 	return computePeakAwareMultipliers(apiKey, rate, timezone.Now())
@@ -643,8 +650,7 @@ func (d inflightEstimateDeps) estimate(ctx context.Context, apiKey *APIKey, req 
 		// 非计量请求（媒体状态查询、custom-voices 等）：无需预留，也不算「无法定价」。
 		return 0, true
 	}
-	textRate, imageRate := d.rates(ctx, apiKey)
-	if textRate <= 0 && imageRate <= 0 {
+	if textRate, imageRate := d.rates(ctx, apiKey, req.Model); textRate <= 0 && imageRate <= 0 {
 		// 免费分组：不计费，也无需预留。
 		return 0, true
 	}
@@ -652,6 +658,7 @@ func (d inflightEstimateDeps) estimate(ctx context.Context, apiKey *APIKey, req 
 	bestOf := func(models []string) float64 {
 		best := 0.0
 		for _, m := range models {
+			textRate, imageRate := d.rates(ctx, apiKey, m)
 			if c := d.estimateOne(ctx, apiKey, m, req, textRate, imageRate); c > best {
 				best = c
 			}
@@ -716,7 +723,7 @@ func (s *GatewayService) inflightEstimateDeps() inflightEstimateDeps {
 	if s.channelService != nil {
 		d.resolveMapping = s.channelService.ResolveChannelMapping
 	}
-	d.userGroupRate = s.getUserGroupRateMultiplier
+	d.baseRate = s.ResolveBillingBaseRate
 	if s.schedulerSnapshot != nil {
 		snap := s.schedulerSnapshot
 		d.accountMappedModels = inflightAccountMappedModelsFromSnapshot(
@@ -747,7 +754,7 @@ func (s *OpenAIGatewayService) inflightEstimateDeps() inflightEstimateDeps {
 	if s.channelService != nil {
 		d.resolveMapping = s.channelService.ResolveChannelMapping
 	}
-	d.userGroupRate = s.ResolveUserGroupRateMultiplier
+	d.baseRate = s.ResolveBillingBaseRate
 	if s.schedulerSnapshot != nil {
 		snap := s.schedulerSnapshot
 		d.accountMappedModels = inflightAccountMappedModelsFromSnapshot(

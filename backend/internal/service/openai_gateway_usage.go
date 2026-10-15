@@ -113,16 +113,58 @@ func (s *OpenAIGatewayService) RecordCyberPolicyUsageLog(ctx context.Context, in
 	}
 }
 
+// openAIUsageRateSet 一次用量计费所用的售价倍率组合。
+type openAIUsageRateSet struct {
+	text   float64 // token 倍率（base × 高峰因子）
+	image  float64 // 图片按次倍率（不含高峰）
+	video  float64 // 视频倍率（不含高峰）
+	base   float64 // base 倍率（不含高峰；网页搜索按次口径）
+	source BillingRateSource
+}
+
+func (s *OpenAIGatewayService) openAIUsageRates(ctx context.Context, apiKey *APIKey, user *User, billingModel string, pricingAt time.Time) openAIUsageRateSet {
+	var userID int64
+	if user != nil {
+		userID = user.ID
+	}
+	base, source := s.ResolveBillingBaseRate(ctx, apiKey, userID, billingModel)
+	text, image := computePeakAwareMultipliers(apiKey, base, pricingAt)
+	return openAIUsageRateSet{
+		text:   text,
+		image:  image,
+		video:  resolveVideoRateMultiplier(apiKey, base),
+		base:   base,
+		source: source,
+	}
+}
+
+// ResolveBillingBaseRate 解析 apiKey 在 billingModel 上的 base 售价倍率（不含高峰因子）与来源，
+// 与 GatewayService.ResolveBillingBaseRate 同一口径。
+func (s *OpenAIGatewayService) ResolveBillingBaseRate(ctx context.Context, apiKey *APIKey, userID int64, billingModel string) (float64, BillingRateSource) {
+	systemDefault := 1.0
+	if s != nil && s.cfg != nil {
+		systemDefault = s.cfg.Default.RateMultiplier
+	}
+	if apiKey == nil || apiKey.GroupID == nil || apiKey.Group == nil {
+		return systemDefault, BillingRateSourceSystem
+	}
+	return s.userGroupRateResolverOrDefault().ResolveForModel(ctx, userID, apiKey.Group, billingModel, systemDefault)
+}
+
+func (s *OpenAIGatewayService) userGroupRateResolverOrDefault() *userGroupRateResolver {
+	if s == nil {
+		return nil
+	}
+	// 未装配 resolver 时不可能读到用户配置，nil resolver 等价于只按分组解析。
+	return s.userGroupRateResolver
+}
+
 // ResolveUserGroupRateMultiplier resolves the same cached multiplier used by OpenAI usage billing.
 func (s *OpenAIGatewayService) ResolveUserGroupRateMultiplier(ctx context.Context, userID, groupID int64, groupDefaultMultiplier float64) float64 {
 	if s == nil {
 		return groupDefaultMultiplier
 	}
-	resolver := s.userGroupRateResolver
-	if resolver == nil {
-		resolver = newUserGroupRateResolver(nil, nil, resolveUserGroupRateCacheTTL(s.cfg), nil, "service.openai_gateway")
-	}
-	return resolver.Resolve(ctx, userID, groupID, groupDefaultMultiplier)
+	return s.userGroupRateResolverOrDefault().Resolve(ctx, userID, groupID, groupDefaultMultiplier)
 }
 
 // openAIUsagePricingAt 返回本次用量记录使用的定价时刻：优先请求级 PricingAt
@@ -196,22 +238,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		ImageOutputTokens:    result.Usage.ImageOutputTokens,
 	}
 
-	// Get rate multiplier
-	multiplier := 1.0
-	if s.cfg != nil {
-		multiplier = s.cfg.Default.RateMultiplier
-	}
-	if apiKey.GroupID != nil && apiKey.Group != nil {
-		multiplier = s.ResolveUserGroupRateMultiplier(ctx, user.ID, *apiKey.GroupID, apiKey.Group.RateMultiplier)
-	}
-	// token 倍率叠加高峰因子（token 计费含图片 token，图片按次倍率不受影响）。
-	// 高峰因子按请求级 PricingAt 现算（与利润门 D 同源同刻，跨峰谷请求不中途
-	// 变价）；未装配 PricingAt 的路径回退记录时刻，保持既有行为。不并入上面的
-	// Resolve，以免污染 user:group 倍率缓存。
-	baseMultiplier := multiplier
 	pricingAt := openAIUsagePricingAt(input)
-	multiplier, imageMultiplier := computePeakAwareMultipliers(apiKey, baseMultiplier, pricingAt)
-	videoMultiplier := resolveVideoRateMultiplier(apiKey, baseMultiplier)
 
 	var cost *CostBreakdown
 	billingModel := forwardResultBillingModel(result.Model, result.UpstreamModel)
@@ -233,6 +260,11 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		result.Model,
 	)
 	billingModels = s.filterCNProviderBillingModelCandidates(ctx, account, apiKey, billingModels)
+	// 售价倍率按计费模型（首个候选）解析。token 倍率叠加高峰因子（token 计费含图片 token，
+	// 图片按次倍率不受影响）；高峰因子按请求级 PricingAt 现算（与利润门 D 同源同刻，跨峰谷
+	// 请求不中途变价），未装配 PricingAt 的路径回退记录时刻。
+	rates := s.openAIUsageRates(ctx, apiKey, user, firstUsageBillingModel(billingModels), pricingAt)
+	multiplier, imageMultiplier, videoMultiplier, baseMultiplier := rates.text, rates.image, rates.video, rates.base
 	serviceTier := ""
 	if result.ServiceTier != nil {
 		serviceTier = strings.TrimSpace(*result.ServiceTier)
@@ -283,9 +315,12 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	); responseModel != "" && !strings.EqualFold(responseModel, baselineBillingModel) {
 		if identified, responseChannelPriced := s.hasIdentifiedOpenAIResponsePricing(ctx, responseModel, apiKey); identified {
 			responseModels := s.filterCNProviderBillingModelCandidates(ctx, account, apiKey, usageBillingModelCandidates(responseModel))
+			// 售价倍率随计费模型走：响应模型命中不同的模型倍率时按它重算。
+			// 是否采纳只比较倍率前的 TotalCost，不受倍率差异影响。
+			responseRates := s.openAIUsageRates(ctx, apiKey, user, firstUsageBillingModel(responseModels), pricingAt)
 			responseCost, responseErr := s.calculateOpenAIRecordUsageCost(
-				ctx, result, apiKey, responseModels, multiplier, imageMultiplier,
-				videoMultiplier, baseMultiplier, tokens, serviceTier, longContextBillingGate, modelLongContextExempt, pricingAt,
+				ctx, result, apiKey, responseModels, responseRates.text, responseRates.image,
+				responseRates.video, responseRates.base, tokens, serviceTier, longContextBillingGate, modelLongContextExempt, pricingAt,
 			)
 			// 基线定价源以 baselineBillingModel 为准：它正是 calculateOpenAIRecordUsageCost
 			// 内部做渠道定价判断时使用的模型，且"首候选有渠道价"必然意味着首候选就是实际
@@ -296,6 +331,8 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 					baselineBillingModel, responseModel, cost, responseCost)
 				billingModels = responseModels
 				cost = responseCost
+				rates = responseRates
+				multiplier, imageMultiplier, videoMultiplier, baseMultiplier = rates.text, rates.image, rates.video, rates.base
 			}
 		}
 	}
@@ -439,6 +476,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	} else {
 		usageLog.RateMultiplier = multiplier
 	}
+	usageLog.RateSource = string(rates.source)
 	usageLog.AccountRateMultiplier = &accountRateMultiplier
 	usageLog.BillingType = billingType
 	usageLog.Stream = result.Stream
@@ -931,7 +969,7 @@ func groupMediaPricingLooksIncomplete(group *Group) bool {
 	if len(group.VideoModelPrices) > 0 {
 		return false
 	}
-	if len(group.ModelPricing) > 0 || group.LongContextPricingEnabled {
+	if len(group.ModelPricing) > 0 || group.LongContextPricingEnabled || len(group.ModelRateMultipliers) > 0 {
 		return false
 	}
 	if group.SearchPricePer1k != nil ||

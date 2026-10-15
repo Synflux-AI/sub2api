@@ -185,18 +185,19 @@ func sanitizeUpdateGroupRequestForSimpleMode(req *UpdateGroupRequest) {
 
 // CreateGroupRequest represents create group request
 type CreateGroupRequest struct {
-	Name                      string                        `json:"name" binding:"required"`
-	Description               string                        `json:"description"`
-	I18n                      service.GroupI18n             `json:"i18n"` // 名称与描述的界面语言译文
-	Platform                  string                        `json:"platform" binding:"omitempty,group_platform"`
-	RateMultiplier            float64                       `json:"rate_multiplier"`
-	IsExclusive               bool                          `json:"is_exclusive"`
-	SubscriptionType          string                        `json:"subscription_type" binding:"omitempty,oneof=standard subscription"`
-	DailyLimitUSD             optionalLimitField            `json:"daily_limit_usd"`
-	WeeklyLimitUSD            optionalLimitField            `json:"weekly_limit_usd"`
-	MonthlyLimitUSD           optionalLimitField            `json:"monthly_limit_usd"`
-	LongContextPricingEnabled bool                          `json:"long_context_pricing_enabled"`
-	ModelPricing              []service.ChannelModelPricing `json:"model_pricing"`
+	Name                      string                             `json:"name" binding:"required"`
+	Description               string                             `json:"description"`
+	I18n                      service.GroupI18n                  `json:"i18n"` // 名称与描述的界面语言译文
+	Platform                  string                             `json:"platform" binding:"omitempty,group_platform"`
+	RateMultiplier            float64                            `json:"rate_multiplier"`
+	IsExclusive               bool                               `json:"is_exclusive"`
+	SubscriptionType          string                             `json:"subscription_type" binding:"omitempty,oneof=standard subscription"`
+	DailyLimitUSD             optionalLimitField                 `json:"daily_limit_usd"`
+	WeeklyLimitUSD            optionalLimitField                 `json:"weekly_limit_usd"`
+	MonthlyLimitUSD           optionalLimitField                 `json:"monthly_limit_usd"`
+	LongContextPricingEnabled bool                               `json:"long_context_pricing_enabled"`
+	ModelPricing              []service.ChannelModelPricing      `json:"model_pricing"`
+	ModelRateMultipliers      []service.GroupModelRateMultiplier `json:"model_rate_multipliers"`
 	// 图片生成计费配置（antigravity 和 gemini 平台使用，负数表示清除配置）
 	AllowImageGeneration            bool                          `json:"allow_image_generation"`
 	AllowBatchImageGeneration       bool                          `json:"allow_batch_image_generation"`
@@ -261,19 +262,20 @@ type CreateGroupRequest struct {
 
 // UpdateGroupRequest represents update group request
 type UpdateGroupRequest struct {
-	Name                      string                         `json:"name"`
-	Description               *string                        `json:"description"`
-	I18n                      *service.GroupI18n             `json:"i18n"` // 缺省不修改，传入则整体替换
-	Platform                  string                         `json:"platform" binding:"omitempty,group_platform"`
-	RateMultiplier            *float64                       `json:"rate_multiplier"`
-	IsExclusive               *bool                          `json:"is_exclusive"`
-	Status                    string                         `json:"status" binding:"omitempty,oneof=active inactive"`
-	SubscriptionType          string                         `json:"subscription_type" binding:"omitempty,oneof=standard subscription"`
-	DailyLimitUSD             optionalLimitField             `json:"daily_limit_usd"`
-	WeeklyLimitUSD            optionalLimitField             `json:"weekly_limit_usd"`
-	MonthlyLimitUSD           optionalLimitField             `json:"monthly_limit_usd"`
-	LongContextPricingEnabled *bool                          `json:"long_context_pricing_enabled"`
-	ModelPricing              *[]service.ChannelModelPricing `json:"model_pricing"`
+	Name                      string                              `json:"name"`
+	Description               *string                             `json:"description"`
+	I18n                      *service.GroupI18n                  `json:"i18n"` // 缺省不修改，传入则整体替换
+	Platform                  string                              `json:"platform" binding:"omitempty,group_platform"`
+	RateMultiplier            *float64                            `json:"rate_multiplier"`
+	IsExclusive               *bool                               `json:"is_exclusive"`
+	Status                    string                              `json:"status" binding:"omitempty,oneof=active inactive"`
+	SubscriptionType          string                              `json:"subscription_type" binding:"omitempty,oneof=standard subscription"`
+	DailyLimitUSD             optionalLimitField                  `json:"daily_limit_usd"`
+	WeeklyLimitUSD            optionalLimitField                  `json:"weekly_limit_usd"`
+	MonthlyLimitUSD           optionalLimitField                  `json:"monthly_limit_usd"`
+	LongContextPricingEnabled *bool                               `json:"long_context_pricing_enabled"`
+	ModelPricing              *[]service.ChannelModelPricing      `json:"model_pricing"`
+	ModelRateMultipliers      *[]service.GroupModelRateMultiplier `json:"model_rate_multipliers"`
 	// 图片生成计费配置（antigravity 和 gemini 平台使用，负数表示清除配置）
 	AllowImageGeneration            *bool                         `json:"allow_image_generation"`
 	AllowBatchImageGeneration       *bool                         `json:"allow_batch_image_generation"`
@@ -681,6 +683,7 @@ func (h *GroupHandler) Create(c *gin.Context) {
 		MonthlyLimitUSD:                 req.MonthlyLimitUSD.ToServiceInput(),
 		LongContextPricingEnabled:       req.LongContextPricingEnabled,
 		ModelPricing:                    req.ModelPricing,
+		ModelRateMultipliers:            req.ModelRateMultipliers,
 		AllowImageGeneration:            req.AllowImageGeneration,
 		AllowBatchImageGeneration:       req.AllowBatchImageGeneration,
 		ImageRateIndependent:            req.ImageRateIndependent,
@@ -829,6 +832,7 @@ func (h *GroupHandler) Update(c *gin.Context) {
 		MonthlyLimitUSD:                 req.MonthlyLimitUSD.ToServiceInput(),
 		LongContextPricingEnabled:       req.LongContextPricingEnabled,
 		ModelPricing:                    req.ModelPricing,
+		ModelRateMultipliers:            req.ModelRateMultipliers,
 		AllowImageGeneration:            req.AllowImageGeneration,
 		AllowBatchImageGeneration:       req.AllowBatchImageGeneration,
 		ImageRateIndependent:            req.ImageRateIndependent,
@@ -1071,6 +1075,43 @@ func (h *GroupHandler) BatchSetGroupRateMultipliers(c *gin.Context) {
 	}
 
 	response.Success(c, gin.H{"message": "Rate multipliers updated successfully"})
+}
+
+// SetUserGroupModelRateMultipliersRequest 用户在分组下对模型倍率规则的覆盖（整体替换）。
+// 键为分组模型倍率规则的模式串；未出现的模式串继承分组，空对象表示全部恢复继承。
+type SetUserGroupModelRateMultipliersRequest struct {
+	ModelRateMultipliers map[string]float64 `json:"model_rate_multipliers"`
+}
+
+// SetUserGroupModelRateMultipliers handles replacing one user's model rate overrides in a group
+// PUT /api/v1/admin/groups/:id/users/:user_id/model-rate-multipliers
+func (h *GroupHandler) SetUserGroupModelRateMultipliers(c *gin.Context) {
+	if h.rejectUnsupportedSimpleModeOperation(c, "advanced") {
+		return
+	}
+	groupID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "Invalid group ID")
+		return
+	}
+	userID, err := strconv.ParseInt(c.Param("user_id"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "Invalid user ID")
+		return
+	}
+
+	var req SetUserGroupModelRateMultipliersRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+
+	if err := h.adminService.SetUserGroupModelRateMultipliers(c.Request.Context(), groupID, userID, req.ModelRateMultipliers); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	response.Success(c, gin.H{"message": "Model rate multipliers updated successfully"})
 }
 
 // BatchSetGroupRPMOverridesRequest represents batch set rpm_override request

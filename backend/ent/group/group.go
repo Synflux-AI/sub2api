@@ -100,6 +100,8 @@ const (
 	FieldLongContextPricingEnabled = "long_context_pricing_enabled"
 	// FieldModelPricing holds the string denoting the model_pricing field in the database.
 	FieldModelPricing = "model_pricing"
+	// FieldModelRateMultipliers holds the string denoting the model_rate_multipliers field in the database.
+	FieldModelRateMultipliers = "model_rate_multipliers"
 	// FieldClaudeCodeOnly holds the string denoting the claude_code_only field in the database.
 	FieldClaudeCodeOnly = "claude_code_only"
 	// FieldCodexCliOnly holds the string denoting the codex_cli_only field in the database.
@@ -269,6 +271,7 @@ var Columns = []string{
 	FieldAudioSttPricePerHour,
 	FieldLongContextPricingEnabled,
 	FieldModelPricing,
+	FieldModelRateMultipliers,
 	FieldClaudeCodeOnly,
 	FieldCodexCliOnly,
 	FieldFallbackGroupID,
@@ -392,6 +395,8 @@ var (
 	AudioSttPricePerHourValidator func(float64) error
 	// DefaultLongContextPricingEnabled holds the default value on creation for the "long_context_pricing_enabled" field.
 	DefaultLongContextPricingEnabled bool
+	// DefaultModelRateMultipliers holds the default value on creation for the "model_rate_multipliers" field.
+	DefaultModelRateMultipliers []domain.GroupModelRateMultiplier
 	// DefaultClaudeCodeOnly holds the default value on creation for the "claude_code_only" field.
 	DefaultClaudeCodeOnly bool
 	// DefaultCodexCliOnly holds the default value on creation for the "codex_cli_only" field.

@@ -997,6 +997,31 @@ func (s *BatchImagePublicService) ensureGroupAllowsBatchImage(ctx context.Contex
 	return nil
 }
 
+// resolveBatchImageBaseRate 按 resolveBillingBaseRate 的顺序解析批量生图的 base 倍率（计费模型即请求模型）。
+func (s *BatchImagePublicService) resolveBatchImageBaseRate(ctx context.Context, userID int64, group *Group, model string) (float64, error) {
+	if s.UserGroupRateRepo == nil {
+		rate, _ := resolveBillingBaseRate(group, nil, nil, model)
+		return rate, nil
+	}
+	if modelRepo, ok := s.UserGroupRateRepo.(UserGroupModelRateRepository); ok && modelRepo != nil {
+		cfg, err := modelRepo.GetRateConfigByUserAndGroup(ctx, userID, group.ID)
+		if err != nil {
+			return 0, err
+		}
+		if cfg == nil {
+			cfg = &UserGroupRateConfig{}
+		}
+		rate, _ := resolveBillingBaseRate(group, cfg.RateMultiplier, cfg.ModelRateMultipliers, model)
+		return rate, nil
+	}
+	userRate, err := s.UserGroupRateRepo.GetByUserAndGroup(ctx, userID, group.ID)
+	if err != nil {
+		return 0, err
+	}
+	rate, _ := resolveBillingBaseRate(group, userRate, nil, model)
+	return rate, nil
+}
+
 func (s *BatchImagePublicService) resolvePricingSnapshot(ctx context.Context, owner BatchImageOwner, req BatchImageSubmitRequest, provider string, account *Account) (*BatchImagePricingSnapshot, error) {
 	unit := -1.0
 	groupMultiplier := 1.0
@@ -1013,19 +1038,12 @@ func (s *BatchImagePublicService) resolvePricingSnapshot(ctx context.Context, ow
 		if !group.AllowBatchImageGeneration {
 			return nil, ErrBatchImageGroupDisabled
 		}
-		groupDefaultMultiplier := group.RateMultiplier
-		if groupDefaultMultiplier < 0 {
-			groupDefaultMultiplier = 0
+		effectiveGroupMultiplier, rateErr := s.resolveBatchImageBaseRate(ctx, owner.UserID, group, req.Model)
+		if rateErr != nil {
+			return nil, ErrBatchImageSettlementPricingMissing
 		}
-		effectiveGroupMultiplier := groupDefaultMultiplier
-		if s.UserGroupRateRepo != nil {
-			userRate, rateErr := s.UserGroupRateRepo.GetByUserAndGroup(ctx, owner.UserID, group.ID)
-			if rateErr != nil {
-				return nil, ErrBatchImageSettlementPricingMissing
-			}
-			if userRate != nil {
-				effectiveGroupMultiplier = *userRate
-			}
+		if effectiveGroupMultiplier < 0 {
+			effectiveGroupMultiplier = 0
 		}
 		groupMultiplier = effectiveGroupMultiplier
 		if group.ImageRateIndependent {

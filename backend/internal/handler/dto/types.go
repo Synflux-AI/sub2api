@@ -185,6 +185,8 @@ type AdminGroup struct {
 	ProfitMinMargin      float64                       `json:"profit_min_margin"`
 	ProfitSafetyBuffer   float64                       `json:"profit_safety_buffer"`
 	ModelPricing         []service.ChannelModelPricing `json:"model_pricing"`
+	// ModelRateMultipliers 逐模型售价倍率（替换分组默认倍率，优先级高于用户专属倍率）。
+	ModelRateMultipliers []service.GroupModelRateMultiplier `json:"model_rate_multipliers"`
 
 	// 模型路由配置（仅 anthropic 平台使用）
 	ModelRouting        map[string][]int64 `json:"model_routing"`
