@@ -1302,3 +1302,25 @@ func TestUpstreamBillingProbeLeaderLockCoversStaggeredInstancesInCadenceWindow(t
 	require.NoError(t, staggered.RunDue(context.Background()))
 	require.Equal(t, int64(1), upstream.calls.Load(), "a staggered instance must not start a second batch inside the cadence window")
 }
+
+func TestUpstreamBillingProbeParsesOptionalModelRates(t *testing.T) {
+	base := `"object":"sub2api.key_billing","schema_version":1,"billing_scope":"token",
+		"group_rate_multiplier":0.8,"resolved_rate_multiplier":0.8,"peak_rate_enabled":false,
+		"effective_rate_multiplier":0.8,"observed_at":"2026-07-13T01:00:00Z"`
+
+	data, err := parseUpstreamBillingProbeResponse([]byte(`{` + base + `}`))
+	require.NoError(t, err)
+	require.NotContains(t, data, "model_rate_multipliers", "upstreams without model rules keep the original snapshot")
+
+	data, err = parseUpstreamBillingProbeResponse([]byte(`{` + base + `,
+		"model_rate_multipliers":[{"model":"model-a","rate_multiplier":0.5,"source":"group_model"}]}`))
+	require.NoError(t, err)
+	require.Equal(t, []any{map[string]any{"model": "model-a", "rate_multiplier": 0.5}}, data["model_rate_multipliers"])
+	rate, ok := upstreamBillingProbeSyncRate(data)
+	require.True(t, ok)
+	require.Equal(t, 0.8, rate, "account write-back still uses resolved_rate_multiplier")
+
+	_, err = parseUpstreamBillingProbeResponse([]byte(`{` + base + `,
+		"model_rate_multipliers":[{"model":"model-a","rate_multiplier":-1}]}`))
+	require.ErrorContains(t, err, "invalid model billing multiplier")
+}

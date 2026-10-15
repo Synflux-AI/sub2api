@@ -144,3 +144,40 @@ func TestPreviewProfitAdmissionSupportsFivePlatforms(t *testing.T) {
 		require.Equal(t, ProfitPreviewClassAdmitted, report.Verdicts[0].Class, platform)
 	}
 }
+
+// 每个模型按自己的 D 计数准入账号：分组给某模型打折后，该模型的阈值随之收紧；
+// 用户对模型规则的修改参与最低有效 D。
+func TestPreviewProfitAdmissionUsesModelRates(t *testing.T) {
+	now := time.Now()
+	group := profitControlTestGroup(51, 0.2, 0)
+	group.ModelRateMultipliers = []GroupModelRateMultiplier{{Models: []string{"gpt-sol"}, RateMultiplier: 0.5}}
+
+	account := profitControlTestAccountWithRate(
+		upstreamCostTestAccount(1, UpstreamBillingProbeStatusOK, 0.6, now.Add(-time.Minute), 30*time.Minute),
+		0.6,
+	)
+	account.Credentials = map[string]any{"model_mapping": map[string]any{"gpt-sol": "gpt-sol", "gpt-luna": "gpt-luna"}}
+
+	reports := PreviewProfitAdmission([]ProfitPreviewGroupInput{{
+		Group:              group,
+		Accounts:           []*Account{account},
+		UserModelOverrides: map[int64]map[string]float64{40: {"gpt-sol": 0.25}},
+		Models:             []string{"gpt-sol", "gpt-luna"},
+	}}, now)
+	require.Len(t, reports, 1)
+	report := reports[0]
+
+	// 分组级（gpt-luna 未命中规则）：D=1.0，阈值 0.8，0.6 的账号准入。
+	require.InDelta(t, 1.0, report.DefaultD, 1e-12)
+	require.InDelta(t, 1.0, report.DByModel["gpt-luna"].DefaultD, 1e-12)
+	require.Equal(t, 1, report.RemainingByModel["gpt-luna"])
+	require.Equal(t, 1, report.RemainingByModelMinD["gpt-luna"])
+
+	// gpt-sol：分组模型倍率 0.5 → 阈值 0.4，0.6 的账号被拒；用户改成 0.25 进入最低有效 D。
+	sol := report.DByModel["gpt-sol"]
+	require.InDelta(t, 0.5, sol.DefaultD, 1e-12)
+	require.InDelta(t, 0.4, sol.ThresholdDefault, 1e-12)
+	require.InDelta(t, 0.25, sol.MinEffectiveD, 1e-12)
+	require.Equal(t, 0, report.RemainingByModel["gpt-sol"])
+	require.Equal(t, 0, report.RemainingByModelMinD["gpt-sol"])
+}

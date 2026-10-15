@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"math"
 	"net/http"
 	"strings"
@@ -174,4 +175,41 @@ func NormalizeGroupModelRateMultipliersForStorage(rules []GroupModelRateMultipli
 		return []GroupModelRateMultiplier{}
 	}
 	return rules
+}
+
+// ResolvedModelRateMultiplier 是某用户在分组下一条模型倍率规则模式串的生效倍率。
+type ResolvedModelRateMultiplier struct {
+	Model          string            `json:"model"`
+	RateMultiplier float64           `json:"rate_multiplier"`
+	Source         BillingRateSource `json:"source"`
+}
+
+// resolveModelRateMultipliers 按分组规则顺序展开每个模式串的生效倍率（用户改过的优先，否则继承分组）。
+func resolveModelRateMultipliers(group *Group, userModelRates map[string]float64) []ResolvedModelRateMultiplier {
+	if group == nil || len(group.ModelRateMultipliers) == 0 {
+		return nil
+	}
+	out := make([]ResolvedModelRateMultiplier, 0, len(group.ModelRatePatterns()))
+	for _, rule := range group.ModelRateMultipliers {
+		for _, pattern := range rule.Models {
+			item := ResolvedModelRateMultiplier{Model: pattern, RateMultiplier: rule.RateMultiplier, Source: BillingRateSourceGroupModel}
+			if v, ok := userModelRates[pattern]; ok {
+				item.RateMultiplier, item.Source = v, BillingRateSourceUserModel
+			}
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+// ResolveModelRates 返回用户在分组下全部模型倍率规则的生效倍率；分组没有规则时返回 nil。
+func (r *userGroupRateResolver) ResolveModelRates(ctx context.Context, userID int64, group *Group) []ResolvedModelRateMultiplier {
+	if group == nil || len(group.ModelRateMultipliers) == 0 {
+		return nil
+	}
+	var userModelRates map[string]float64
+	if cfg := r.load(ctx, userID, group.ID); cfg != nil {
+		userModelRates = cfg.ModelRateMultipliers
+	}
+	return resolveModelRateMultipliers(group, userModelRates)
 }

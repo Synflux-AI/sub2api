@@ -22,12 +22,24 @@ type UserGroupRateConfig struct {
 	ModelRateMultipliers map[string]float64 // 模型倍率覆盖，键为分组规则模式串
 }
 
-// UserGroupModelRateRepository 用户在分组下的模型倍率覆盖读写。
+// UserGroupRateConfigReader 计费热路径读取用户分组倍率配置的能力。
 // 作为可选能力由 SQL 仓储实现，调用方以类型断言获取（与 GetByUserIDs 的批量读取同一做法），
-// 未实现时计费只按用户专属倍率解析、管理接口返回不可用。
-type UserGroupModelRateRepository interface {
+// 未实现时计费只按用户专属倍率解析。接口刻意只含这一个方法：计费只依赖它，
+// 管理侧能力的增减不会让计费的类型断言静默失效。
+type UserGroupRateConfigReader interface {
 	// GetRateConfigByUserAndGroup 一次读出专属倍率与模型倍率覆盖；无行时返回 nil
 	GetRateConfigByUserAndGroup(ctx context.Context, userID, groupID int64) (*UserGroupRateConfig, error)
+}
+
+// UserGroupModelRatesByUserReader 按用户读取各分组模型倍率覆盖（用户侧展示用）。
+type UserGroupModelRatesByUserReader interface {
+	// GetModelRatesByUserID 返回用户在各分组下的模型倍率覆盖（group_id → 模式串 → 倍率）
+	GetModelRatesByUserID(ctx context.Context, userID int64) (map[int64]map[string]float64, error)
+}
+
+// UserGroupModelRateRepository 管理侧对用户模型倍率覆盖的读写；未实现时管理接口返回不可用。
+type UserGroupModelRateRepository interface {
+	UserGroupRateConfigReader
 	// SetUserGroupModelRates 整体替换用户在分组下的模型倍率覆盖；空 map 表示全部恢复继承
 	SetUserGroupModelRates(ctx context.Context, userID, groupID int64, rates map[string]float64) error
 	// PruneGroupModelRates 删除该分组所有用户覆盖中不在 patterns 里的模式串

@@ -32,6 +32,10 @@ type PlazaModel struct {
 	LongContextBasis ContextPricingBasis
 	// TimePricing 计费会生效的分时倍率时段；无分时为 nil。
 	TimePricing *TimePricingSchedule
+	// ModelRatePattern / ModelRateMultiplier 该模型命中的分组模型倍率规则（模式串与倍率）；
+	// 未命中时 ModelRatePattern 为空。用户对规则的修改按模式串由调用方合并。
+	ModelRatePattern    string
+	ModelRateMultiplier float64
 }
 
 // PlazaGroup 模型广场中以分组为顶层的条目。
@@ -217,6 +221,9 @@ func (s *ModelPlazaService) ListGroups(ctx context.Context) ([]PlazaGroup, error
 		for j := range pg.Models {
 			s.fillDisplayPricing(ctx, &pg.Models[j], g)
 			pg.Models[j].OfficialPricing = s.lookupOfficialPricing(ctx, pg.Models[j].Name, officialMemo)
+			if pattern, rate, ok := g.MatchModelRateMultiplier(pg.Models[j].Name); ok {
+				pg.Models[j].ModelRatePattern, pg.Models[j].ModelRateMultiplier = pattern, rate
+			}
 		}
 		out = append(out, *pg)
 	}

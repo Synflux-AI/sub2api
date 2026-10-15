@@ -1003,7 +1003,7 @@ func (s *BatchImagePublicService) resolveBatchImageBaseRate(ctx context.Context,
 		rate, _ := resolveBillingBaseRate(group, nil, nil, model)
 		return rate, nil
 	}
-	if modelRepo, ok := s.UserGroupRateRepo.(UserGroupModelRateRepository); ok && modelRepo != nil {
+	if modelRepo, ok := s.UserGroupRateRepo.(UserGroupRateConfigReader); ok && modelRepo != nil {
 		cfg, err := modelRepo.GetRateConfigByUserAndGroup(ctx, userID, group.ID)
 		if err != nil {
 			return 0, err

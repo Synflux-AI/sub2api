@@ -29,6 +29,8 @@ type ProfitPreviewGroupInput struct {
 	Accounts []*Account
 	// UserOverrides 为该分组所有用户覆盖倍率（user_id → 倍率）。
 	UserOverrides map[int64]float64
+	// UserModelOverrides 为该分组用户对模型倍率规则的修改（user_id → 规则模式串 → 倍率）。
+	UserModelOverrides map[int64]map[string]float64
 	// Models 为该分组近期主力模型清单。
 	Models []string
 	// AssumeEnabled 在分组当前关闭时仍按其保存配置启用利润门，供部署前执行
@@ -73,9 +75,56 @@ type ProfitPreviewGroupReport struct {
 	ThresholdDefault float64 `json:"threshold_default"`
 	ThresholdMinD    float64 `json:"threshold_min_d"`
 	// RemainingByModel 仅表示利润门准入账号数，不模拟健康、冷却、限流或槽位。
-	RemainingByModel     map[string]int                `json:"profit_admitted_by_model"`
-	RemainingByModelMinD map[string]int                `json:"profit_admitted_by_model_min_d"`
-	Verdicts             []ProfitPreviewAccountVerdict `json:"verdicts"`
+	// 每个模型按自己的 D（分组 / 用户模型倍率）计数，见 DByModel。
+	RemainingByModel     map[string]int `json:"profit_admitted_by_model"`
+	RemainingByModelMinD map[string]int `json:"profit_admitted_by_model_min_d"`
+	// DByModel 为每个主力模型的默认 D / 最低有效 D 与对应阈值（含模型倍率与高峰因子）。
+	// 未命中模型倍率规则的模型与分组级 DefaultD / MinEffectiveD 相同。
+	DByModel map[string]ProfitPreviewModelD `json:"d_by_model"`
+	// Verdicts 的 Class 按分组级 DefaultD 判定（不看模型）。
+	Verdicts []ProfitPreviewAccountVerdict `json:"verdicts"`
+}
+
+// ProfitPreviewModelD 是单模型的 D 与阈值。
+type ProfitPreviewModelD struct {
+	DefaultD         float64 `json:"default_d"`
+	MinEffectiveD    float64 `json:"min_effective_d"`
+	ThresholdDefault float64 `json:"threshold_default"`
+	ThresholdMinD    float64 `json:"threshold_min_d"`
+}
+
+// profitPreviewModelD 按线上口径（resolveBillingBaseRate）算 model 的默认 D 与最低有效 D：
+// 默认 D 取无用户配置时的解析结果，最低有效 D 取默认与全部用户解析结果中的最小值。
+// model 为空时即分组级 D。
+func profitPreviewModelD(in ProfitPreviewGroupInput, model string, peak, deduction float64) ProfitPreviewModelD {
+	defaultRate, _ := resolveBillingBaseRate(in.Group, nil, nil, model)
+	minRate := defaultRate
+	consider := func(userRate *float64, userModels map[string]float64) {
+		if userRate != nil && !validProfitPreviewRate(*userRate) {
+			userRate = nil
+		}
+		rate, _ := resolveBillingBaseRate(in.Group, userRate, userModels, model)
+		if validProfitPreviewRate(rate) && rate < minRate {
+			minRate = rate
+		}
+	}
+	for userID, override := range in.UserOverrides {
+		rate := override
+		consider(&rate, in.UserModelOverrides[userID])
+	}
+	for userID, userModels := range in.UserModelOverrides {
+		if _, seen := in.UserOverrides[userID]; !seen {
+			consider(nil, userModels)
+		}
+	}
+	d := ProfitPreviewModelD{DefaultD: defaultRate * peak, MinEffectiveD: minRate * peak}
+	d.ThresholdDefault = clampProfitControlThreshold(d.DefaultD * (1 - deduction))
+	d.ThresholdMinD = clampProfitControlThreshold(d.MinEffectiveD * (1 - deduction))
+	return d
+}
+
+func validProfitPreviewRate(v float64) bool {
+	return !math.IsNaN(v) && !math.IsInf(v, 0) && v >= 0
 }
 
 // PreviewProfitAdmission 对五大平台分组推演利润门准入结果。未启用的分组仅在
@@ -103,42 +152,34 @@ func PreviewProfitAdmission(inputs []ProfitPreviewGroupInput, evalAt time.Time) 
 		}
 
 		peak := group.PeakMultiplierAt(evalAt)
-		defaultD := group.RateMultiplier * peak
-		minRate := group.RateMultiplier
-		for _, override := range in.UserOverrides {
-			if math.IsNaN(override) || math.IsInf(override, 0) || override < 0 {
-				continue
-			}
-			if override < minRate {
-				minRate = override
-			}
-		}
-		minD := minRate * peak
 		deduction := group.ProfitMinMargin + group.ProfitSafetyBuffer
-		thresholdDefault := clampProfitControlThreshold(defaultD * (1 - deduction))
-		thresholdMinD := clampProfitControlThreshold(minD * (1 - deduction))
-		report.DefaultD = defaultD
-		report.MinEffectiveD = minD
-		report.ThresholdDefault = thresholdDefault
-		report.ThresholdMinD = thresholdMinD
+		groupD := profitPreviewModelD(in, "", peak, deduction)
+		report.DefaultD = groupD.DefaultD
+		report.MinEffectiveD = groupD.MinEffectiveD
+		report.ThresholdDefault = groupD.ThresholdDefault
+		report.ThresholdMinD = groupD.ThresholdMinD
+		report.DByModel = make(map[string]ProfitPreviewModelD, len(in.Models))
+		for _, model := range in.Models {
+			report.DByModel[model] = profitPreviewModelD(in, model, peak, deduction)
+		}
 
 		for _, account := range in.Accounts {
 			if account == nil {
 				continue
 			}
-			verdict := previewAccountProfitAdmission(account, effectiveGate, thresholdDefault, thresholdMinD, evalAt)
-			admittedDefault := verdict.Class == ProfitPreviewClassAdmitted
-			admittedMinD := admittedDefault && !verdict.RejectedUnderMinD
+			verdict := previewAccountProfitAdmission(account, effectiveGate, groupD.ThresholdDefault, groupD.ThresholdMinD, evalAt)
 			for _, model := range in.Models {
 				if !account.IsModelSupported(model) {
 					continue
 				}
 				verdict.SupportedModels = append(verdict.SupportedModels, model)
-				if admittedDefault {
+				modelD := report.DByModel[model]
+				modelVerdict := previewAccountProfitAdmission(account, effectiveGate, modelD.ThresholdDefault, modelD.ThresholdMinD, evalAt)
+				if modelVerdict.Class == ProfitPreviewClassAdmitted {
 					report.RemainingByModel[model]++
-				}
-				if admittedMinD {
-					report.RemainingByModelMinD[model]++
+					if !modelVerdict.RejectedUnderMinD {
+						report.RemainingByModelMinD[model]++
+					}
 				}
 			}
 			sort.Strings(verdict.SupportedModels)

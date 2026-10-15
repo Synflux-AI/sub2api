@@ -106,6 +106,7 @@ func TestGatewayHandlerKeyBillingInfoUsesGroupRate(t *testing.T) {
 	require.NotContains(t, fields, "peak_rate_multiplier")
 	require.NotContains(t, fields, "applied_peak_multiplier")
 	require.NotContains(t, fields, "timezone")
+	require.NotContains(t, fields, "model_rate_multipliers", "groups without model rules keep the original payload")
 	require.NotContains(t, w.Body.String(), apiKey.Key)
 	require.NotContains(t, w.Body.String(), apiKey.Group.Name)
 }
@@ -306,6 +307,52 @@ func TestGatewayHandlerKeyBillingInfoSharesBillingResolverCacheByPlatform(t *tes
 			}
 			require.Equal(t, oldRate, billedRate)
 			require.Equal(t, 1, repo.lookupCalls)
+		})
+	}
+}
+
+type keyBillingModelRateRepo struct {
+	keyBillingUserGroupRateRepo
+	cfg *service.UserGroupRateConfig
+}
+
+func (r *keyBillingModelRateRepo) GetRateConfigByUserAndGroup(context.Context, int64, int64) (*service.UserGroupRateConfig, error) {
+	return r.cfg, nil
+}
+
+func (r *keyBillingModelRateRepo) SetUserGroupModelRates(context.Context, int64, int64, map[string]float64) error {
+	return nil
+}
+
+func (r *keyBillingModelRateRepo) PruneGroupModelRates(context.Context, int64, []string) error {
+	return nil
+}
+
+func TestGatewayHandlerKeyBillingInfoListsModelRates(t *testing.T) {
+	for _, platform := range []string{service.PlatformAnthropic, service.PlatformOpenAI} {
+		t.Run(platform, func(t *testing.T) {
+			groupID := int64(7)
+			userRate := 0.5
+			repo := &keyBillingModelRateRepo{cfg: &service.UserGroupRateConfig{
+				RateMultiplier:       &userRate,
+				ModelRateMultipliers: map[string]float64{"model-b*": 0.4},
+			}}
+			apiKey := &service.APIKey{UserID: 11, GroupID: &groupID, Group: &service.Group{
+				ID: groupID, Platform: platform, RateMultiplier: 0.75,
+				ModelRateMultipliers: []service.GroupModelRateMultiplier{{Models: []string{"model-a", "model-b*"}, RateMultiplier: 0.6}},
+			}}
+			c, w := newKeyBillingContext(apiKey)
+			newKeyBillingHandler(repo).KeyBillingInfo(c)
+
+			require.Equal(t, http.StatusOK, w.Code)
+			var got keyBillingInfoResponse
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
+			require.Equal(t, 1, got.SchemaVersion, "additive field must not bump the schema read by older probes")
+			require.Equal(t, 0.5, got.ResolvedRateMultiplier)
+			require.Equal(t, []service.ResolvedModelRateMultiplier{
+				{Model: "model-a", RateMultiplier: 0.6, Source: service.BillingRateSourceGroupModel},
+				{Model: "model-b*", RateMultiplier: 0.4, Source: service.BillingRateSourceUserModel},
+			}, got.ModelRateMultipliers)
 		})
 	}
 }

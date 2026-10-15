@@ -513,3 +513,41 @@ func encodeUserGroupModelRates(rates map[string]float64) (string, error) {
 	}
 	return string(b), nil
 }
+
+// GetModelRatesByUserID 返回用户在各分组下的模型倍率覆盖（group_id → 模式串 → 倍率），只含非空条目。
+func (r *userGroupRateRepository) GetModelRatesByUserID(ctx context.Context, userID int64) (map[int64]map[string]float64, error) {
+	rows, err := r.sql.QueryContext(ctx, `
+		SELECT group_id, model_rate_multipliers
+		FROM user_group_rate_multipliers
+		WHERE user_id = $1 AND model_rate_multipliers <> '{}'::jsonb
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	result := make(map[int64]map[string]float64)
+	for rows.Next() {
+		var groupID int64
+		var raw []byte
+		if err := rows.Scan(&groupID, &raw); err != nil {
+			return nil, err
+		}
+		rates, err := decodeUserGroupModelRates(raw)
+		if err != nil {
+			return nil, err
+		}
+		if len(rates) > 0 {
+			result[groupID] = rates
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+var (
+	_ service.UserGroupModelRateRepository    = (*userGroupRateRepository)(nil)
+	_ service.UserGroupModelRatesByUserReader = (*userGroupRateRepository)(nil)
+)

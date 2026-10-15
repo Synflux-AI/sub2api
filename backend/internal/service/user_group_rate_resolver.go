@@ -117,7 +117,7 @@ func (r *userGroupRateResolver) load(ctx context.Context, userID, groupID int64)
 // fetch 优先一次读出专属倍率与模型覆盖；仓储未实现模型覆盖能力时只读专属倍率。
 // 无行时返回空配置（而非 nil），以便缓存"该用户没有专属配置"。
 func (r *userGroupRateResolver) fetch(ctx context.Context, userID, groupID int64) (*UserGroupRateConfig, error) {
-	if modelRepo, ok := r.repo.(UserGroupModelRateRepository); ok && modelRepo != nil {
+	if modelRepo, ok := r.repo.(UserGroupRateConfigReader); ok && modelRepo != nil {
 		cfg, err := modelRepo.GetRateConfigByUserAndGroup(ctx, userID, groupID)
 		if err != nil {
 			return nil, err

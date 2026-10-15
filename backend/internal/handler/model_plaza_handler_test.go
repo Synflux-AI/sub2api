@@ -108,7 +108,7 @@ func TestToModelPlazaGroupDTO_UserRateAndFieldWhitelist(t *testing.T) {
 	}
 
 	// 有专属倍率:user_rate_multiplier 序列化输出
-	dto := toModelPlazaGroupDTO(&g, map[int64]float64{2: 0.5})
+	dto := toModelPlazaGroupDTO(&g, map[int64]float64{2: 0.5}, nil)
 	raw, err := json.Marshal(dto)
 	require.NoError(t, err)
 	var decoded map[string]any
@@ -147,7 +147,7 @@ func TestToModelPlazaGroupDTO_UserRateAndFieldWhitelist(t *testing.T) {
 	require.False(t, hasTimePricing, "无分时时不输出 time_pricing")
 
 	// 无专属倍率:user_rate_multiplier 整个字段省略
-	dtoNoRate := toModelPlazaGroupDTO(&g, nil)
+	dtoNoRate := toModelPlazaGroupDTO(&g, nil, nil)
 	rawNoRate, err := json.Marshal(dtoNoRate)
 	require.NoError(t, err)
 	var decodedNoRate map[string]any
@@ -187,7 +187,7 @@ func TestToModelPlazaGroupDTO_LongContextTiersAndBasis(t *testing.T) {
 		}},
 	}
 
-	raw, err := json.Marshal(toModelPlazaGroupDTO(&g, nil))
+	raw, err := json.Marshal(toModelPlazaGroupDTO(&g, nil, nil))
 	require.NoError(t, err)
 	var decoded map[string]any
 	require.NoError(t, json.Unmarshal(raw, &decoded))
@@ -231,7 +231,7 @@ func TestToModelPlazaGroupDTO_TimePricing(t *testing.T) {
 			}},
 		}},
 	}
-	raw, err := json.Marshal(toModelPlazaGroupDTO(&g, nil))
+	raw, err := json.Marshal(toModelPlazaGroupDTO(&g, nil, nil))
 	require.NoError(t, err)
 	var decoded map[string]any
 	require.NoError(t, json.Unmarshal(raw, &decoded))
@@ -316,4 +316,29 @@ func TestModelPlazaHandler_VaryKeepsCORSOrigin(t *testing.T) {
 		// 共享缓存需同时按来源与语言区分，否则 A 来源的响应可能被复用给 B。
 		require.Equal(t, []string{"Origin", "Accept-Language"}, w.Header().Values("Vary"))
 	}
+}
+
+// 模型广场按模型带出模型倍率：命中分组规则的模型给出 rate_multiplier，
+// 用户对该规则模式串的修改给出 user_rate_multiplier；未命中的模型两者都省略。
+func TestToModelPlazaGroupDTOModelRates(t *testing.T) {
+	g := service.PlazaGroup{
+		ID: 2, RateMultiplier: 0.8,
+		Models: []service.PlazaModel{
+			{Name: "model-a", Platform: "anthropic", ModelRatePattern: "model-*", ModelRateMultiplier: 0.6},
+			{Name: "model-b", Platform: "anthropic"},
+		},
+	}
+	dto := toModelPlazaGroupDTO(&g, map[int64]float64{2: 0.5}, map[string]float64{"model-*": 0.4})
+	require.Len(t, dto.Models, 2)
+	require.NotNil(t, dto.Models[0].RateMultiplier)
+	require.Equal(t, 0.6, *dto.Models[0].RateMultiplier)
+	require.NotNil(t, dto.Models[0].UserRateMultiplier)
+	require.Equal(t, 0.4, *dto.Models[0].UserRateMultiplier)
+	require.Nil(t, dto.Models[1].RateMultiplier)
+	require.Nil(t, dto.Models[1].UserRateMultiplier)
+
+	raw, err := json.Marshal(toModelPlazaGroupDTO(&g, nil, nil))
+	require.NoError(t, err)
+	require.Contains(t, string(raw), `"rate_multiplier":0.6`)
+	require.NotContains(t, string(raw), `"user_rate_multiplier"`)
 }

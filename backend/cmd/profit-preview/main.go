@@ -31,6 +31,8 @@ type inputGroup struct {
 	PeakStart            string  `json:"peak_start"`
 	PeakEnd              string  `json:"peak_end"`
 	PeakRateMultiplier   float64 `json:"peak_rate_multiplier"`
+	// ModelRateMultipliers 分组逐模型售价倍率（groups.model_rate_multipliers）。
+	ModelRateMultipliers []service.GroupModelRateMultiplier `json:"model_rate_multipliers"`
 }
 
 type inputAccount struct {
@@ -47,7 +49,9 @@ type inputEntry struct {
 	Group         inputGroup          `json:"group"`
 	Accounts      []inputAccount      `json:"accounts"`
 	UserOverrides map[string]*float64 `json:"user_overrides"`
-	Models        []string            `json:"models"`
+	// UserModelOverrides 用户对模型倍率规则的修改（user_group_rate_multipliers.model_rate_multipliers）。
+	UserModelOverrides map[string]map[string]float64 `json:"user_model_overrides"`
+	Models             []string                      `json:"models"`
 }
 
 type inputDoc struct {
@@ -128,8 +132,9 @@ func main() {
 		}
 		sort.Strings(models)
 		for _, model := range models {
-			fmt.Printf("  模型 %-20s 利润门准入账号: 默认D=%d 最低有效D=%d\n",
-				model, report.RemainingByModel[model], report.RemainingByModelMinD[model])
+			d := report.DByModel[model]
+			fmt.Printf("  模型 %-20s D=%.4f/最低%.4f 利润门准入账号: 默认D=%d 最低有效D=%d\n",
+				model, d.DefaultD, d.MinEffectiveD, report.RemainingByModel[model], report.RemainingByModelMinD[model])
 		}
 		for _, model := range modelsWithZeroRemaining(report) {
 			fmt.Printf("  警告: 模型 %s 启用后利润门准入账号为 0\n", model)
@@ -169,6 +174,7 @@ func parsePreviewInputs(raw []byte, assumeEnabled bool) ([]service.ProfitPreview
 			PeakStart:            entry.Group.PeakStart,
 			PeakEnd:              entry.Group.PeakEnd,
 			PeakRateMultiplier:   entry.Group.PeakRateMultiplier,
+			ModelRateMultipliers: entry.Group.ModelRateMultipliers,
 		}
 		accounts := make([]*service.Account, 0, len(entry.Accounts))
 		for _, a := range entry.Accounts {
@@ -199,12 +205,20 @@ func parsePreviewInputs(raw []byte, assumeEnabled bool) ([]service.ProfitPreview
 				overrides[id] = *rate
 			}
 		}
+		modelOverrides := make(map[int64]map[string]float64, len(entry.UserModelOverrides))
+		for userID, rates := range entry.UserModelOverrides {
+			var id int64
+			if _, err := fmt.Sscan(userID, &id); err == nil && id > 0 && len(rates) > 0 {
+				modelOverrides[id] = rates
+			}
+		}
 		inputs = append(inputs, service.ProfitPreviewGroupInput{
-			Group:         group,
-			Accounts:      accounts,
-			UserOverrides: overrides,
-			Models:        entry.Models,
-			AssumeEnabled: assumeEnabled,
+			Group:              group,
+			Accounts:           accounts,
+			UserOverrides:      overrides,
+			UserModelOverrides: modelOverrides,
+			Models:             entry.Models,
+			AssumeEnabled:      assumeEnabled,
 		})
 	}
 	return inputs, nil

@@ -74,6 +74,11 @@ type modelPlazaModel struct {
 	LongContextBasis string `json:"long_context_basis,omitempty"`
 	// TimePricing 分时倍率时段，落在时段内的请求整单乘倍率；无分时省略。
 	TimePricing *modelPlazaTimePricing `json:"time_pricing,omitempty"`
+	// RateMultiplier 该模型命中的分组模型倍率，替换分组默认与用户专属倍率；未命中省略。
+	RateMultiplier *float64 `json:"rate_multiplier,omitempty"`
+	// UserRateMultiplier 当前用户对该模型倍率规则的修改，优先于 RateMultiplier；未修改省略。
+	// 实付倍率 = user_rate_multiplier ?? rate_multiplier ?? 分组 user_rate_multiplier ?? 分组 rate_multiplier。
+	UserRateMultiplier *float64 `json:"user_rate_multiplier,omitempty"`
 }
 
 // modelPlazaGroup 广场分组条目（白名单字段）。
@@ -136,6 +141,7 @@ func (h *ModelPlazaHandler) Get(c *gin.Context) {
 	var allowedGroups map[int64]struct{}
 	var restrictPublicGroups bool
 	var userRates map[int64]float64
+	var userModelRates map[int64]map[string]float64
 	if authed {
 		allowedGroups, restrictPublicGroups, err = h.apiKeyService.GetUserGroupVisibility(c.Request.Context(), subject.UserID)
 		if err != nil {
@@ -149,6 +155,11 @@ func (h *ModelPlazaHandler) Get(c *gin.Context) {
 			slog.Warn("model_plaza_user_rates_failed", "error", err, "user_id", subject.UserID)
 			userRates = nil
 		}
+		userModelRates, err = h.apiKeyService.GetUserGroupModelRates(c.Request.Context(), subject.UserID)
+		if err != nil {
+			slog.Warn("model_plaza_user_model_rates_failed", "error", err, "user_id", subject.UserID)
+			userModelRates = nil
+		}
 	}
 
 	visible := filterPlazaVisibleGroups(groups, allowedGroups, restrictPublicGroups)
@@ -156,7 +167,7 @@ func (h *ModelPlazaHandler) Get(c *gin.Context) {
 	// 广场可匿名访问，分组文案随请求语言变化，提示中间缓存按语言区分。
 	// 追加而非覆盖：CORS 中间件已为具体来源写入 Vary: Origin。
 	c.Writer.Header().Add("Vary", "Accept-Language")
-	out := toLocalizedModelPlazaGroups(visible, userRates, c.GetHeader("Accept-Language"))
+	out := toLocalizedModelPlazaGroups(visible, userRates, userModelRates, c.GetHeader("Accept-Language"))
 	response.Success(c, modelPlazaResponse{
 		Description: rt.Description,
 		Groups:      out,
@@ -188,10 +199,10 @@ func filterPlazaVisibleGroups(
 }
 
 // toLocalizedModelPlazaGroups 转换可见分组，并把名称与描述换成请求首选语言的版本。
-func toLocalizedModelPlazaGroups(visible []service.PlazaGroup, userRates map[int64]float64, acceptLanguage string) []modelPlazaGroup {
+func toLocalizedModelPlazaGroups(visible []service.PlazaGroup, userRates map[int64]float64, userModelRates map[int64]map[string]float64, acceptLanguage string) []modelPlazaGroup {
 	out := make([]modelPlazaGroup, 0, len(visible))
 	for i := range visible {
-		group := toModelPlazaGroupDTO(&visible[i], userRates)
+		group := toModelPlazaGroupDTO(&visible[i], userRates, userModelRates[visible[i].ID])
 		group.Name, group.Description = visible[i].I18n.Localize(acceptLanguage, group.Name, group.Description)
 		out = append(out, group)
 	}
@@ -199,18 +210,26 @@ func toLocalizedModelPlazaGroups(visible []service.PlazaGroup, userRates map[int
 }
 
 // toModelPlazaGroupDTO 将 service 层广场分组映射为白名单 DTO,并合并用户专属倍率。
-func toModelPlazaGroupDTO(g *service.PlazaGroup, userRates map[int64]float64) modelPlazaGroup {
+func toModelPlazaGroupDTO(g *service.PlazaGroup, userRates map[int64]float64, userModelRates map[string]float64) modelPlazaGroup {
 	models := make([]modelPlazaModel, 0, len(g.Models))
 	for i := range g.Models {
 		m := &g.Models[i]
-		models = append(models, modelPlazaModel{
+		model := modelPlazaModel{
 			Name:             m.Name,
 			Platform:         m.Platform,
 			Pricing:          toUserPricing(m.Pricing),
 			OfficialPricing:  toModelPlazaOfficialPricing(m.OfficialPricing),
 			LongContextBasis: string(m.LongContextBasis),
 			TimePricing:      toModelPlazaTimePricing(m.TimePricing),
-		})
+		}
+		if m.ModelRatePattern != "" {
+			rate := m.ModelRateMultiplier
+			model.RateMultiplier = &rate
+			if userRate, ok := userModelRates[m.ModelRatePattern]; ok {
+				model.UserRateMultiplier = &userRate
+			}
+		}
+		models = append(models, model)
 	}
 	dto := modelPlazaGroup{
 		ID:                        g.ID,

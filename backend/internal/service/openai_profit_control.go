@@ -63,6 +63,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -125,6 +126,15 @@ type openAIProfitControlGate struct {
 	threshold float64
 	// pricingAt 是本请求的统一定价时刻（D 侧）。
 	pricingAt time.Time
+
+	// model 是 D 已按其解析模型倍率的请求模型；空表示尚未绑定模型（handler 入口装门时
+	// 只知道分组），此时 D 不含模型倍率。调度入口拿到请求模型后经 bindProfitControlGateModel
+	// 重新计算阈值；同一请求 failover 重入模型不变，阈值保持稳定。
+	model string
+	// 以下为按模型重算阈值所需的输入，均取自装门时刻。
+	billingGroup *Group
+	userID       int64
+	deduction    float64
 }
 
 // WithOpenAIRequestPricingContext 在请求开始处装配请求级定价上下文：固定
@@ -253,20 +263,87 @@ func (s *OpenAIGatewayService) resolveOpenAIProfitControlGate(ctx context.Contex
 	if ctxGroup, ok := ctx.Value(ctxkey.Group).(*Group); ok && IsGroupContextValid(ctxGroup) {
 		billingGroup = ctxGroup
 	}
-	downstream := billingGroup.RateMultiplier
-	if userID, _ := ctx.Value(ctxkey.UserID).(int64); userID > 0 {
-		downstream = s.ResolveUserGroupRateMultiplier(ctx, userID, billingGroup.ID, billingGroup.RateMultiplier)
+	userID, _ := ctx.Value(ctxkey.UserID).(int64)
+	gate := &openAIProfitControlGate{
+		groupID:      *groupID,
+		platform:     group.Platform,
+		pricingAt:    pricingAt,
+		billingGroup: billingGroup,
+		userID:       userID,
+		deduction:    group.ProfitMinMargin + group.ProfitSafetyBuffer,
 	}
-	downstream *= billingGroup.PeakMultiplierAt(pricingAt)
+	gate.threshold = profitControlThreshold(ctx, s.userGroupRateResolverOrDefault(), gate, nil)
+	return gate
+}
 
-	deduction := group.ProfitMinMargin + group.ProfitSafetyBuffer
-	threshold := clampProfitControlThreshold(downstream * (1 - deduction))
-	return &openAIProfitControlGate{
-		groupID:   *groupID,
-		platform:  group.Platform,
-		threshold: threshold,
-		pricingAt: pricingAt,
+// profitControlThreshold 按 D(pricingAt) × (1 − margin − buffer) 计算阈值。D 的 base 倍率与计费
+// 同源（resolveBillingBaseRate）：models 为空时按不看模型的用户专属 ?? 分组默认解析；
+// 非空时取各候选计费模型 base 倍率的最小值——D 越低阈值越严，宁可少放账号也不放进亏钱的号。
+func profitControlThreshold(ctx context.Context, resolver *userGroupRateResolver, gate *openAIProfitControlGate, models []string) float64 {
+	billingGroup := gate.billingGroup
+	base := billingGroup.RateMultiplier
+	if len(models) == 0 {
+		if gate.userID > 0 {
+			base = resolver.Resolve(ctx, gate.userID, billingGroup.ID, billingGroup.RateMultiplier)
+		}
+	} else {
+		for i, model := range models {
+			rate, _ := resolver.ResolveForModel(ctx, gate.userID, billingGroup, model, billingGroup.RateMultiplier)
+			if i == 0 || rate < base {
+				base = rate
+			}
+		}
 	}
+	downstream := base * billingGroup.PeakMultiplierAt(gate.pricingAt)
+	return clampProfitControlThreshold(downstream * (1 - gate.deduction))
+}
+
+// profitControlBillingModelCandidates 返回请求模型可能落到的计费模型：请求模型本身，以及渠道映射后的
+// 模型（映射且按 channel_mapped 计费时即为计费模型）。准入时还不知道最终计费来源，两者都参与取最小。
+func profitControlBillingModelCandidates(ctx context.Context, channelService *ChannelService, groupID int64, model string) []string {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return nil
+	}
+	candidates := []string{model}
+	if channelService != nil && groupID > 0 {
+		if mapped := strings.TrimSpace(channelService.ResolveChannelMapping(ctx, groupID, model).MappedModel); mapped != "" && mapped != model {
+			candidates = append(candidates, mapped)
+		}
+	}
+	return candidates
+}
+
+// bindProfitControlGateModel 把 ctx 中的门绑定到请求模型：门尚未绑定或绑定的是其他模型时
+// 按该模型重算阈值并装回 ctx；已绑定同一模型时原样返回，failover 重入阈值不变。
+// 无门或模型为空时原样返回。
+func bindProfitControlGateModel(ctx context.Context, resolver *userGroupRateResolver, channelService *ChannelService, model string) context.Context {
+	model = strings.TrimSpace(model)
+	gate, _ := ctx.Value(openAIProfitControlGateCtxKey{}).(*openAIProfitControlGate)
+	if gate == nil || model == "" || gate.billingGroup == nil || gate.model == model {
+		return ctx
+	}
+	bound := *gate
+	bound.model = model
+	bound.threshold = profitControlThreshold(ctx, resolver,
+		&bound, profitControlBillingModelCandidates(ctx, channelService, gate.billingGroup.ID, model))
+	openAIProfitControlObserverInstance.recordInstall(bound.groupID, bound.platform, bound.threshold)
+	return context.WithValue(ctx, openAIProfitControlGateCtxKey{}, &bound)
+}
+
+// withOpenAIProfitControlGateForModel 装门并绑定请求模型，供已知请求模型的调度入口使用。
+func (s *OpenAIGatewayService) withOpenAIProfitControlGateForModel(ctx context.Context, groupID *int64, model string) context.Context {
+	ctx = s.withOpenAIProfitControlGate(ctx, groupID)
+	return bindProfitControlGateModel(ctx, s.userGroupRateResolverOrDefault(), s.channelService, model)
+}
+
+// BindProfitControlModel 把 ctx 上的利润门按请求模型重算阈值（门已绑定同一模型时不变）。
+// 长连接 turn 在 WithOpenAITurnPricingContext 重装门后调用，使 turn 复核用到模型倍率。
+func (s *OpenAIGatewayService) BindProfitControlModel(ctx context.Context, model string) context.Context {
+	if s == nil {
+		return ctx
+	}
+	return bindProfitControlGateModel(ctx, s.userGroupRateResolverOrDefault(), s.channelService, model)
 }
 
 // attachSelectionProfitGate 把调度上下文里生效的利润门记录到选号结果上。门在

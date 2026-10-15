@@ -3099,6 +3099,9 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				// 无法中途换号）。本 turn 的准入与计费共用同一 pricingAt。
 				turnBillingCtx := turnBillingAPIKeys.begin(ctx, h.apiKeyService, turn, apiKey)
 				turnCtx, turnAt := h.gatewayService.WithOpenAITurnPricingContext(turnBillingCtx, apiKey.GroupID)
+				// turn 复核与握手调度同一口径：按握手时的路由模型绑定模型倍率。BeforeTurn 先于本 turn
+				// 的模型映射执行，连接内换模型的 turn 仍按握手模型复核，计费按 turn 实际模型。
+				turnCtx = h.gatewayService.BindProfitControlModel(turnCtx, wsRouteModel)
 				if _, vetoed, reason := h.gatewayService.ProfitControlVetoLatest(turnCtx, account); vetoed {
 					reqLog.Info("openai.websocket_turn_profit_vetoed",
 						zap.Int("turn", turn),

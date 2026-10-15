@@ -173,6 +173,8 @@ type upstreamBillingProbeResponse struct {
 	EffectiveRateMultiplier *float64 `json:"effective_rate_multiplier"`
 	Timezone                *string  `json:"timezone"`
 	ObservedAt              string   `json:"observed_at"`
+	// ModelRateMultipliers 上游按模型声明的 base 倍率（可选，旧版上游不返回）。
+	ModelRateMultipliers []ResolvedModelRateMultiplier `json:"model_rate_multipliers"`
 }
 
 // GetUpstreamBillingProbeSettings returns defaults when the setting is absent.
@@ -849,6 +851,18 @@ func parseUpstreamBillingProbeResponse(body []byte) (map[string]any, error) {
 	}
 	if response.UserRateMultiplier != nil {
 		data["user_rate_multiplier"] = *response.UserRateMultiplier
+	}
+	if len(response.ModelRateMultipliers) > 0 {
+		// 只记录供展示与后续按模型的成本侧使用；账号倍率写回仍取 resolved_rate_multiplier。
+		models := make([]any, 0, len(response.ModelRateMultipliers))
+		for _, item := range response.ModelRateMultipliers {
+			model := strings.TrimSpace(item.Model)
+			if model == "" || item.RateMultiplier < 0 || math.IsNaN(item.RateMultiplier) || math.IsInf(item.RateMultiplier, 0) {
+				return nil, fmt.Errorf("invalid model billing multiplier")
+			}
+			models = append(models, map[string]any{"model": model, "rate_multiplier": item.RateMultiplier})
+		}
+		data["model_rate_multipliers"] = models
 	}
 	if *response.PeakRateEnabled {
 		if response.PeakStart == nil || response.PeakEnd == nil || response.Timezone == nil ||

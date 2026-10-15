@@ -1139,6 +1139,20 @@ func (s *APIKeyService) GetUserGroupRates(ctx context.Context, userID int64) (ma
 	return rates, nil
 }
 
+// GetUserGroupModelRates 返回当前用户在各分组下对模型倍率规则的修改（group_id → 模式串 → 倍率）。
+// 仓储不支持模型倍率覆盖时返回空。
+func (s *APIKeyService) GetUserGroupModelRates(ctx context.Context, userID int64) (map[int64]map[string]float64, error) {
+	repo, ok := s.userGroupRateRepo.(UserGroupModelRatesByUserReader)
+	if !ok || repo == nil {
+		return map[int64]map[string]float64{}, nil
+	}
+	rates, err := repo.GetModelRatesByUserID(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("get user group model rates: %w", err)
+	}
+	return rates, nil
+}
+
 // CheckAPIKeyQuotaAndExpiry checks if the API key is valid for use (not expired, quota not exhausted)
 // Returns nil if valid, error if invalid
 func (s *APIKeyService) CheckAPIKeyQuotaAndExpiry(apiKey *APIKey) error {

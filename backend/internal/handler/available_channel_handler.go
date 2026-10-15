@@ -62,6 +62,9 @@ type userAvailableGroup struct {
 	PeakEnd            string  `json:"peak_end"`
 	PeakRateMultiplier float64 `json:"peak_rate_multiplier"`
 	IsExclusive        bool    `json:"is_exclusive"`
+	// ModelRateMultipliers 分组逐模型售价倍率：命中的模型按该倍率替换分组默认与用户专属倍率；
+	// 用户对规则的修改走 /groups/model-rates。
+	ModelRateMultipliers []service.GroupModelRateMultiplier `json:"model_rate_multipliers,omitempty"`
 
 	// 不对外输出；List 按请求语言把 Name 换成译文后丢弃。
 	i18n service.GroupI18n
@@ -264,17 +267,18 @@ func filterUserVisibleGroups(
 			continue
 		}
 		visible = append(visible, userAvailableGroup{
-			ID:                 g.ID,
-			Name:               g.Name,
-			i18n:               g.I18n,
-			Platform:           g.Platform,
-			SubscriptionType:   g.SubscriptionType,
-			RateMultiplier:     g.RateMultiplier,
-			PeakRateEnabled:    g.PeakRateEnabled,
-			PeakStart:          g.PeakStart,
-			PeakEnd:            g.PeakEnd,
-			PeakRateMultiplier: g.PeakRateMultiplier,
-			IsExclusive:        g.IsExclusive,
+			ID:                   g.ID,
+			Name:                 g.Name,
+			i18n:                 g.I18n,
+			Platform:             g.Platform,
+			SubscriptionType:     g.SubscriptionType,
+			RateMultiplier:       g.RateMultiplier,
+			PeakRateEnabled:      g.PeakRateEnabled,
+			PeakStart:            g.PeakStart,
+			PeakEnd:              g.PeakEnd,
+			PeakRateMultiplier:   g.PeakRateMultiplier,
+			IsExclusive:          g.IsExclusive,
+			ModelRateMultipliers: g.ModelRateMultipliers,
 		})
 	}
 	return visible

@@ -37,21 +37,24 @@ func (s *GatewayService) withGatewayProfitControlGate(ctx context.Context, group
 		}
 	}
 
-	downstream := billingGroup.RateMultiplier
-	if userID, _ := ctx.Value(ctxkey.UserID).(int64); userID > 0 {
-		downstream = s.ResolveUserGroupRateMultiplier(ctx, userID, billingGroup.ID, billingGroup.RateMultiplier)
-	}
-	downstream *= billingGroup.PeakMultiplierAt(pricingAt)
-	threshold := clampProfitControlThreshold(downstream * (1 - group.ProfitMinMargin - group.ProfitSafetyBuffer))
-
+	userID, _ := ctx.Value(ctxkey.UserID).(int64)
 	gate := &openAIProfitControlGate{
-		groupID:   group.ID,
-		platform:  group.Platform,
-		threshold: threshold,
-		pricingAt: pricingAt,
+		groupID:      group.ID,
+		platform:     group.Platform,
+		pricingAt:    pricingAt,
+		billingGroup: billingGroup,
+		userID:       userID,
+		deduction:    group.ProfitMinMargin + group.ProfitSafetyBuffer,
 	}
+	gate.threshold = profitControlThreshold(ctx, s.userGroupRateResolverOrDefault(), gate, nil)
 	openAIProfitControlObserverInstance.recordInstall(gate.groupID, gate.platform, gate.threshold)
 	return context.WithValue(ctx, openAIProfitControlGateCtxKey{}, gate)
+}
+
+// withGatewayProfitControlGateForModel 装门并按请求模型绑定阈值（见 bindProfitControlGateModel）。
+func (s *GatewayService) withGatewayProfitControlGateForModel(ctx context.Context, groupID *int64, model string) context.Context {
+	ctx = s.withGatewayProfitControlGate(ctx, groupID)
+	return bindProfitControlGateModel(ctx, s.userGroupRateResolverOrDefault(), s.channelService, model)
 }
 
 func (s *GatewayService) clearForeignProfitControlGate(ctx context.Context, groupID *int64) context.Context {

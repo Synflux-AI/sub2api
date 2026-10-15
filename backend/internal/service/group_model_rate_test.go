@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	gocache "github.com/patrickmn/go-cache"
 	"github.com/stretchr/testify/require"
 )
@@ -272,4 +273,70 @@ func TestInflightEstimate_UsesPerCandidateModelRate(t *testing.T) {
 	got, ok = svc.EstimateInflightReservation(ctx, discounted, req)
 	require.True(t, ok)
 	require.InDelta(t, base, got, 1e-12)
+}
+
+// 请求模型与渠道映射模型落在不同倍率上时 D 取较小者（阈值偏严）。
+func TestProfitControl_GateTakesMinAcrossChannelMappedModel(t *testing.T) {
+	groupID := int64(8)
+	ch := Channel{ID: 1, Status: StatusActive, GroupIDs: []int64{groupID}, ModelMapping: map[string]map[string]string{
+		PlatformOpenAI: {"model-alias": "model-cheap"},
+	}}
+	svc := &OpenAIGatewayService{channelService: newTestChannelService(makeStandardRepo(ch, map[int64]string{groupID: PlatformOpenAI}))}
+	group := profitControlTestGroup(groupID, 0, 0)
+	group.RateMultiplier = 2.0
+	group.ModelRateMultipliers = []GroupModelRateMultiplier{{Models: []string{"model-cheap"}, RateMultiplier: 0.5}}
+
+	ctx, _ := svc.WithOpenAIRequestPricingContext(profitControlTestCtx(group), &groupID)
+	bound := svc.BindProfitControlModel(ctx, "model-alias")
+	require.InDelta(t, 0.5, bound.Value(openAIProfitControlGateCtxKey{}).(*openAIProfitControlGate).threshold, 1e-12)
+}
+
+// D 按请求模型解析模型倍率：handler 入口装的门不含模型倍率，调度入口绑定请求模型后
+// 按该模型重算阈值；同一模型重入时复用同一门（failover 阈值稳定）。
+func TestProfitControl_GateBindsRequestModelRate(t *testing.T) {
+	userRate := 0.8
+	svc := &OpenAIGatewayService{
+		userGroupRateResolver: newUserGroupRateResolver(
+			&userGroupModelRateRepoStub{cfg: &UserGroupRateConfig{
+				RateMultiplier:       &userRate,
+				ModelRateMultipliers: map[string]float64{"model-user": 0.3},
+			}}, nil, time.Minute, nil, "test.profit",
+		),
+	}
+	groupID := int64(7)
+	group := profitControlTestGroup(groupID, 0, 0)
+	group.RateMultiplier = 2.0
+	group.ModelRateMultipliers = []GroupModelRateMultiplier{
+		{Models: []string{"model-cheap"}, RateMultiplier: 0.5},
+		{Models: []string{"model-user"}, RateMultiplier: 1.5},
+	}
+	ctx := context.WithValue(profitControlTestCtx(group), ctxkey.UserID, int64(42))
+
+	// 入口装门（无模型）：用户专属倍率。
+	entry, _ := svc.WithOpenAIRequestPricingContext(ctx, &groupID)
+	gate := entry.Value(openAIProfitControlGateCtxKey{}).(*openAIProfitControlGate)
+	require.InDelta(t, 0.8, gate.threshold, 1e-12)
+	require.Empty(t, gate.model)
+
+	bound := svc.withOpenAIProfitControlGateForModel(entry, &groupID, "model-cheap")
+	cheapGate := bound.Value(openAIProfitControlGateCtxKey{}).(*openAIProfitControlGate)
+	require.InDelta(t, 0.5, cheapGate.threshold, 1e-12, "分组模型倍率优先于用户专属倍率")
+	require.Equal(t, gate.pricingAt, cheapGate.pricingAt, "rebinding keeps the request pricing time")
+
+	again := svc.withOpenAIProfitControlGateForModel(bound, &groupID, "model-cheap")
+	require.Same(t, cheapGate, again.Value(openAIProfitControlGateCtxKey{}).(*openAIProfitControlGate), "same model must reuse the gate")
+
+	user := svc.BindProfitControlModel(bound, "model-user")
+	require.InDelta(t, 0.3, user.Value(openAIProfitControlGateCtxKey{}).(*openAIProfitControlGate).threshold, 1e-12, "用户改过的模型倍率")
+
+	other := svc.BindProfitControlModel(bound, "model-unruled")
+	require.InDelta(t, 0.8, other.Value(openAIProfitControlGateCtxKey{}).(*openAIProfitControlGate).threshold, 1e-12)
+
+	// 账号准入随之变化：0.6 倍的上游在 model-cheap 下被否决，未命中规则的模型下放行。
+	account := &Account{ID: 1}
+	profitControlTestAccountWithRate(account, 0.6)
+	vetoed, _ := openAIProfitControlVetoReason(bound, account)
+	require.True(t, vetoed)
+	vetoed, _ = openAIProfitControlVetoReason(other, account)
+	require.False(t, vetoed)
 }

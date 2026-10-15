@@ -151,6 +151,11 @@ func (s *OpenAIGatewayService) ResolveBillingBaseRate(ctx context.Context, apiKe
 	return s.userGroupRateResolverOrDefault().ResolveForModel(ctx, userID, apiKey.Group, billingModel, systemDefault)
 }
 
+// ResolveModelRateMultipliers 返回用户在分组下每条模型倍率规则的生效倍率（与计费同源）。
+func (s *OpenAIGatewayService) ResolveModelRateMultipliers(ctx context.Context, userID int64, group *Group) []ResolvedModelRateMultiplier {
+	return s.userGroupRateResolverOrDefault().ResolveModelRates(ctx, userID, group)
+}
+
 func (s *OpenAIGatewayService) userGroupRateResolverOrDefault() *userGroupRateResolver {
 	if s == nil {
 		return nil

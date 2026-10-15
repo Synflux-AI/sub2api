@@ -79,6 +79,13 @@ func TestUserGroupRateRepository_ModelRateOverrides(t *testing.T) {
 	require.Equal(t, 0.4, *byUser[user.ID].RateMultiplier)
 	require.Nil(t, byUser[other.ID].ModelRateMultipliers)
 
+	byUserModels, err := repo.GetModelRatesByUserID(ctx, user.ID)
+	require.NoError(t, err)
+	require.Equal(t, map[int64]map[string]float64{group.ID: {"model-a": 0.5, "model-b*": 0.7}}, byUserModels)
+	byUserModels, err = repo.GetModelRatesByUserID(ctx, other.ID)
+	require.NoError(t, err)
+	require.Empty(t, byUserModels, "rows without model overrides are not listed")
+
 	// 分组删掉 model-b* 规则：用户覆盖里对应键被清理，其余保留。
 	require.NoError(t, repo.PruneGroupModelRates(ctx, group.ID, []string{"model-a"}))
 	cfg, err = repo.GetRateConfigByUserAndGroup(ctx, user.ID, group.ID)

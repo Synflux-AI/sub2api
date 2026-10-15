@@ -28,6 +28,10 @@ type keyBillingInfoResponse struct {
 	EffectiveRateMultiplier float64   `json:"effective_rate_multiplier"`
 	Timezone                *string   `json:"timezone,omitempty"`
 	ObservedAt              time.Time `json:"observed_at"`
+	// ModelRateMultipliers 列出命中模型倍率规则时替换 resolved_rate_multiplier 的 base 倍率
+	//（不含高峰因子，已合并该 key 用户对规则的修改）。新增的可选字段，schema_version 不变：
+	// 旧版解析方忽略未知字段，仍按 resolved_rate_multiplier 解读。
+	ModelRateMultipliers []service.ResolvedModelRateMultiplier `json:"model_rate_multipliers,omitempty"`
 }
 
 // KeyBillingInfo returns the token billing multiplier effective for the authenticated API key.
@@ -57,8 +61,24 @@ func (h *GatewayHandler) KeyBillingInfo(c *gin.Context) {
 		return
 	}
 
+	response := buildKeyBillingInfo(apiKey, resolvedRate, timezone.Now())
+	response.ModelRateMultipliers = h.resolveKeyModelRates(c, apiKey)
 	c.Header("Cache-Control", "no-store")
-	c.JSON(http.StatusOK, buildKeyBillingInfo(apiKey, resolvedRate, timezone.Now()))
+	c.JSON(http.StatusOK, response)
+}
+
+func (h *GatewayHandler) resolveKeyModelRates(c *gin.Context, apiKey *service.APIKey) []service.ResolvedModelRateMultiplier {
+	switch apiKey.Group.Platform {
+	case service.PlatformOpenAI, service.PlatformGrok:
+		if h.openAIGatewayService != nil {
+			return h.openAIGatewayService.ResolveModelRateMultipliers(c.Request.Context(), apiKey.UserID, apiKey.Group)
+		}
+	default:
+		if h.gatewayService != nil {
+			return h.gatewayService.ResolveModelRateMultipliers(c.Request.Context(), apiKey.UserID, apiKey.Group)
+		}
+	}
+	return nil
 }
 
 func (h *GatewayHandler) resolveKeyBillingRate(c *gin.Context, apiKey *service.APIKey) (float64, bool) {
