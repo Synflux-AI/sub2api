@@ -16,26 +16,15 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-const gatewayStreamHeartbeatBytesKey = "gateway_stream_heartbeat_bytes"
-
 func recordGatewayStreamHeartbeat(c *gin.Context, written int) {
-	if c == nil || written <= 0 {
-		return
-	}
-	total, _ := c.Get(gatewayStreamHeartbeatBytesKey)
-	bytes, _ := total.(int)
-	c.Set(gatewayStreamHeartbeatBytesKey, bytes+written)
+	service.RecordGatewayStreamHeartbeat(c, written)
 }
 
 func gatewayStreamHasOnlyHeartbeats(c *gin.Context) bool {
 	if c == nil || c.Writer == nil {
 		return false
 	}
-	value, ok := c.Get(gatewayStreamHeartbeatBytesKey)
-	if !ok {
-		return false
-	}
-	heartbeatBytes, _ := value.(int)
+	heartbeatBytes := service.GatewayStreamHeartbeatBytes(c)
 	return heartbeatBytes > 0 && c.Writer.Size() == heartbeatBytes
 }
 
