@@ -1884,6 +1884,48 @@ describe('EditAccountModal', () => {
     )
   })
 
+  it('writes the normalized client header passthrough blocklist for gemini accounts', async () => {
+    const account = { ...buildAccount(), platform: 'gemini', credentials: { api_key: 'ak-test' } }
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account)
+    await wrapper.get('[data-testid="client-header-passthrough-blocklist"]').setValue('X-Session-Id\n x-session-id ')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.client_header_passthrough_blocklist).toEqual(['x-session-id'])
+  })
+
+  it('hydrates the blocklist from extra and deletes the key when cleared', async () => {
+    const account = {
+      ...buildAccount(),
+      platform: 'gemini',
+      credentials: { api_key: 'ak-test' },
+      extra: { client_header_passthrough_blocklist: ['x-session-id', 'x-custom'] }
+    }
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account)
+    const textarea = wrapper.get('[data-testid="client-header-passthrough-blocklist"]')
+    expect((textarea.element as HTMLTextAreaElement).value).toBe('x-session-id\nx-custom')
+    await textarea.setValue('')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra).not.toHaveProperty('client_header_passthrough_blocklist')
+  })
+
+  it('does not show the blocklist for platforms without passthrough', () => {
+    const wrapper = mountModal(buildAccount())
+    expect(wrapper.find('[data-testid="client-header-passthrough-blocklist"]').exists()).toBe(false)
+  })
+
   it('submits trace_id_passthrough when the toggle is turned on', async () => {
     const account = buildAccount()
     updateAccountMock.mockReset()

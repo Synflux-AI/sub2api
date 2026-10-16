@@ -137,6 +137,8 @@ func (s *GeminiMessagesCompatService) forwardClaudeBodyAsChatCompletions(
 		}
 		requestIDHeader = idHeader
 
+		// 客户端请求头透传（#300）：认证头已由 buildReq 写入，只补缺不覆盖；每次重试都按当前账号重新计算
+		applyClientHeaderPassthrough(c, upstreamReq, account, s.clientHeaderPassthroughAllowlist(ctx))
 		// 全链路 trace：buildReq 是各账号类型的唯一构造出口，每次重试都重新注入
 		injectTraceHeader(ctx, upstreamReq, account)
 

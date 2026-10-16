@@ -755,6 +755,11 @@ export default {
       apiKeyPlaceholder: 'sk-ant-api03-...',
       apiKeyHint: '您的 Claude Console API Key',
       upstreamRequestIdHeader: '上游ID',
+      clientHeaderPassthroughBlocklist: '禁止透传的请求头',
+      clientHeaderPassthroughBlocklistPlaceholder: '每行一个，留空则继承全局白名单',
+      clientHeaderPassthroughBlocklistHelp: '系统设置里的「客户端请求头透传白名单」会把客户端带的请求头逐请求复制到上游。这里列出的请求头不会透传到本账号的上游，用于上游不接受或不应收到某些请求头的场景。每行一个名称，大小写不敏感；生效集合 = 全局白名单 − 本账号黑名单。',
+      clientHeaderPassthroughBlocklistInvalid: '禁止透传的请求头名称不合法：{name}',
+      clientHeaderPassthroughBlocklistTooMany: '禁止透传的请求头最多 {max} 个',
       upstreamRequestIdHeaderPlaceholder: '留空不记录',
       upstreamRequestIdHeaderHelp: {
         intro: '填写直接上游在响应头中声明请求标识的头名，记录到用量明细与错误请求的“上游ID”列；留空则用量明细不记录，错误请求沿用默认的 x-request-id。',

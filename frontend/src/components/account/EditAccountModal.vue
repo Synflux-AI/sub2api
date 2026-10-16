@@ -1780,6 +1780,11 @@
         :type="account.type"
       />
 
+      <ClientHeaderPassthroughBlocklistField
+        v-if="CLIENT_HEADER_PASSTHROUGH_PLATFORMS.includes(account.platform)"
+        v-model="clientHeaderPassthroughBlocklistInput"
+      />
+
       <div class="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <div>
           <label class="input-label">{{ t('admin.accounts.concurrency') }}</label>
@@ -3358,6 +3363,14 @@ import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import Select from '@/components/common/Select.vue'
 import HelpTooltip from '@/components/common/HelpTooltip.vue'
 import UpstreamRequestIdHeaderField from '@/components/account/UpstreamRequestIdHeaderField.vue'
+import ClientHeaderPassthroughBlocklistField from '@/components/account/ClientHeaderPassthroughBlocklistField.vue'
+import {
+  CLIENT_HEADER_PASSTHROUGH_PLATFORMS,
+  MAX_CLIENT_HEADER_PASSTHROUGH_ENTRIES,
+  normalizeClientHeaderPassthroughNames,
+  readClientHeaderNameList,
+  splitClientHeaderNames
+} from '@/utils/clientHeaderPassthrough'
 import Toggle from '@/components/common/Toggle.vue'
 import Icon from '@/components/icons/Icon.vue'
 import ProxySelector from '@/components/common/ProxySelector.vue'
@@ -3893,6 +3906,10 @@ const readUpstreamRequestIdHeader = (extra: unknown): string => {
   const value = (extra as Record<string, unknown> | undefined)?.upstream_request_id_header
   return typeof value === 'string' ? value : ''
 }
+// 禁止透传的请求头（#300）：按行编辑，保存时规范化为 extra.client_header_passthrough_blocklist。
+const clientHeaderPassthroughBlocklistInput = ref('')
+const readClientHeaderPassthroughBlocklist = (extra: unknown): string[] =>
+  readClientHeaderNameList((extra as Record<string, unknown> | undefined)?.client_header_passthrough_blocklist)
 const allowOverages = ref(false) // For antigravity accounts: enable AI Credits overages
 const antigravityProjectId = ref('')
 const antigravityModelRestrictionMode = ref<'whitelist' | 'mapping'>('whitelist')
@@ -4449,6 +4466,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
 	mixedScheduling.value = extra?.mixed_scheduling === true
 	allowOverages.value = extra?.allow_overages === true
 	upstreamRequestIdHeader.value = readUpstreamRequestIdHeader(extra)
+	clientHeaderPassthroughBlocklistInput.value = readClientHeaderPassthroughBlocklist(extra).join('\n')
 	openAIImagesUrlToB64JsonEnabled.value = extra?.images_url_to_b64_json === true
 	autoPause5hThreshold.value = typeof extra?.auto_pause_5h_threshold === 'number' ? extra.auto_pause_5h_threshold * 100 : null
 	autoPause7dThreshold.value = typeof extra?.auto_pause_7d_threshold === 'number' ? extra.auto_pause_7d_threshold * 100 : null
@@ -5466,6 +5484,19 @@ const handleSubmit = async () => {
 		}
 	}
 
+  const clientHeaderPassthroughBlocklist = normalizeClientHeaderPassthroughNames(
+    splitClientHeaderNames(clientHeaderPassthroughBlocklistInput.value),
+    { rejectProtected: false }
+  )
+  if (!clientHeaderPassthroughBlocklist.ok) {
+    appStore.showError(
+      clientHeaderPassthroughBlocklist.reason === 'too_many'
+        ? t('admin.accounts.clientHeaderPassthroughBlocklistTooMany', { max: MAX_CLIENT_HEADER_PASSTHROUGH_ENTRIES })
+        : t('admin.accounts.clientHeaderPassthroughBlocklistInvalid', { name: clientHeaderPassthroughBlocklist.name ?? '' })
+    )
+    return
+  }
+
   const updatePayload: Record<string, unknown> = { ...form }
   try {
     // 后端期望 proxy_id: 0 表示清除代理，而不是 null
@@ -6268,6 +6299,20 @@ const handleSubmit = async () => {
         newExtra.upstream_request_id_header = nextUpstreamRequestIdHeader
       } else {
         delete newExtra.upstream_request_id_header
+      }
+      updatePayload.extra = newExtra
+    }
+
+    // 禁止透传的请求头同样只在改动时写回 extra。
+    const nextBlocklist = clientHeaderPassthroughBlocklist.names
+    const currentBlocklist = readClientHeaderPassthroughBlocklist(props.account.extra)
+    if (nextBlocklist.join('\n') !== currentBlocklist.join('\n')) {
+      const currentExtra = (updatePayload.extra as Record<string, unknown>) || (props.account.extra as Record<string, unknown>) || {}
+      const newExtra: Record<string, unknown> = { ...currentExtra }
+      if (nextBlocklist.length > 0) {
+        newExtra.client_header_passthrough_blocklist = nextBlocklist
+      } else {
+        delete newExtra.client_header_passthrough_blocklist
       }
       updatePayload.extra = newExtra
     }

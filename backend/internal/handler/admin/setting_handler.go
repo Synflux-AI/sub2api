@@ -295,6 +295,7 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		OpenAIPreOutputMaxStagedEvents:                         settings.OpenAIPreOutputMaxStagedEvents,
 		OpenAIPreOutputStageMaxBytes:                           settings.OpenAIPreOutputStageMaxBytes,
 		OpenAIPreOutputMaxStageMs:                              settings.OpenAIPreOutputMaxStageMs,
+		ClientHeaderPassthroughAllowlist:                       settings.ClientHeaderPassthroughAllowlist,
 		EnableFingerprintUnification:                           settings.EnableFingerprintUnification,
 		EnableMetadataPassthrough:                              settings.EnableMetadataPassthrough,
 		EnableCCHSigning:                                       settings.EnableCCHSigning,

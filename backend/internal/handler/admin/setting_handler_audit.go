@@ -470,6 +470,9 @@ func diffSettings(before *service.SystemSettings, after *service.SystemSettings,
 	if before.OpenAIPreOutputMaxStageMs != after.OpenAIPreOutputMaxStageMs {
 		changed = append(changed, "openai_pre_output_max_stage_ms")
 	}
+	if !equalStringSlice(before.ClientHeaderPassthroughAllowlist, after.ClientHeaderPassthroughAllowlist) {
+		changed = append(changed, "client_header_passthrough_allowlist")
+	}
 	if before.EnableMetadataPassthrough != after.EnableMetadataPassthrough {
 		changed = append(changed, "enable_metadata_passthrough")
 	}

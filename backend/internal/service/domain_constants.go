@@ -719,6 +719,8 @@ const (
 	SettingKeyOpenAIPreOutputStageMaxBytes = "openai_pre_output_stage_max_bytes"
 	// SettingKeyOpenAIPreOutputMaxStageMs 最长暂存时间，毫秒，0 表示不限（默认 5000）。
 	SettingKeyOpenAIPreOutputMaxStageMs = "openai_pre_output_max_stage_ms"
+	// SettingKeyClientHeaderPassthroughAllowlist 客户端请求头透传白名单（JSON 字符串数组，默认空，#300）。
+	SettingKeyClientHeaderPassthroughAllowlist = "client_header_passthrough_allowlist"
 	// SettingKeyEnableFingerprintUnification 是否统一 OAuth 账号的 X-Stainless-* 指纹头（默认 true）
 	SettingKeyEnableFingerprintUnification = "enable_fingerprint_unification"
 	// SettingKeyEnableMetadataPassthrough 是否透传客户端原始 metadata.user_id（默认 false）

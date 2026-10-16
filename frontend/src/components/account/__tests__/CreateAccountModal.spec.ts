@@ -1048,6 +1048,57 @@ describe('CreateAccountModal X-Trace-Id passthrough toggle', () => {
   })
 })
 
+describe('CreateAccountModal client header passthrough blocklist', () => {
+  beforeEach(() => {
+    authIsSimpleMode.value = true
+    createAccountMock.mockReset().mockResolvedValue({ id: 45, platform: 'gemini', type: 'apikey' })
+    probeUpstreamBillingMock.mockReset().mockResolvedValue({})
+    syncUpstreamModelsMock.mockReset().mockResolvedValue({ models: [], metadata: {} })
+  })
+
+  async function fillGeminiApiKeyAccount(wrapper: ReturnType<typeof mountModal>) {
+    await selectButtonByText(wrapper, 'Gemini')
+    await selectButtonByText(wrapper, 'admin.accounts.gemini.accountType.apiKeyTitle')
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('gemini account')
+    await wrapper.get('form#create-account-form input[type="password"]').setValue('ak-test')
+  }
+
+  it('is only shown for platforms wired for passthrough', async () => {
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'OpenAI')
+    expect(wrapper.find('[data-testid="client-header-passthrough-blocklist"]').exists()).toBe(false)
+    await selectButtonByText(wrapper, 'Gemini')
+    expect(wrapper.find('[data-testid="client-header-passthrough-blocklist"]').exists()).toBe(true)
+  })
+
+  it('sends the normalized blocklist in extra and omits it when empty', async () => {
+    const wrapper = mountModal()
+    await fillGeminiApiKeyAccount(wrapper)
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await flushPromises()
+    expect(createAccountMock).toHaveBeenCalledTimes(1)
+    expect(createAccountMock.mock.calls[0]?.[0]?.extra ?? {}).not.toHaveProperty('client_header_passthrough_blocklist')
+
+    createAccountMock.mockClear()
+    const second = mountModal()
+    await fillGeminiApiKeyAccount(second)
+    await second.get('[data-testid="client-header-passthrough-blocklist"]').setValue(' X-Session-Id \nx-session-id\nX-Custom')
+    await second.get('form#create-account-form').trigger('submit.prevent')
+    await flushPromises()
+    expect(createAccountMock).toHaveBeenCalledTimes(1)
+    expect(createAccountMock.mock.calls[0]?.[0]?.extra?.client_header_passthrough_blocklist).toEqual(['x-session-id', 'x-custom'])
+  })
+
+  it('rejects invalid header names before creating', async () => {
+    const wrapper = mountModal()
+    await fillGeminiApiKeyAccount(wrapper)
+    await wrapper.get('[data-testid="client-header-passthrough-blocklist"]').setValue('bad header')
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await flushPromises()
+    expect(createAccountMock).not.toHaveBeenCalled()
+  })
+})
+
 describe('CreateAccountModal gemini explicit cache upstream switch', () => {
   beforeEach(() => {
     authIsSimpleMode.value = true

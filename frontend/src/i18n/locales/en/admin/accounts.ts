@@ -637,6 +637,11 @@ export default {
       apiKeyPlaceholder: 'sk-ant-api03-...',
       apiKeyHint: 'Your Claude Console API Key',
       upstreamRequestIdHeader: 'Upstream ID',
+      clientHeaderPassthroughBlocklist: 'Headers not to pass through',
+      clientHeaderPassthroughBlocklistPlaceholder: 'One per line; leave empty to inherit the global allowlist',
+      clientHeaderPassthroughBlocklistHelp: 'The "Client request header passthrough allowlist" in system settings copies listed client request headers to the upstream on every request. Headers listed here are never passed through to this account\'s upstream, for upstreams that reject or should not receive them. One name per line, case-insensitive; effective set = global allowlist minus this list.',
+      clientHeaderPassthroughBlocklistInvalid: 'Invalid header name in headers not to pass through: {name}',
+      clientHeaderPassthroughBlocklistTooMany: 'At most {max} headers can be excluded',
       upstreamRequestIdHeaderPlaceholder: 'Leave empty to record nothing',
       upstreamRequestIdHeaderHelp: {
         intro: 'Name of the response header in which the direct upstream declares its request ID. The value is recorded in the "Upstream ID" column of the usage log and error requests; leave empty to record nothing in the usage log, while error requests fall back to the default x-request-id.',
