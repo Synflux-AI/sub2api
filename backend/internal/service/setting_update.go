@@ -475,6 +475,20 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	}
 	updates[SettingKeyOpenAITTFTMode] = mode
 	updates[SettingKeyOpenAIImmediateLifecycleEvents] = strconv.FormatBool(settings.OpenAIImmediateLifecycleEvents)
+	// 0 不是事件数 / 字节上限的合法值，视为未提供并回退默认值（兼容不带这几个字段的调用方）。
+	if settings.OpenAIPreOutputMaxStagedEvents == 0 {
+		settings.OpenAIPreOutputMaxStagedEvents = defaultOpenAIPreOutputMaxStagedEvents
+	}
+	if settings.OpenAIPreOutputStageMaxBytes == 0 {
+		settings.OpenAIPreOutputStageMaxBytes = defaultOpenAIPreOutputStageMaxBytes
+	}
+	if err := validateOpenAIPreOutputStagingSettings(settings.openAIPreOutputStagingSettings()); err != nil {
+		return nil, err
+	}
+	updates[SettingKeyOpenAIPreOutputStagingEnabled] = strconv.FormatBool(settings.OpenAIPreOutputStagingEnabled)
+	updates[SettingKeyOpenAIPreOutputMaxStagedEvents] = strconv.Itoa(settings.OpenAIPreOutputMaxStagedEvents)
+	updates[SettingKeyOpenAIPreOutputStageMaxBytes] = strconv.Itoa(settings.OpenAIPreOutputStageMaxBytes)
+	updates[SettingKeyOpenAIPreOutputMaxStageMs] = strconv.Itoa(settings.OpenAIPreOutputMaxStageMs)
 	updates[SettingKeyEnableFingerprintUnification] = strconv.FormatBool(settings.EnableFingerprintUnification)
 	updates[SettingKeyEnableMetadataPassthrough] = strconv.FormatBool(settings.EnableMetadataPassthrough)
 	updates[SettingKeyEnableCCHSigning] = strconv.FormatBool(settings.EnableCCHSigning)
@@ -728,6 +742,7 @@ func (s *SettingService) refreshCachedSettings(settings *SystemSettings) {
 	gatewayForwardingCache.Store(&cachedGatewayForwardingSettings{
 		openAITTFTMode:                   normalizeOpenAITTFTMode(settings.OpenAITTFTMode),
 		openAIImmediateLifecycleEvents:   settings.OpenAIImmediateLifecycleEvents,
+		openAIPreOutputStaging:           settings.openAIPreOutputStagingSettings(),
 		fingerprintUnification:           settings.EnableFingerprintUnification,
 		metadataPassthrough:              settings.EnableMetadataPassthrough,
 		cchSigning:                       settings.EnableCCHSigning,

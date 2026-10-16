@@ -639,6 +639,10 @@ export interface SystemSettings {
   // Gateway forwarding behavior
   openai_ttft_mode: string;
   openai_immediate_lifecycle_events: boolean;
+  openai_pre_output_staging_enabled: boolean;
+  openai_pre_output_max_staged_events: number;
+  openai_pre_output_stage_max_bytes: number;
+  openai_pre_output_max_stage_ms: number;
   enable_fingerprint_unification: boolean;
   enable_metadata_passthrough: boolean;
   enable_cch_signing: boolean;
@@ -975,6 +979,10 @@ export interface UpdateSettingsRequest {
   scheduling_ttft_degrade_enabled?: boolean;
   openai_ttft_mode?: string;
   openai_immediate_lifecycle_events?: boolean;
+  openai_pre_output_staging_enabled?: boolean;
+  openai_pre_output_max_staged_events?: number;
+  openai_pre_output_stage_max_bytes?: number;
+  openai_pre_output_max_stage_ms?: number;
   enable_fingerprint_unification?: boolean;
   enable_metadata_passthrough?: boolean;
   enable_cch_signing?: boolean;

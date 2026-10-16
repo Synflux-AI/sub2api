@@ -5562,6 +5562,130 @@
                 />
               </div>
 
+              <!-- OpenAI 首个可见输出前暂存（#295） -->
+              <div>
+                <div class="flex items-center justify-between">
+                  <div>
+                    <label
+                      class="text-sm font-medium text-gray-700 dark:text-gray-300"
+                    >
+                      {{
+                        t(
+                          "admin.settings.gatewayForwarding.openaiPreOutputStaging",
+                        )
+                      }}
+                    </label>
+                    <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                      {{
+                        t(
+                          "admin.settings.gatewayForwarding.openaiPreOutputStagingHint",
+                        )
+                      }}
+                    </p>
+                    <p
+                      v-if="
+                        form.openai_pre_output_staging_enabled &&
+                        form.openai_immediate_lifecycle_events
+                      "
+                      class="mt-0.5 text-xs text-amber-600 dark:text-amber-400"
+                    >
+                      {{
+                        t(
+                          "admin.settings.gatewayForwarding.openaiPreOutputStagingImmediateWarning",
+                        )
+                      }}
+                    </p>
+                  </div>
+                  <Toggle
+                    v-model="form.openai_pre_output_staging_enabled"
+                    data-testid="openai-pre-output-staging-enabled"
+                  />
+                </div>
+                <div
+                  v-if="form.openai_pre_output_staging_enabled"
+                  class="mt-3 grid grid-cols-1 gap-4 border-l-2 border-gray-100 pl-4 sm:grid-cols-3 dark:border-dark-700"
+                >
+                  <div>
+                    <label
+                      class="mb-1 block text-xs font-medium text-gray-700 dark:text-gray-300"
+                    >
+                      {{
+                        t(
+                          "admin.settings.gatewayForwarding.openaiPreOutputMaxStagedEvents",
+                        )
+                      }}
+                    </label>
+                    <input
+                      v-model.number="form.openai_pre_output_max_staged_events"
+                      type="number"
+                      min="1"
+                      max="256"
+                      class="input w-32"
+                      data-testid="openai-pre-output-max-staged-events"
+                    />
+                    <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                      {{
+                        t(
+                          "admin.settings.gatewayForwarding.openaiPreOutputMaxStagedEventsHint",
+                        )
+                      }}
+                    </p>
+                  </div>
+                  <div>
+                    <label
+                      class="mb-1 block text-xs font-medium text-gray-700 dark:text-gray-300"
+                    >
+                      {{
+                        t(
+                          "admin.settings.gatewayForwarding.openaiPreOutputStageMaxKiB",
+                        )
+                      }}
+                    </label>
+                    <input
+                      v-model.number="preOutputStageMaxKiB"
+                      type="number"
+                      min="64"
+                      max="8192"
+                      class="input w-32"
+                      data-testid="openai-pre-output-stage-max-kib"
+                    />
+                    <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                      {{
+                        t(
+                          "admin.settings.gatewayForwarding.openaiPreOutputStageMaxKiBHint",
+                        )
+                      }}
+                    </p>
+                  </div>
+                  <div>
+                    <label
+                      class="mb-1 block text-xs font-medium text-gray-700 dark:text-gray-300"
+                    >
+                      {{
+                        t(
+                          "admin.settings.gatewayForwarding.openaiPreOutputMaxStageMs",
+                        )
+                      }}
+                    </label>
+                    <input
+                      v-model.number="form.openai_pre_output_max_stage_ms"
+                      type="number"
+                      min="0"
+                      max="600000"
+                      class="input w-32"
+                      data-testid="openai-pre-output-max-stage-ms"
+                    />
+                    <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                      {{
+                        t(
+                          "admin.settings.gatewayForwarding.openaiPreOutputMaxStageMsHint",
+                        )
+                      }}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
               <!-- Fingerprint Unification -->
               <div class="flex items-center justify-between">
                 <div>
@@ -10220,6 +10344,10 @@ const form = reactive<SettingsForm>({
   // Gateway forwarding behavior
   openai_ttft_mode: "semantic",
   openai_immediate_lifecycle_events: false,
+  openai_pre_output_staging_enabled: false,
+  openai_pre_output_max_staged_events: 16,
+  openai_pre_output_stage_max_bytes: 1048576,
+  openai_pre_output_max_stage_ms: 5000,
   enable_fingerprint_unification: true,
   enable_metadata_passthrough: false,
   enable_cch_signing: false,
@@ -10274,6 +10402,14 @@ const form = reactive<SettingsForm>({
   affiliate_enabled: false,
   // Allow user view error requests
   allow_user_view_error_requests: false,
+});
+
+// 暂存字节上限在界面上按 KiB 编辑，存储与接口仍用字节。
+const preOutputStageMaxKiB = computed<number>({
+  get: () => Math.round(form.openai_pre_output_stage_max_bytes / 1024),
+  set: (value: number) => {
+    form.openai_pre_output_stage_max_bytes = Math.round(Number(value) * 1024);
+  },
 });
 
 // 人机验证 UI 状态：单卡片「总开关 + 服务商单选」，落库仍是三个独立
@@ -11870,6 +12006,11 @@ async function saveSettings() {
       openai_ttft_mode:
         form.openai_ttft_mode === "visible" ? "visible" : "semantic",
       openai_immediate_lifecycle_events: form.openai_immediate_lifecycle_events,
+      openai_pre_output_staging_enabled: form.openai_pre_output_staging_enabled,
+      openai_pre_output_max_staged_events:
+        form.openai_pre_output_max_staged_events,
+      openai_pre_output_stage_max_bytes: form.openai_pre_output_stage_max_bytes,
+      openai_pre_output_max_stage_ms: form.openai_pre_output_max_stage_ms,
       enable_fingerprint_unification: form.enable_fingerprint_unification,
       enable_metadata_passthrough: form.enable_metadata_passthrough,
       enable_cch_signing: form.enable_cch_signing,

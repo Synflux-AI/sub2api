@@ -56,6 +56,7 @@ const backendModeDBTimeout = 5 * time.Second
 type cachedGatewayForwardingSettings struct {
 	openAITTFTMode                   string
 	openAIImmediateLifecycleEvents   bool
+	openAIPreOutputStaging           OpenAIPreOutputStagingSettings
 	fingerprintUnification           bool
 	metadataPassthrough              bool
 	cchSigning                       bool
@@ -873,6 +874,7 @@ type gatewayForwardingSettingsResult struct {
 	fp, mp, cch, claudeOAuthSystemPromptInjection, cacheTTL1h, rewriteMessageCacheControl bool
 	clientDatelineNormalization                                                           bool
 	openAIImmediateLifecycleEvents                                                        bool
+	openAIPreOutputStaging                                                                OpenAIPreOutputStagingSettings
 	claudeOAuthSystemPrompt, claudeOAuthSystemPromptBlocks                                string
 }
 
@@ -891,6 +893,7 @@ func (s *SettingService) getGatewayForwardingSettingsCached(ctx context.Context)
 				rewriteMessageCacheControl:       cached.rewriteMessageCacheControl,
 				clientDatelineNormalization:      cached.clientDatelineNormalization,
 				openAIImmediateLifecycleEvents:   cached.openAIImmediateLifecycleEvents,
+				openAIPreOutputStaging:           cached.openAIPreOutputStaging,
 			}
 		}
 	}
@@ -909,6 +912,7 @@ func (s *SettingService) getGatewayForwardingSettingsCached(ctx context.Context)
 					rewriteMessageCacheControl:       cached.rewriteMessageCacheControl,
 					clientDatelineNormalization:      cached.clientDatelineNormalization,
 					openAIImmediateLifecycleEvents:   cached.openAIImmediateLifecycleEvents,
+					openAIPreOutputStaging:           cached.openAIPreOutputStaging,
 				}, nil
 			}
 		}
@@ -926,6 +930,10 @@ func (s *SettingService) getGatewayForwardingSettingsCached(ctx context.Context)
 			SettingKeyRewriteMessageCacheControl,
 			SettingKeyEnableClientDatelineNormalization,
 			SettingKeyOpenAIImmediateLifecycleEvents,
+			SettingKeyOpenAIPreOutputStagingEnabled,
+			SettingKeyOpenAIPreOutputMaxStagedEvents,
+			SettingKeyOpenAIPreOutputStageMaxBytes,
+			SettingKeyOpenAIPreOutputMaxStageMs,
 		})
 		if err != nil {
 			slog.Warn("failed to get gateway forwarding settings", "error", err)
@@ -938,9 +946,10 @@ func (s *SettingService) getGatewayForwardingSettingsCached(ctx context.Context)
 				anthropicCacheTTL1hInjection:     false,
 				rewriteMessageCacheControl:       s.defaultRewriteMessageCacheControl(),
 				clientDatelineNormalization:      true,
+				openAIPreOutputStaging:           defaultOpenAIPreOutputStagingSettings(),
 				expiresAt:                        time.Now().Add(gatewayForwardingErrorTTL).UnixNano(),
 			})
-			return gatewayForwardingSettingsResult{openAITTFTMode: OpenAITTFTModeSemantic, fp: true, claudeOAuthSystemPromptInjection: true, rewriteMessageCacheControl: s.defaultRewriteMessageCacheControl(), clientDatelineNormalization: true}, nil
+			return gatewayForwardingSettingsResult{openAITTFTMode: OpenAITTFTModeSemantic, fp: true, claudeOAuthSystemPromptInjection: true, rewriteMessageCacheControl: s.defaultRewriteMessageCacheControl(), clientDatelineNormalization: true, openAIPreOutputStaging: defaultOpenAIPreOutputStagingSettings()}, nil
 		}
 		ttftMode := normalizeOpenAITTFTMode(values[SettingKeyOpenAITTFTMode])
 		fp := true
@@ -965,9 +974,11 @@ func (s *SettingService) getGatewayForwardingSettingsCached(ctx context.Context)
 			clientDatelineNormalization = v == "true"
 		}
 		immediateLifecycleEvents := values[SettingKeyOpenAIImmediateLifecycleEvents] == "true"
+		preOutputStaging := parseOpenAIPreOutputStagingSettings(values)
 		gatewayForwardingCache.Store(&cachedGatewayForwardingSettings{
 			openAITTFTMode:                   ttftMode,
 			openAIImmediateLifecycleEvents:   immediateLifecycleEvents,
+			openAIPreOutputStaging:           preOutputStaging,
 			fingerprintUnification:           fp,
 			metadataPassthrough:              mp,
 			cchSigning:                       cch,
@@ -991,6 +1002,7 @@ func (s *SettingService) getGatewayForwardingSettingsCached(ctx context.Context)
 			rewriteMessageCacheControl:       rewriteMessageCacheControl,
 			clientDatelineNormalization:      clientDatelineNormalization,
 			openAIImmediateLifecycleEvents:   immediateLifecycleEvents,
+			openAIPreOutputStaging:           preOutputStaging,
 		}, nil
 	})
 	if r, ok := val.(gatewayForwardingSettingsResult); ok {
@@ -1007,6 +1019,11 @@ func (s *SettingService) GetOpenAITTFTMode(ctx context.Context) string {
 // IsOpenAIImmediateLifecycleEventsEnabled 检查 Responses created / in_progress 是否立即下发。默认关闭。
 func (s *SettingService) IsOpenAIImmediateLifecycleEventsEnabled(ctx context.Context) bool {
 	return s.getGatewayForwardingSettingsCached(ctx).openAIImmediateLifecycleEvents
+}
+
+// GetOpenAIPreOutputStagingSettings 返回 pre-output 暂存设置（#295）。默认关闭。
+func (s *SettingService) GetOpenAIPreOutputStagingSettings(ctx context.Context) OpenAIPreOutputStagingSettings {
+	return s.getGatewayForwardingSettingsCached(ctx).openAIPreOutputStaging
 }
 
 // GetGatewayForwardingSettings returns cached gateway forwarding settings.
