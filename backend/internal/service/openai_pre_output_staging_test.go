@@ -60,6 +60,13 @@ type preOutputStageRun struct {
 
 func runPreOutputStageStream(t *testing.T, path string, gateway config.GatewayConfig, body io.ReadCloser) preOutputStageRun {
 	t.Helper()
+	return runPreOutputStageStreamWith(t, path, gateway, body, nil)
+}
+
+// runPreOutputStageStreamWith 在上游开流前先执行 prepare，用于模拟 handler 在
+// 开流前已经写给客户端的字节（例如等槽 ping）。
+func runPreOutputStageStreamWith(t *testing.T, path string, gateway config.GatewayConfig, body io.ReadCloser, prepare func(*gin.Context)) preOutputStageRun {
+	t.Helper()
 	gin.SetMode(gin.TestMode)
 	if gateway.MaxLineSize == 0 {
 		gateway.MaxLineSize = defaultMaxLineSize
@@ -68,6 +75,9 @@ func runPreOutputStageStream(t *testing.T, path string, gateway config.GatewayCo
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	if prepare != nil {
+		prepare(c)
+	}
 	resp := &http.Response{StatusCode: http.StatusOK, Body: body, Header: http.Header{}}
 	account := &Account{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Name: "acc"}
 	var err error

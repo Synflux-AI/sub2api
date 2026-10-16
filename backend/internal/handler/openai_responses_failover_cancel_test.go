@@ -100,6 +100,13 @@ func (u *openAIResponsesFailoverCancelUpstream) calls() []int64 {
 
 func newOpenAIResponsesFailoverTestHandler(t *testing.T, upstream service.HTTPUpstream) *OpenAIGatewayHandler {
 	t.Helper()
+	return newOpenAIResponsesFailoverTestHandlerWithExtra(t, upstream, nil)
+}
+
+// newOpenAIResponsesFailoverTestHandlerWithExtra 与上面相同，但两个账号共用给定的
+// Extra（例如开启 openai_passthrough）。
+func newOpenAIResponsesFailoverTestHandlerWithExtra(t *testing.T, upstream service.HTTPUpstream, extra map[string]any) *OpenAIGatewayHandler {
+	t.Helper()
 	accounts := []service.Account{
 		{
 			ID:          1,
@@ -123,6 +130,9 @@ func newOpenAIResponsesFailoverTestHandler(t *testing.T, upstream service.HTTPUp
 			Priority:    1,
 			Credentials: map[string]any{"access_token": "token-2"},
 		},
+	}
+	for i := range accounts {
+		accounts[i].Extra = extra
 	}
 	accountRepo := openAIImagesFailoverAccountRepo{accounts: accounts}
 	cfg := &config.Config{RunMode: config.RunModeSimple}
