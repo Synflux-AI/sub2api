@@ -489,6 +489,16 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	updates[SettingKeyOpenAIPreOutputMaxStagedEvents] = strconv.Itoa(settings.OpenAIPreOutputMaxStagedEvents)
 	updates[SettingKeyOpenAIPreOutputStageMaxBytes] = strconv.Itoa(settings.OpenAIPreOutputStageMaxBytes)
 	updates[SettingKeyOpenAIPreOutputMaxStageMs] = strconv.Itoa(settings.OpenAIPreOutputMaxStageMs)
+	clientHeaderPassthroughAllowlist, err := NormalizeClientHeaderPassthroughAllowlist(settings.ClientHeaderPassthroughAllowlist)
+	if err != nil {
+		return nil, err
+	}
+	settings.ClientHeaderPassthroughAllowlist = clientHeaderPassthroughAllowlist
+	clientHeaderPassthroughAllowlistJSON, err := json.Marshal(clientHeaderPassthroughAllowlist)
+	if err != nil {
+		return nil, fmt.Errorf("marshal client header passthrough allowlist: %w", err)
+	}
+	updates[SettingKeyClientHeaderPassthroughAllowlist] = string(clientHeaderPassthroughAllowlistJSON)
 	updates[SettingKeyEnableFingerprintUnification] = strconv.FormatBool(settings.EnableFingerprintUnification)
 	updates[SettingKeyEnableMetadataPassthrough] = strconv.FormatBool(settings.EnableMetadataPassthrough)
 	updates[SettingKeyEnableCCHSigning] = strconv.FormatBool(settings.EnableCCHSigning)
@@ -743,6 +753,7 @@ func (s *SettingService) refreshCachedSettings(settings *SystemSettings) {
 		openAITTFTMode:                   normalizeOpenAITTFTMode(settings.OpenAITTFTMode),
 		openAIImmediateLifecycleEvents:   settings.OpenAIImmediateLifecycleEvents,
 		openAIPreOutputStaging:           settings.openAIPreOutputStagingSettings(),
+		clientHeaderPassthroughAllowlist: append([]string(nil), settings.ClientHeaderPassthroughAllowlist...),
 		fingerprintUnification:           settings.EnableFingerprintUnification,
 		metadataPassthrough:              settings.EnableMetadataPassthrough,
 		cchSigning:                       settings.EnableCCHSigning,

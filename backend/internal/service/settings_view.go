@@ -235,6 +235,9 @@ type SystemSettings struct {
 	// Backend 模式：禁用用户注册和自助服务，仅管理员可登录
 	BackendModeEnabled bool
 
+	// ClientHeaderPassthroughAllowlist 客户端请求头透传白名单（小写，默认空，#300）
+	ClientHeaderPassthroughAllowlist []string
+
 	// Gateway forwarding behavior
 	OpenAITTFTMode                         string // Responses first_token_ms 统计口径（默认 semantic）
 	OpenAIImmediateLifecycleEvents         bool   // Responses created / in_progress 立即下发，不暂存到首个语义输出（默认 false）

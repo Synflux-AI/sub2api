@@ -3238,6 +3238,11 @@
         :type="form.type"
       />
 
+      <ClientHeaderPassthroughBlocklistField
+        v-if="CLIENT_HEADER_PASSTHROUGH_PLATFORMS.includes(form.platform)"
+        v-model="clientHeaderPassthroughBlocklistInput"
+      />
+
       <div class="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <div>
           <label class="input-label">{{ t('admin.accounts.concurrency') }}</label>
@@ -4226,6 +4231,13 @@ import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import Select from '@/components/common/Select.vue'
 import HelpTooltip from '@/components/common/HelpTooltip.vue'
 import UpstreamRequestIdHeaderField from '@/components/account/UpstreamRequestIdHeaderField.vue'
+import ClientHeaderPassthroughBlocklistField from '@/components/account/ClientHeaderPassthroughBlocklistField.vue'
+import {
+  CLIENT_HEADER_PASSTHROUGH_PLATFORMS,
+  MAX_CLIENT_HEADER_PASSTHROUGH_ENTRIES,
+  normalizeClientHeaderPassthroughNames,
+  splitClientHeaderNames
+} from '@/utils/clientHeaderPassthrough'
 import PlatformIcon from '@/components/common/PlatformIcon.vue'
 import Icon from '@/components/icons/Icon.vue'
 import ProxySelector from '@/components/common/ProxySelector.vue'
@@ -4319,10 +4331,22 @@ const oauthStepTitle = computed(() => {
 // Platform-specific hints for API Key type
 // 上游ID：直接上游声明请求标识的响应头名，留空不记录。
 const upstreamRequestIdHeader = ref('')
-const withUpstreamRequestIdHeader = <T extends Record<string, unknown> | undefined>(extra: T): T | Record<string, unknown> => {
+// 禁止透传的请求头（#300）：按行编辑；handleSubmit 入口已校验，这里只取规范化结果。
+const clientHeaderPassthroughBlocklistInput = ref('')
+const normalizedClientHeaderPassthroughBlocklist = () =>
+  normalizeClientHeaderPassthroughNames(splitClientHeaderNames(clientHeaderPassthroughBlocklistInput.value), {
+    rejectProtected: false
+  })
+// 把上游ID头名与禁止透传的请求头合并进 extra；都未填写时原样返回。
+const withAccountHeaderExtras = <T extends Record<string, unknown> | undefined>(extra: T): T | Record<string, unknown> => {
+  let result: T | Record<string, unknown> = extra
   const name = upstreamRequestIdHeader.value.trim()
-  if (!name) return extra
-  return { ...(extra || {}), upstream_request_id_header: name }
+  if (name) result = { ...(result || {}), upstream_request_id_header: name }
+  const blocklist = normalizedClientHeaderPassthroughBlocklist()
+  if (CLIENT_HEADER_PASSTHROUGH_PLATFORMS.includes(form.platform) && blocklist.ok && blocklist.names.length > 0) {
+    result = { ...(result || {}), client_header_passthrough_blocklist: blocklist.names }
+  }
+  return result
 }
 
 const baseUrlHint = computed(() => {
@@ -5751,6 +5775,7 @@ const resetForm = () => {
   apiKeyBaseUrl.value = 'https://api.anthropic.com'
   apiKeyValue.value = ''
   upstreamRequestIdHeader.value = ''
+  clientHeaderPassthroughBlocklistInput.value = ''
   upstreamBillingAutoProbeEnabled.value = true
   editQuotaLimit.value = null
   editQuotaDailyLimit.value = null
@@ -6062,6 +6087,15 @@ const handleVertexServiceAccountDrop = async (event: DragEvent) => {
 }
 
 const handleSubmit = async () => {
+  const clientHeaderPassthroughBlocklist = normalizedClientHeaderPassthroughBlocklist()
+  if (CLIENT_HEADER_PASSTHROUGH_PLATFORMS.includes(form.platform) && !clientHeaderPassthroughBlocklist.ok) {
+    appStore.showError(
+      clientHeaderPassthroughBlocklist.reason === 'too_many'
+        ? t('admin.accounts.clientHeaderPassthroughBlocklistTooMany', { max: MAX_CLIENT_HEADER_PASSTHROUGH_ENTRIES })
+        : t('admin.accounts.clientHeaderPassthroughBlocklistInvalid', { name: clientHeaderPassthroughBlocklist.name ?? '' })
+    )
+    return
+  }
   // For OAuth-based type, handle OAuth flow (goes to step 2)
   if (isOAuthFlow.value) {
     if (!isGrokSSOInputMethod.value && !form.name.trim()) {
@@ -6344,7 +6378,7 @@ const handleSubmit = async () => {
   await doCreateAccount({
     ...form,
     group_ids: form.group_ids,
-    extra: withUpstreamRequestIdHeader(extra),
+    extra: withAccountHeaderExtras(extra),
     upstream_billing_probe_enabled: upstreamBillingAutoProbeEnabled.value,
     auto_pause_on_expired: autoPauseOnExpired.value
   })
@@ -6407,7 +6441,7 @@ const createAccountAndFinish = async (
     return
   }
   // Inject quota limits for apikey/bedrock accounts
-  let finalExtra = withUpstreamRequestIdHeader(extra)
+  let finalExtra = withAccountHeaderExtras(extra)
   if (type === 'apikey' || type === 'bedrock') {
     const quotaExtra: Record<string, unknown> = { ...(finalExtra || {}) }
     if (editQuotaLimit.value != null && editQuotaLimit.value > 0) {
@@ -6533,7 +6567,7 @@ const handleGrokValidateRT = async (refreshTokenInput: string) => {
           platform: 'grok',
           type: 'oauth',
           credentials,
-          extra: withUpstreamRequestIdHeader(extra),
+          extra: withAccountHeaderExtras(extra),
           proxy_id: form.proxy_id,
           concurrency: form.concurrency,
           load_factor: form.load_factor ?? undefined,
@@ -6710,7 +6744,7 @@ const handleGrokAuthorizePassword = async (emailPasswordInput: string) => {
           platform: 'grok',
           type: 'oauth',
           credentials,
-          extra: withUpstreamRequestIdHeader(extra),
+          extra: withAccountHeaderExtras(extra),
           proxy_id: form.proxy_id,
           concurrency: form.concurrency,
           load_factor: form.load_factor ?? undefined,
@@ -6809,7 +6843,7 @@ const handleOpenAIExchange = async (authCode: string) => {
         platform: 'openai',
         type: 'oauth',
         credentials,
-        extra: withUpstreamRequestIdHeader(extra),
+        extra: withAccountHeaderExtras(extra),
         proxy_id: form.proxy_id,
         concurrency: form.concurrency,
         load_factor: form.load_factor ?? undefined,
@@ -6924,7 +6958,7 @@ const handleOpenAIImportCodexSession = async (content: string) => {
       expires_at: form.expires_at,
       auto_pause_on_expired: autoPauseOnExpired.value,
       credential_extras: Object.keys(credentialExtras).length > 0 ? credentialExtras : undefined,
-      extra: withUpstreamRequestIdHeader(extra),
+      extra: withAccountHeaderExtras(extra),
       update_existing: true
     })
 
@@ -7002,7 +7036,7 @@ const handleOpenAIImportCodexPAT = async (accessToken: string) => {
       expires_at: form.expires_at,
       auto_pause_on_expired: autoPauseOnExpired.value,
       credential_extras: Object.keys(credentialExtras).length > 0 ? credentialExtras : undefined,
-      extra: withUpstreamRequestIdHeader(extra)
+      extra: withAccountHeaderExtras(extra)
     })
 
     appStore.showSuccess(t('admin.accounts.accountCreated'))
@@ -7090,7 +7124,7 @@ const handleOpenAIBatchRT = async (refreshTokenInput: string, clientId?: string)
             platform: 'openai',
             type: 'oauth',
             credentials,
-            extra: withUpstreamRequestIdHeader(extra),
+            extra: withAccountHeaderExtras(extra),
             proxy_id: form.proxy_id,
             concurrency: form.concurrency,
             load_factor: form.load_factor ?? undefined,
@@ -7189,7 +7223,7 @@ const handleAntigravityValidateRT = async (refreshTokenInput: string) => {
           platform: 'antigravity',
           type: 'oauth',
           credentials,
-          extra: withUpstreamRequestIdHeader({}),
+          extra: withAccountHeaderExtras({}),
           proxy_id: form.proxy_id,
           concurrency: form.concurrency,
           load_factor: form.load_factor ?? undefined,
@@ -7570,7 +7604,7 @@ const handleCookieAuth = async (sessionKey: string) => {
           platform: form.platform,
           type: addMethod.value, // Use addMethod as type: 'oauth' or 'setup-token'
           credentials,
-          extra: withUpstreamRequestIdHeader(extra),
+          extra: withAccountHeaderExtras(extra),
           proxy_id: form.proxy_id,
           concurrency: form.concurrency,
           load_factor: form.load_factor ?? undefined,

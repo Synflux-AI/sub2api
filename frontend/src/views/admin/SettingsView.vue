@@ -5686,6 +5686,37 @@
                 </div>
               </div>
 
+              <!-- 客户端请求头透传白名单（#300） -->
+              <div>
+                <label
+                  class="text-sm font-medium text-gray-700 dark:text-gray-300"
+                >
+                  {{
+                    t(
+                      "admin.settings.gatewayForwarding.clientHeaderPassthroughAllowlist",
+                    )
+                  }}
+                </label>
+                <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                  {{
+                    t(
+                      "admin.settings.gatewayForwarding.clientHeaderPassthroughAllowlistHint",
+                    )
+                  }}
+                </p>
+                <textarea
+                  v-model="clientHeaderPassthroughAllowlistInput"
+                  rows="3"
+                  class="input mt-2 font-mono text-sm"
+                  :placeholder="
+                    t(
+                      'admin.settings.gatewayForwarding.clientHeaderPassthroughAllowlistPlaceholder',
+                    )
+                  "
+                  data-testid="client-header-passthrough-allowlist"
+                />
+              </div>
+
               <!-- Fingerprint Unification -->
               <div class="flex items-center justify-between">
                 <div>
@@ -9362,6 +9393,12 @@ import { affiliatesAPI, type AffiliateAdminEntry, type SimpleUser as AffiliateSi
 import { extractApiErrorMessage, extractI18nErrorMessage } from "@/utils/apiError";
 import { useAppStore } from "@/stores";
 import { useAdminSettingsStore } from "@/stores/adminSettings";
+import {
+  MAX_CLIENT_HEADER_PASSTHROUGH_ENTRIES,
+  normalizeClientHeaderPassthroughNames,
+  readClientHeaderNameList,
+  splitClientHeaderNames,
+} from "@/utils/clientHeaderPassthrough";
 import { normalizeVisibleMethod } from "@/components/payment/paymentFlow";
 import {
   isRegistrationEmailSuffixDomainValid,
@@ -9484,6 +9521,14 @@ const testEmailAddress = ref("");
 const registrationEmailSuffixWhitelistTags = ref<string[]>([]);
 const registrationEmailSuffixWhitelistDraft = ref("");
 const forwardedClientIpHeaderDraft = ref("");
+// 客户端请求头透传白名单在界面上按行编辑，接口仍是字符串数组（#300）。
+const clientHeaderPassthroughAllowlistInput = ref("");
+
+function applyClientHeaderPassthroughAllowlist(value: unknown) {
+  form.client_header_passthrough_allowlist = readClientHeaderNameList(value);
+  clientHeaderPassthroughAllowlistInput.value =
+    form.client_header_passthrough_allowlist.join("\n");
+}
 const tablePageSizeOptionsInput = ref("10, 20, 50, 100");
 
 // Admin API Key 状态
@@ -10348,6 +10393,7 @@ const form = reactive<SettingsForm>({
   openai_pre_output_max_staged_events: 16,
   openai_pre_output_stage_max_bytes: 1048576,
   openai_pre_output_max_stage_ms: 5000,
+  client_header_passthrough_allowlist: [],
   enable_fingerprint_unification: true,
   enable_metadata_passthrough: false,
   enable_cch_signing: false,
@@ -11467,6 +11513,9 @@ async function loadSettings() {
       settings.forwarded_client_ip_headers,
     );
     forwardedClientIpHeaderDraft.value = "";
+    applyClientHeaderPassthroughAllowlist(
+      settings.client_header_passthrough_allowlist,
+    );
     tablePageSizeOptionsInput.value = formatTablePageSizeOptions(
       Array.isArray(settings.table_page_size_options)
         ? settings.table_page_size_options
@@ -11692,6 +11741,26 @@ async function saveSettings() {
 
     form.table_default_page_size = normalizedTableDefaultPageSize;
     form.table_page_size_options = normalizedTablePageSizeOptions;
+
+    const clientHeaderPassthrough = normalizeClientHeaderPassthroughNames(
+      splitClientHeaderNames(clientHeaderPassthroughAllowlistInput.value),
+      { rejectProtected: true },
+    );
+    if (!clientHeaderPassthrough.ok) {
+      const messageKey = {
+        invalid: "clientHeaderPassthroughAllowlistInvalid",
+        protected: "clientHeaderPassthroughAllowlistProtected",
+        too_many: "clientHeaderPassthroughAllowlistTooMany",
+      }[clientHeaderPassthrough.reason];
+      appStore.showError(
+        t(`admin.settings.gatewayForwarding.${messageKey}`, {
+          name: clientHeaderPassthrough.name ?? "",
+          max: MAX_CLIENT_HEADER_PASSTHROUGH_ENTRIES,
+        }),
+      );
+      return;
+    }
+    form.client_header_passthrough_allowlist = clientHeaderPassthrough.names;
 
     const normalizedLoginAgreementDocuments =
       normalizeLoginAgreementDocumentsForSave();
@@ -12011,6 +12080,8 @@ async function saveSettings() {
         form.openai_pre_output_max_staged_events,
       openai_pre_output_stage_max_bytes: form.openai_pre_output_stage_max_bytes,
       openai_pre_output_max_stage_ms: form.openai_pre_output_max_stage_ms,
+      client_header_passthrough_allowlist:
+        form.client_header_passthrough_allowlist,
       enable_fingerprint_unification: form.enable_fingerprint_unification,
       enable_metadata_passthrough: form.enable_metadata_passthrough,
       enable_cch_signing: form.enable_cch_signing,
@@ -12220,6 +12291,9 @@ async function saveSettings() {
       updated.forwarded_client_ip_headers,
     );
     forwardedClientIpHeaderDraft.value = "";
+    applyClientHeaderPassthroughAllowlist(
+      updated.client_header_passthrough_allowlist,
+    );
     tablePageSizeOptionsInput.value = formatTablePageSizeOptions(
       Array.isArray(updated.table_page_size_options)
         ? updated.table_page_size_options

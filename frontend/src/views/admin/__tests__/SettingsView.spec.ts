@@ -487,6 +487,7 @@ const baseSettingsResponse = {
   openai_pre_output_max_staged_events: 16,
   openai_pre_output_stage_max_bytes: 1048576,
   openai_pre_output_max_stage_ms: 5000,
+  client_header_passthrough_allowlist: [],
   antigravity_user_agent_version: "",
   openai_codex_user_agent: "",
   payment_enabled: true,
@@ -1052,6 +1053,44 @@ describe("admin SettingsView payment visible method controls", () => {
         openai_pre_output_max_stage_ms: 3000,
       }),
     );
+  });
+
+  it("客户端请求头透传白名单按行回显，保存时规范化为小写数组", async () => {
+    getSettings.mockResolvedValueOnce({
+      ...baseSettingsResponse,
+      client_header_passthrough_allowlist: ["x-session-id"],
+    });
+    const wrapper = mountView();
+    await flushPromises();
+    await openGatewayTab(wrapper);
+
+    const textarea = wrapper.get('[data-testid="client-header-passthrough-allowlist"]');
+    expect((textarea.element as HTMLTextAreaElement).value).toBe("x-session-id");
+    await textarea.setValue(" X-Session-Id \nX-Custom\nx-custom\n");
+
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+
+    expect(updateSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        client_header_passthrough_allowlist: ["x-session-id", "x-custom"],
+      }),
+    );
+  });
+
+  it("客户端请求头透传白名单包含受保护头时拒绝保存", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+    await openGatewayTab(wrapper);
+
+    await wrapper
+      .get('[data-testid="client-header-passthrough-allowlist"]')
+      .setValue("X-Session-Id\nAuthorization");
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+
+    expect(updateSettings).not.toHaveBeenCalled();
+    expect(showError).toHaveBeenCalled();
   });
 
   it("腾讯天御切换到国际站后保存站点并更新控制台入口", async () => {

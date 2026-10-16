@@ -643,6 +643,7 @@ export interface SystemSettings {
   openai_pre_output_max_staged_events: number;
   openai_pre_output_stage_max_bytes: number;
   openai_pre_output_max_stage_ms: number;
+  client_header_passthrough_allowlist: string[];
   enable_fingerprint_unification: boolean;
   enable_metadata_passthrough: boolean;
   enable_cch_signing: boolean;
@@ -983,6 +984,7 @@ export interface UpdateSettingsRequest {
   openai_pre_output_max_staged_events?: number;
   openai_pre_output_stage_max_bytes?: number;
   openai_pre_output_max_stage_ms?: number;
+  client_header_passthrough_allowlist?: string[];
   enable_fingerprint_unification?: boolean;
   enable_metadata_passthrough?: boolean;
   enable_cch_signing?: boolean;

@@ -242,6 +242,9 @@ type UpdateSettingsRequest struct {
 	// Backend Mode
 	BackendModeEnabled bool `json:"backend_mode_enabled"`
 
+	// 客户端请求头透传白名单（#300）；nil 表示未提供，保留原值
+	ClientHeaderPassthroughAllowlist *[]string `json:"client_header_passthrough_allowlist"`
+
 	// Gateway forwarding behavior
 	OpenAITTFTMode                         *string `json:"openai_ttft_mode"`
 	OpenAIImmediateLifecycleEvents         *bool   `json:"openai_immediate_lifecycle_events"`
@@ -1759,6 +1762,12 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			}
 			return previousSettings.OpenAIPreOutputMaxStageMs
 		}(),
+		ClientHeaderPassthroughAllowlist: func() []string {
+			if req.ClientHeaderPassthroughAllowlist != nil {
+				return append([]string(nil), (*req.ClientHeaderPassthroughAllowlist)...)
+			}
+			return append([]string(nil), previousSettings.ClientHeaderPassthroughAllowlist...)
+		}(),
 		EnableMetadataPassthrough: func() bool {
 			if req.EnableMetadataPassthrough != nil {
 				return *req.EnableMetadataPassthrough
@@ -2445,6 +2454,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		OpenAIPreOutputMaxStagedEvents:                         updatedSettings.OpenAIPreOutputMaxStagedEvents,
 		OpenAIPreOutputStageMaxBytes:                           updatedSettings.OpenAIPreOutputStageMaxBytes,
 		OpenAIPreOutputMaxStageMs:                              updatedSettings.OpenAIPreOutputMaxStageMs,
+		ClientHeaderPassthroughAllowlist:                       updatedSettings.ClientHeaderPassthroughAllowlist,
 		AntigravityUserAgentVersion:                            updatedSettings.AntigravityUserAgentVersion,
 		OpenAICodexUserAgent:                                   updatedSettings.OpenAICodexUserAgent,
 		OpenAICodexClientVersion:                               updatedSettings.OpenAICodexClientVersion,

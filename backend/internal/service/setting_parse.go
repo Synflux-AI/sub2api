@@ -248,6 +248,7 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyOpenAIPreOutputMaxStagedEvents:                     strconv.Itoa(defaultOpenAIPreOutputMaxStagedEvents),
 		SettingKeyOpenAIPreOutputStageMaxBytes:                       strconv.Itoa(defaultOpenAIPreOutputStageMaxBytes),
 		SettingKeyOpenAIPreOutputMaxStageMs:                          strconv.Itoa(defaultOpenAIPreOutputMaxStageMs),
+		SettingKeyClientHeaderPassthroughAllowlist:                   "[]",
 		SettingKeyAntigravityUserAgentVersion:                        "",
 		SettingKeyOpenAICodexUserAgent:                               "",
 		SettingKeyOpenAICodexClientVersion:                           "",
@@ -873,6 +874,7 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	result.OpenAIPreOutputMaxStagedEvents = preOutputStaging.MaxStagedEvents
 	result.OpenAIPreOutputStageMaxBytes = preOutputStaging.StageMaxBytes
 	result.OpenAIPreOutputMaxStageMs = preOutputStaging.MaxStageMs
+	result.ClientHeaderPassthroughAllowlist = parseClientHeaderPassthroughAllowlistSetting(settings[SettingKeyClientHeaderPassthroughAllowlist])
 	if v, ok := settings[SettingKeyEnableFingerprintUnification]; ok && v != "" {
 		result.EnableFingerprintUnification = v == "true"
 	} else {

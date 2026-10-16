@@ -201,6 +201,9 @@ type SystemSettings struct {
 	// Backend Mode
 	BackendModeEnabled bool `json:"backend_mode_enabled"`
 
+	// ClientHeaderPassthroughAllowlist 客户端请求头透传白名单（小写，#300）
+	ClientHeaderPassthroughAllowlist []string `json:"client_header_passthrough_allowlist"`
+
 	// Gateway forwarding behavior
 	OpenAITTFTMode                         string `json:"openai_ttft_mode"`
 	OpenAIImmediateLifecycleEvents         bool   `json:"openai_immediate_lifecycle_events"`

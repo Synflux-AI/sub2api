@@ -57,6 +57,7 @@ type cachedGatewayForwardingSettings struct {
 	openAITTFTMode                   string
 	openAIImmediateLifecycleEvents   bool
 	openAIPreOutputStaging           OpenAIPreOutputStagingSettings
+	clientHeaderPassthroughAllowlist []string
 	fingerprintUnification           bool
 	metadataPassthrough              bool
 	cchSigning                       bool
@@ -875,6 +876,7 @@ type gatewayForwardingSettingsResult struct {
 	clientDatelineNormalization                                                           bool
 	openAIImmediateLifecycleEvents                                                        bool
 	openAIPreOutputStaging                                                                OpenAIPreOutputStagingSettings
+	clientHeaderPassthroughAllowlist                                                      []string
 	claudeOAuthSystemPrompt, claudeOAuthSystemPromptBlocks                                string
 }
 
@@ -894,6 +896,7 @@ func (s *SettingService) getGatewayForwardingSettingsCached(ctx context.Context)
 				clientDatelineNormalization:      cached.clientDatelineNormalization,
 				openAIImmediateLifecycleEvents:   cached.openAIImmediateLifecycleEvents,
 				openAIPreOutputStaging:           cached.openAIPreOutputStaging,
+				clientHeaderPassthroughAllowlist: cached.clientHeaderPassthroughAllowlist,
 			}
 		}
 	}
@@ -913,6 +916,7 @@ func (s *SettingService) getGatewayForwardingSettingsCached(ctx context.Context)
 					clientDatelineNormalization:      cached.clientDatelineNormalization,
 					openAIImmediateLifecycleEvents:   cached.openAIImmediateLifecycleEvents,
 					openAIPreOutputStaging:           cached.openAIPreOutputStaging,
+					clientHeaderPassthroughAllowlist: cached.clientHeaderPassthroughAllowlist,
 				}, nil
 			}
 		}
@@ -934,6 +938,7 @@ func (s *SettingService) getGatewayForwardingSettingsCached(ctx context.Context)
 			SettingKeyOpenAIPreOutputMaxStagedEvents,
 			SettingKeyOpenAIPreOutputStageMaxBytes,
 			SettingKeyOpenAIPreOutputMaxStageMs,
+			SettingKeyClientHeaderPassthroughAllowlist,
 		})
 		if err != nil {
 			slog.Warn("failed to get gateway forwarding settings", "error", err)
@@ -975,10 +980,12 @@ func (s *SettingService) getGatewayForwardingSettingsCached(ctx context.Context)
 		}
 		immediateLifecycleEvents := values[SettingKeyOpenAIImmediateLifecycleEvents] == "true"
 		preOutputStaging := parseOpenAIPreOutputStagingSettings(values)
+		clientHeaderPassthroughAllowlist := parseClientHeaderPassthroughAllowlistSetting(values[SettingKeyClientHeaderPassthroughAllowlist])
 		gatewayForwardingCache.Store(&cachedGatewayForwardingSettings{
 			openAITTFTMode:                   ttftMode,
 			openAIImmediateLifecycleEvents:   immediateLifecycleEvents,
 			openAIPreOutputStaging:           preOutputStaging,
+			clientHeaderPassthroughAllowlist: clientHeaderPassthroughAllowlist,
 			fingerprintUnification:           fp,
 			metadataPassthrough:              mp,
 			cchSigning:                       cch,
@@ -1003,6 +1010,7 @@ func (s *SettingService) getGatewayForwardingSettingsCached(ctx context.Context)
 			clientDatelineNormalization:      clientDatelineNormalization,
 			openAIImmediateLifecycleEvents:   immediateLifecycleEvents,
 			openAIPreOutputStaging:           preOutputStaging,
+			clientHeaderPassthroughAllowlist: clientHeaderPassthroughAllowlist,
 		}, nil
 	})
 	if r, ok := val.(gatewayForwardingSettingsResult); ok {
@@ -1024,6 +1032,15 @@ func (s *SettingService) IsOpenAIImmediateLifecycleEventsEnabled(ctx context.Con
 // GetOpenAIPreOutputStagingSettings 返回 pre-output 暂存设置（#295）。默认关闭。
 func (s *SettingService) GetOpenAIPreOutputStagingSettings(ctx context.Context) OpenAIPreOutputStagingSettings {
 	return s.getGatewayForwardingSettingsCached(ctx).openAIPreOutputStaging
+}
+
+// GetClientHeaderPassthroughAllowlist 返回客户端请求头透传白名单（小写，#300）。
+// 默认空；DB 读取失败时也返回空，即不透传任何客户端请求头。返回值只读，调用方不得修改。
+func (s *SettingService) GetClientHeaderPassthroughAllowlist(ctx context.Context) []string {
+	if s == nil || s.settingRepo == nil {
+		return nil
+	}
+	return s.getGatewayForwardingSettingsCached(ctx).clientHeaderPassthroughAllowlist
 }
 
 // GetGatewayForwardingSettings returns cached gateway forwarding settings.
