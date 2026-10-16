@@ -314,8 +314,9 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				}
 			}
 		}
-		if completedCommitEvent {
-			// 暂存未提交前保持 scanner guard，让暂存区始终有界。
+		if completedProgressEvent {
+			// 结构性进度出现后即解除 scanner guard（与暂存开关关闭时一致）；暂存区的
+			// 有界性由 StageMaxBytes 与「放不下就先提交再直写」保证，超大行不会被当成换号失败。
 			firstOutputScanGuard.Store(false)
 		}
 		if completedProgressEvent && !firstOutputProgressObserved {
@@ -331,9 +332,11 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		eventStartsTTFTOutput = false
 		eventShouldFlush = false
 	}
-	// commitStaged 在没有可写事件时（暂存超时）直接把暂存区提交给客户端。
-	commitStaged := func(reason string) {
-		if clientDisconnected || failureDelivered || openAIStreamClientOutputStarted(c, clientOutputStarted) || pendingBytes() == 0 {
+	// commitStaged 把暂存区直接提交给客户端：暂存超时（没有可写事件），或当前要提交的
+	// 行写入后会超出暂存字节上限（先提交，当前行再直接写给客户端）。force 时即使暂存区
+	// 为空也提交，确保后续写入绕过暂存区。
+	commitStaged := func(reason string, force bool) {
+		if clientDisconnected || failureDelivered || openAIStreamClientOutputStarted(c, clientOutputStarted) || (!force && pendingBytes() == 0) {
 			return
 		}
 		applyAttemptResponseHeaders()
@@ -789,7 +792,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				eventStartsClientOutput = eventStartsClientOutput || startsClientOutput
 				eventStartsProgress = eventStartsProgress || startsProgress
 				eventStartsTTFTOutput = eventStartsTTFTOutput || startsTTFTOutput
-				if startsClientOutput {
+				if startsClientOutput || startsProgress {
 					firstOutputScanGuard.Store(false)
 				}
 			}
@@ -821,6 +824,13 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 					shouldFlush = true
 				}
 				eventShouldFlush = eventShouldFlush || shouldFlush || forceStageFlush
+				// 要提交的行放不进暂存区时不再暂缓：先提交暂存区，当前行直接写给客户端。
+				if stagingActive && startsClientOutput && firstOutputStage != nil && !firstOutputStage.closed &&
+					pendingBytes()+int64(len(line))+1 > int64(preOutputStaging.StageMaxBytes) {
+					commitStaged(commitReason, true)
+				}
+			}
+			if !clientDisconnected && !failureDelivered && !suppressCurrentEvent {
 				if _, err := writePendingString(line); err != nil {
 					handlePendingWriteError(err)
 				} else if _, err := writePendingString("\n"); err != nil {
@@ -1093,7 +1103,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			// 事件写到一半时不拆分：下一个事件到达时按暂存时长上限一并提交。
 			if !eventInProgress && !stageCommitDecided {
 				stageCommitDecided = true
-				commitStaged(openAIPreOutputCommitMaxTime)
+				commitStaged(openAIPreOutputCommitMaxTime, false)
 			}
 
 		case <-keepaliveCh:

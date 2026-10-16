@@ -235,6 +235,49 @@ func TestOpenAIPreOutputStagingMaxStageMsCommits(t *testing.T) {
 	}
 }
 
+// 结构事件之后要提交的行放不进暂存区（含超过 8 MiB 暂存硬限）时不再暂缓：先提交暂存区，
+// 当前行直接写给客户端，不能被当成换号失败。分别覆盖同步扫描（max_stage_ms=0）与异步循环。
+func TestOpenAIPreOutputStagingOversizedLineCommitsInsteadOfFailover(t *testing.T) {
+	const size = openAIFirstOutputStageMaxBytes + 1<<20
+	imageAdded := `{"type":"response.output_item.added","sequence_number":2,"output_index":0,"item":{"id":"ig_1","type":"image_generation_call","status":"in_progress"}}`
+	imageDone := `{"type":"response.output_item.done","sequence_number":3,"output_index":0,"item":{"id":"ig_1","type":"image_generation_call","status":"completed","result":"` +
+		strings.Repeat("A", size) + `"}}`
+	hugeReasoning := `{"type":"response.output_item.added","sequence_number":3,"output_index":1,"item":{"id":"rs_huge","type":"reasoning","encrypted_content":"` +
+		strings.Repeat("x", size) + `","summary":[]}}`
+	completed := `{"type":"response.completed","sequence_number":4,"response":{"id":"resp_1","status":"completed","output":[],"usage":{"input_tokens":3,"output_tokens":1,"total_tokens":4}}}`
+	streams := map[string]struct {
+		stream string
+		marker string
+		failed bool
+	}{
+		"visible_image_result": {preOutputStageSSE(preOutputStageCreated, preOutputStageInProgress, imageAdded, imageDone, completed), "ig_1", false},
+		"invisible_reasoning":  {preOutputStageSSE(preOutputStageCreated, preOutputStageInProgress, preOutputStageReasoning, hugeReasoning, preOutputStageOverload, preOutputStageFailed), "rs_huge", true},
+	}
+	for name, tc := range streams {
+		for _, maxStageMs := range []int{0, defaultOpenAIPreOutputMaxStageMs} {
+			for _, path := range []string{"native", "passthrough"} {
+				t.Run(name+"/"+path+"/max_stage_ms="+strconv.Itoa(maxStageMs), func(t *testing.T) {
+					cfg := enabledPreOutputStaging()
+					cfg.MaxStageMs = maxStageMs
+					useOpenAIPreOutputStaging(t, cfg)
+					run := runPreOutputStageStream(t, path, config.GatewayConfig{}, io.NopCloser(strings.NewReader(tc.stream)))
+					if tc.failed {
+						requirePreOutputDelivered(t, run)
+					} else {
+						require.NoError(t, run.err)
+						require.Contains(t, run.body, "response.completed")
+					}
+					createdAt := strings.Index(run.body, "response.created")
+					markerAt := strings.Index(run.body, tc.marker)
+					require.GreaterOrEqual(t, createdAt, 0)
+					require.Greater(t, markerAt, createdAt)
+					require.Greater(t, len(run.body), size)
+				})
+			}
+		}
+	}
+}
+
 // 只有 encrypted 推理的长推理阶段仍算结构性进度，不触发首输出超时。
 func TestOpenAIPreOutputStagingKeepsStructuralProgressForFirstOutputTimeout(t *testing.T) {
 	cfg := enabledPreOutputStaging()
