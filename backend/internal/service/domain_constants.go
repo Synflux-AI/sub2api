@@ -711,6 +711,14 @@ const (
 	// SettingKeyOpenAIImmediateLifecycleEvents 收到 response.created / in_progress 立即下发，
 	// 不再暂存到首个语义输出；之后的流内失败不再静默换号（默认 false）。
 	SettingKeyOpenAIImmediateLifecycleEvents = "openai_immediate_lifecycle_events"
+	// SettingKeyOpenAIPreOutputStagingEnabled 首个可见输出前暂存不可见结构事件，使流内降载仍可换号（默认 false，#295）。
+	SettingKeyOpenAIPreOutputStagingEnabled = "openai_pre_output_staging_enabled"
+	// SettingKeyOpenAIPreOutputMaxStagedEvents 首个可见输出前最多暂存的上游 SSE 事件数（默认 16）。
+	SettingKeyOpenAIPreOutputMaxStagedEvents = "openai_pre_output_max_staged_events"
+	// SettingKeyOpenAIPreOutputStageMaxBytes 单个请求的暂存字节上限（默认 1 MiB）。
+	SettingKeyOpenAIPreOutputStageMaxBytes = "openai_pre_output_stage_max_bytes"
+	// SettingKeyOpenAIPreOutputMaxStageMs 最长暂存时间，毫秒，0 表示不限（默认 5000）。
+	SettingKeyOpenAIPreOutputMaxStageMs = "openai_pre_output_max_stage_ms"
 	// SettingKeyEnableFingerprintUnification 是否统一 OAuth 账号的 X-Stainless-* 指纹头（默认 true）
 	SettingKeyEnableFingerprintUnification = "enable_fingerprint_unification"
 	// SettingKeyEnableMetadataPassthrough 是否透传客户端原始 metadata.user_id（默认 false）

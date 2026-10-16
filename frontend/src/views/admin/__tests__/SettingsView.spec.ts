@@ -483,6 +483,10 @@ const baseSettingsResponse = {
   rewrite_message_cache_control: false,
   enable_client_dateline_normalization: true,
   openai_immediate_lifecycle_events: false,
+  openai_pre_output_staging_enabled: false,
+  openai_pre_output_max_staged_events: 16,
+  openai_pre_output_stage_max_bytes: 1048576,
+  openai_pre_output_max_stage_ms: 5000,
   antigravity_user_agent_version: "",
   openai_codex_user_agent: "",
   payment_enabled: true,
@@ -1022,6 +1026,30 @@ describe("admin SettingsView payment visible method controls", () => {
         tencent_captcha_cloud_secret_id: "cloud-secret-id-value",
         tencent_captcha_cloud_secret_key: "cloud-secret-key-value",
         tencent_captcha_region: "cn",
+      }),
+    );
+  });
+
+  it("开启 OpenAI pre-output 暂存后保存三个上限（KiB 换算为字节）", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+    await openGatewayTab(wrapper);
+
+    expect(wrapper.find('[data-testid="openai-pre-output-max-staged-events"]').exists()).toBe(false);
+    await wrapper.get('[data-testid="openai-pre-output-staging-enabled"]').setValue(true);
+    await wrapper.get('[data-testid="openai-pre-output-max-staged-events"]').setValue("8");
+    await wrapper.get('[data-testid="openai-pre-output-stage-max-kib"]').setValue("256");
+    await wrapper.get('[data-testid="openai-pre-output-max-stage-ms"]').setValue("3000");
+
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+
+    expect(updateSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        openai_pre_output_staging_enabled: true,
+        openai_pre_output_max_staged_events: 8,
+        openai_pre_output_stage_max_bytes: 256 * 1024,
+        openai_pre_output_max_stage_ms: 3000,
       }),
     );
   });

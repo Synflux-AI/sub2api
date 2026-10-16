@@ -245,6 +245,10 @@ type UpdateSettingsRequest struct {
 	// Gateway forwarding behavior
 	OpenAITTFTMode                         *string `json:"openai_ttft_mode"`
 	OpenAIImmediateLifecycleEvents         *bool   `json:"openai_immediate_lifecycle_events"`
+	OpenAIPreOutputStagingEnabled          *bool   `json:"openai_pre_output_staging_enabled"`
+	OpenAIPreOutputMaxStagedEvents         *int    `json:"openai_pre_output_max_staged_events"`
+	OpenAIPreOutputStageMaxBytes           *int    `json:"openai_pre_output_stage_max_bytes"`
+	OpenAIPreOutputMaxStageMs              *int    `json:"openai_pre_output_max_stage_ms"`
 	EnableFingerprintUnification           *bool   `json:"enable_fingerprint_unification"`
 	EnableMetadataPassthrough              *bool   `json:"enable_metadata_passthrough"`
 	EnableCCHSigning                       *bool   `json:"enable_cch_signing"`
@@ -1731,6 +1735,30 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			}
 			return previousSettings.OpenAIImmediateLifecycleEvents
 		}(),
+		OpenAIPreOutputStagingEnabled: func() bool {
+			if req.OpenAIPreOutputStagingEnabled != nil {
+				return *req.OpenAIPreOutputStagingEnabled
+			}
+			return previousSettings.OpenAIPreOutputStagingEnabled
+		}(),
+		OpenAIPreOutputMaxStagedEvents: func() int {
+			if req.OpenAIPreOutputMaxStagedEvents != nil {
+				return *req.OpenAIPreOutputMaxStagedEvents
+			}
+			return previousSettings.OpenAIPreOutputMaxStagedEvents
+		}(),
+		OpenAIPreOutputStageMaxBytes: func() int {
+			if req.OpenAIPreOutputStageMaxBytes != nil {
+				return *req.OpenAIPreOutputStageMaxBytes
+			}
+			return previousSettings.OpenAIPreOutputStageMaxBytes
+		}(),
+		OpenAIPreOutputMaxStageMs: func() int {
+			if req.OpenAIPreOutputMaxStageMs != nil {
+				return *req.OpenAIPreOutputMaxStageMs
+			}
+			return previousSettings.OpenAIPreOutputMaxStageMs
+		}(),
 		EnableMetadataPassthrough: func() bool {
 			if req.EnableMetadataPassthrough != nil {
 				return *req.EnableMetadataPassthrough
@@ -2157,6 +2185,10 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		},
 		ForceEmailOnThirdPartySignup: boolValueOrDefault(req.ForceEmailOnThirdPartySignup, previousAuthSourceDefaults.ForceEmailOnThirdPartySignup),
 	}
+	if err := service.ValidateOpenAIPreOutputStagingSystemSettings(settings); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
 	if err := h.settingService.UpdateSettingsWithAuthSourceDefaultsOmitting(c.Request.Context(), settings, authSourceDefaults, omitted); err != nil {
 		response.ErrorFrom(c, err)
 		return
@@ -2409,6 +2441,10 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		RewriteMessageCacheControl:                             updatedSettings.RewriteMessageCacheControl,
 		EnableClientDatelineNormalization:                      updatedSettings.EnableClientDatelineNormalization,
 		OpenAIImmediateLifecycleEvents:                         updatedSettings.OpenAIImmediateLifecycleEvents,
+		OpenAIPreOutputStagingEnabled:                          updatedSettings.OpenAIPreOutputStagingEnabled,
+		OpenAIPreOutputMaxStagedEvents:                         updatedSettings.OpenAIPreOutputMaxStagedEvents,
+		OpenAIPreOutputStageMaxBytes:                           updatedSettings.OpenAIPreOutputStageMaxBytes,
+		OpenAIPreOutputMaxStageMs:                              updatedSettings.OpenAIPreOutputMaxStageMs,
 		AntigravityUserAgentVersion:                            updatedSettings.AntigravityUserAgentVersion,
 		OpenAICodexUserAgent:                                   updatedSettings.OpenAICodexUserAgent,
 		OpenAICodexClientVersion:                               updatedSettings.OpenAICodexClientVersion,

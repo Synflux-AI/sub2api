@@ -121,6 +121,16 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	var firstTokenMs *int
 	ttftMode := s.openAITTFTMode(ctx)
 	immediateLifecycle := s.openAIImmediateLifecycleEvents(ctx)
+	// #295：开关打开时，首个可见输出前的不可见结构事件只算进度不算提交，
+	// 三个上限任一触发即提交，期间失败是否换号仍由原逻辑判定。
+	preOutputStaging := s.openAIPreOutputStaging(ctx, immediateLifecycle)
+	stagingActive := stageFirstOutput && preOutputStaging.Enabled
+	stageStartedAt := time.Now()
+	stagedEvents := 0
+	// stageCommitDecided：已有事件决定提交（可能因队列未排空尚未 flush），后续事件不再重新判定暂存。
+	stageCommitDecided := false
+	// commitTrigger 记录首次提交的原因与事件类型，供 failover 被抑制时的诊断日志使用。
+	commitTrigger := ""
 	firstOutputProgressObserved := false
 	bufferedWriter := bufio.NewWriterSize(w, 4*1024)
 	var firstOutputStage *openAIFirstOutputStage
@@ -265,6 +275,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	pendingSSEEventType := ""
 	eventInProgress := false
 	eventStartsClientOutput := false
+	eventStartsProgress := false
 	eventStartsTTFTOutput := false
 	eventShouldFlush := false
 	handlePendingWriteError := func(err error) {
@@ -284,12 +295,13 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		logger.LegacyPrintf("service.openai_gateway", "Client disconnected during streaming, continuing to drain upstream for billing")
 	}
 	completeGuardedEvent := func(queueDrained bool) {
-		completedProgressEvent := eventStartsClientOutput
+		completedCommitEvent := eventStartsClientOutput
+		completedProgressEvent := eventStartsProgress || completedCommitEvent
 		completedTTFTEvent := eventStartsTTFTOutput
 		shouldFlush := eventShouldFlush || (queueDrained && clientOutputStarted)
 		eventInProgress = false
 		if !clientDisconnected {
-			if completedProgressEvent {
+			if completedCommitEvent {
 				applyAttemptResponseHeaders()
 			}
 			if shouldFlush {
@@ -302,8 +314,12 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				}
 			}
 		}
-		if completedProgressEvent && !firstOutputProgressObserved {
+		if completedProgressEvent {
+			// 结构性进度出现后即解除 scanner guard（与暂存开关关闭时一致）；暂存区的
+			// 有界性由 StageMaxBytes 与「放不下就先提交再直写」保证，超大行不会被当成换号失败。
 			firstOutputScanGuard.Store(false)
+		}
+		if completedProgressEvent && !firstOutputProgressObserved {
 			firstOutputProgressObserved = true
 			stopFirstOutputTimer()
 		}
@@ -312,8 +328,30 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			firstTokenMs = &ms
 		}
 		eventStartsClientOutput = false
+		eventStartsProgress = false
 		eventStartsTTFTOutput = false
 		eventShouldFlush = false
+	}
+	// commitStaged 把暂存区直接提交给客户端：暂存超时（没有可写事件），或当前要提交的
+	// 行写入后会超出暂存字节上限（先提交，当前行再直接写给客户端）。force 时即使暂存区
+	// 为空也提交，确保后续写入绕过暂存区。
+	commitStaged := func(reason string, force bool) {
+		if clientDisconnected || failureDelivered || openAIStreamClientOutputStarted(c, clientOutputStarted) || (!force && pendingBytes() == 0) {
+			return
+		}
+		applyAttemptResponseHeaders()
+		if err := flushBuffered(); err != nil {
+			clientDisconnected = true
+			logger.LegacyPrintf("service.openai_gateway", "Client disconnected during staged output commit, continuing to drain upstream for billing")
+			return
+		}
+		clientOutputStarted = true
+		responsesSemanticOutputSeen = true
+		lastDownstreamWriteAt = time.Now()
+		firstOutputScanGuard.Store(false)
+		if commitTrigger == "" {
+			commitTrigger = reason
+		}
 	}
 	sendErrorEvent := func(code, message string) {
 		if errorEventSent || clientDisconnected || failureDelivered {
@@ -544,7 +582,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				(eventType == "error" || eventType == "response.failed") &&
 				openAIStreamClientOutputStarted(c, clientOutputStarted) &&
 				isOpenAIUpstreamCapacityShedEvent(dataBytes) {
-				logOpenAICapacityFailoverSuppressed(ctx, account, "native_sse", upstreamRequestID, eventType)
+				logOpenAICapacityFailoverSuppressed(ctx, account, "native_sse", upstreamRequestID, eventType, commitTrigger)
 				capacityFailoverSuppressedLogged = true
 			}
 			cyberHit := false
@@ -718,13 +756,43 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			if needModelReplace {
 				line = s.replaceModelInSSELine(line, mappedModel, originalModel)
 			}
-			startsClientOutput := forceFlushFailedEvent || openAIStreamStartsClientOutput(data, eventType, immediateLifecycle)
+			// startsProgress 是结构性进度（解除首输出超时）；startsClientOutput 决定是否提交暂存区。
+			// 暂存开关关闭时两者相同。
+			startsProgress := forceFlushFailedEvent || openAIStreamStartsClientOutput(data, eventType, immediateLifecycle)
+			startsClientOutput := startsProgress
+			commitReason := ""
+			if startsClientOutput {
+				commitReason = openAIPreOutputCommitVisible
+			}
+			forceStageFlush := false
+			if stagingActive && !stageCommitDecided && !forceFlushFailedEvent && !openAIStreamClientOutputStarted(c, clientOutputStarted) {
+				startsClientOutput = openAIStreamCommitsClientOutput(data, eventType, immediateLifecycle)
+				if startsClientOutput {
+					commitReason = openAIPreOutputCommitVisible
+				} else {
+					stagedEvents++
+					commitReason = openAIPreOutputStagingLimitReason(preOutputStaging, stagedEvents, pendingBytes()+int64(len(line))+1, time.Since(stageStartedAt))
+					startsClientOutput = commitReason != ""
+					// 上限触发的提交不等队列排空：后续不可见事件不会再触发 flush。
+					forceStageFlush = startsClientOutput
+				}
+				stageCommitDecided = startsClientOutput
+			} else if stagingActive && stageCommitDecided {
+				startsClientOutput = true
+				if commitReason == "" {
+					commitReason = openAIPreOutputCommitMaxTime
+				}
+			}
+			if startsClientOutput && commitTrigger == "" && !openAIStreamClientOutputStarted(c, clientOutputStarted) {
+				commitTrigger = commitReason + ":" + describeOpenAIStreamCommitEvent(data, eventType)
+			}
 			startsVisibleOutput := openAIStreamDataStartsVisibleOutput(data, eventType)
 			startsTTFTOutput := openAIStreamDataStartsTTFT(data, eventType, forceFlushFailedEvent, ttftMode)
 			if stageFirstOutput {
 				eventStartsClientOutput = eventStartsClientOutput || startsClientOutput
+				eventStartsProgress = eventStartsProgress || startsProgress
 				eventStartsTTFTOutput = eventStartsTTFTOutput || startsTTFTOutput
-				if startsClientOutput {
+				if startsClientOutput || startsProgress {
 					firstOutputScanGuard.Store(false)
 				}
 			}
@@ -755,7 +823,14 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 					// 保证首个 token 事件尽快出站，避免影响 TTFT。
 					shouldFlush = true
 				}
-				eventShouldFlush = eventShouldFlush || shouldFlush
+				eventShouldFlush = eventShouldFlush || shouldFlush || forceStageFlush
+				// 要提交的行放不进暂存区时不再暂缓：先提交暂存区，当前行直接写给客户端。
+				if stagingActive && startsClientOutput && firstOutputStage != nil && !firstOutputStage.closed &&
+					pendingBytes()+int64(len(line))+1 > int64(preOutputStaging.StageMaxBytes) {
+					commitStaged(commitReason, true)
+				}
+			}
+			if !clientDisconnected && !failureDelivered && !suppressCurrentEvent {
 				if _, err := writePendingString(line); err != nil {
 					handlePendingWriteError(err)
 				} else if _, err := writePendingString("\n"); err != nil {
@@ -852,7 +927,14 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	}
 
 	// 无超时/无 keepalive 的常见路径走同步扫描，减少 goroutine 与 channel 开销。
-	if streamInterval <= 0 && keepaliveInterval <= 0 && firstOutputTimeout <= 0 {
+	// 暂存时长上限需要定时器在上游静默时提交暂存区，同样走异步循环。
+	var stageDeadlineCh <-chan time.Time
+	if stagingActive && preOutputStaging.MaxStageMs > 0 {
+		stageDeadlineTimer := time.NewTimer(time.Until(stageStartedAt.Add(preOutputStaging.stageDuration())))
+		defer stageDeadlineTimer.Stop()
+		stageDeadlineCh = stageDeadlineTimer.C
+	}
+	if streamInterval <= 0 && keepaliveInterval <= 0 && firstOutputTimeout <= 0 && stageDeadlineCh == nil {
 		defer putSSEScannerBuf64K(scanBuf)
 		for documentScanner.Scan() {
 			processSSELine(documentScanner.Text(), true)
@@ -1015,6 +1097,14 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				startTime, originalModel, reasoningEffort,
 				firstOutputTimeout, "semantic_output", resp.Header,
 			)
+
+		case <-stageDeadlineCh:
+			stageDeadlineCh = nil
+			// 事件写到一半时不拆分：下一个事件到达时按暂存时长上限一并提交。
+			if !eventInProgress && !stageCommitDecided {
+				stageCommitDecided = true
+				commitStaged(openAIPreOutputCommitMaxTime, false)
+			}
 
 		case <-keepaliveCh:
 			if clientDisconnected || failureDelivered {

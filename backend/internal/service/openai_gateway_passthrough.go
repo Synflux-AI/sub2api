@@ -1352,11 +1352,16 @@ func logOpenAICapacityFailoverSuppressed(
 	path string,
 	upstreamRequestID string,
 	eventType string,
+	committedBy string,
 ) {
 	fields := []zap.Field{
 		zap.String("path", path),
 		zap.String("event_type", strings.TrimSpace(eventType)),
 		zap.String("upstream_request_id", strings.TrimSpace(upstreamRequestID)),
+	}
+	// committed_by：最先让暂存区提交给客户端的原因与事件类型（#295 诊断），不含内容字段。
+	if committedBy = strings.TrimSpace(committedBy); committedBy != "" {
+		fields = append(fields, zap.String("committed_by", committedBy))
 	}
 	if account != nil {
 		fields = append(fields,
@@ -1935,6 +1940,14 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 	upstreamRequestID := strings.TrimSpace(resp.Header.Get("x-request-id"))
 	// pendingLines 在首个可见输出前保留前导事件，确保无输出失败仍可安全 failover。
 	pendingLines := make([]string, 0, 8)
+	// #295：开关打开时不可见结构事件也留在 pendingLines，三个上限任一触发即提交。
+	// 透传路径是同步读循环，暂存时长只在下一个上游事件到达时检查。
+	preOutputStaging := s.openAIPreOutputStaging(ctx, immediateLifecycle)
+	stagingActive := account != nil && account.Platform == PlatformOpenAI && preOutputStaging.Enabled
+	stageStartedAt := time.Now()
+	stagedEvents := 0
+	var pendingLineBytes int64
+	commitTrigger := ""
 
 	// ── 首个可见输出之前的下游 keepalive ──────────────────────────────────
 	//
@@ -1993,6 +2006,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 			}
 		}
 		pendingLines = pendingLines[:0]
+		pendingLineBytes = 0
 		return true
 	}
 	ensureResponseFailedTerminal := func() {
@@ -2089,7 +2103,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 				(eventType == "error" || eventType == "response.failed") &&
 				openAIStreamClientOutputStarted(c, clientOutputStarted) &&
 				isOpenAIUpstreamCapacityShedEvent(dataBytes) {
-				logOpenAICapacityFailoverSuppressed(ctx, account, "passthrough_sse", upstreamRequestID, eventType)
+				logOpenAICapacityFailoverSuppressed(ctx, account, "passthrough_sse", upstreamRequestID, eventType, commitTrigger)
 				capacityFailoverSuppressedLogged = true
 			}
 			cyberHit := false
@@ -2211,6 +2225,23 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 				line = "data: " + string(sanitizedData)
 			}
 			lineStartsClientOutput = forceFlushFailedEvent || openAIStreamStartsClientOutput(trimmedData, eventType, immediateLifecycle)
+			commitReason := ""
+			if lineStartsClientOutput {
+				commitReason = openAIPreOutputCommitVisible
+			}
+			if stagingActive && !forceFlushFailedEvent && !clientOutputStarted {
+				lineStartsClientOutput = openAIStreamCommitsClientOutput(trimmedData, eventType, immediateLifecycle)
+				if lineStartsClientOutput {
+					commitReason = openAIPreOutputCommitVisible
+				} else {
+					stagedEvents++
+					commitReason = openAIPreOutputStagingLimitReason(preOutputStaging, stagedEvents, pendingLineBytes+int64(len(line))+1, time.Since(stageStartedAt))
+					lineStartsClientOutput = commitReason != ""
+				}
+			}
+			if lineStartsClientOutput && commitTrigger == "" && !clientOutputStarted {
+				commitTrigger = commitReason + ":" + describeOpenAIStreamCommitEvent(trimmedData, eventType)
+			}
 			if lineStartsClientOutput && trimmedData != "[DONE]" && !openAIStreamEventTypeIsTerminal(eventType) {
 				semanticOutputSeen = true
 			}
@@ -2241,6 +2272,7 @@ func (s *OpenAIGatewayService) handleStreamingResponsePassthrough(
 		if !clientDisconnected && !failureDelivered && !suppressCurrentEvent {
 			if !clientOutputStarted && !lineStartsClientOutput {
 				pendingLines = append(pendingLines, line)
+				pendingLineBytes += int64(len(line)) + 1
 				continue
 			}
 			// 真实输出开始，心跳的使命结束。停拍是幂等的，且会与心跳 goroutine

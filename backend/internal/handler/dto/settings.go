@@ -204,6 +204,10 @@ type SystemSettings struct {
 	// Gateway forwarding behavior
 	OpenAITTFTMode                         string `json:"openai_ttft_mode"`
 	OpenAIImmediateLifecycleEvents         bool   `json:"openai_immediate_lifecycle_events"`
+	OpenAIPreOutputStagingEnabled          bool   `json:"openai_pre_output_staging_enabled"`
+	OpenAIPreOutputMaxStagedEvents         int    `json:"openai_pre_output_max_staged_events"`
+	OpenAIPreOutputStageMaxBytes           int    `json:"openai_pre_output_stage_max_bytes"`
+	OpenAIPreOutputMaxStageMs              int    `json:"openai_pre_output_max_stage_ms"`
 	EnableFingerprintUnification           bool   `json:"enable_fingerprint_unification"`
 	EnableMetadataPassthrough              bool   `json:"enable_metadata_passthrough"`
 	EnableCCHSigning                       bool   `json:"enable_cch_signing"`

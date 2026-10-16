@@ -458,6 +458,18 @@ func diffSettings(before *service.SystemSettings, after *service.SystemSettings,
 	if before.OpenAIImmediateLifecycleEvents != after.OpenAIImmediateLifecycleEvents {
 		changed = append(changed, "openai_immediate_lifecycle_events")
 	}
+	if before.OpenAIPreOutputStagingEnabled != after.OpenAIPreOutputStagingEnabled {
+		changed = append(changed, "openai_pre_output_staging_enabled")
+	}
+	if before.OpenAIPreOutputMaxStagedEvents != after.OpenAIPreOutputMaxStagedEvents {
+		changed = append(changed, "openai_pre_output_max_staged_events")
+	}
+	if before.OpenAIPreOutputStageMaxBytes != after.OpenAIPreOutputStageMaxBytes {
+		changed = append(changed, "openai_pre_output_stage_max_bytes")
+	}
+	if before.OpenAIPreOutputMaxStageMs != after.OpenAIPreOutputMaxStageMs {
+		changed = append(changed, "openai_pre_output_max_stage_ms")
+	}
 	if before.EnableMetadataPassthrough != after.EnableMetadataPassthrough {
 		changed = append(changed, "enable_metadata_passthrough")
 	}

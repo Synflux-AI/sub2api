@@ -244,6 +244,10 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyRewriteMessageCacheControl:                         strconv.FormatBool(s.defaultRewriteMessageCacheControl()),
 		SettingKeyEnableClientDatelineNormalization:                  "true",
 		SettingKeyOpenAIImmediateLifecycleEvents:                     "false",
+		SettingKeyOpenAIPreOutputStagingEnabled:                      "false",
+		SettingKeyOpenAIPreOutputMaxStagedEvents:                     strconv.Itoa(defaultOpenAIPreOutputMaxStagedEvents),
+		SettingKeyOpenAIPreOutputStageMaxBytes:                       strconv.Itoa(defaultOpenAIPreOutputStageMaxBytes),
+		SettingKeyOpenAIPreOutputMaxStageMs:                          strconv.Itoa(defaultOpenAIPreOutputMaxStageMs),
 		SettingKeyAntigravityUserAgentVersion:                        "",
 		SettingKeyOpenAICodexUserAgent:                               "",
 		SettingKeyOpenAICodexClientVersion:                           "",
@@ -864,6 +868,11 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	// cch_signing=false, claude_oauth_system_prompt_injection=true)
 	result.OpenAITTFTMode = normalizeOpenAITTFTMode(settings[SettingKeyOpenAITTFTMode])
 	result.OpenAIImmediateLifecycleEvents = settings[SettingKeyOpenAIImmediateLifecycleEvents] == "true"
+	preOutputStaging := parseOpenAIPreOutputStagingSettings(settings)
+	result.OpenAIPreOutputStagingEnabled = preOutputStaging.Enabled
+	result.OpenAIPreOutputMaxStagedEvents = preOutputStaging.MaxStagedEvents
+	result.OpenAIPreOutputStageMaxBytes = preOutputStaging.StageMaxBytes
+	result.OpenAIPreOutputMaxStageMs = preOutputStaging.MaxStageMs
 	if v, ok := settings[SettingKeyEnableFingerprintUnification]; ok && v != "" {
 		result.EnableFingerprintUnification = v == "true"
 	} else {
