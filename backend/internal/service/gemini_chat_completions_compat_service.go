@@ -80,6 +80,7 @@ func (s *GeminiMessagesCompatService) forwardClaudeBodyAsChatCompletions(
 	includeUsage bool,
 	startTime time.Time,
 ) (*ForwardResult, error) {
+	beginUpstreamResponseModelObservation(c)
 	var req struct {
 		Model  string `json:"model"`
 		Stream bool   `json:"stream"`
@@ -296,7 +297,7 @@ func (s *GeminiMessagesCompatService) forwardClaudeBodyAsChatCompletions(
 		usage = streamRes.usage
 		firstTokenMs = streamRes.firstTokenMs
 	} else if useUpstreamStream {
-		collected, usageObj, err := collectGeminiSSE(resp.Body, account.Type == AccountTypeOAuth)
+		collected, usageObj, _, err := collectGeminiSSEObserved(resp.Body, account.Type == AccountTypeOAuth, upstreamResponseModelObserverFromContext(c).ObserveGemini)
 		if err != nil {
 			return nil, s.writeChatCompletionsError(c, http.StatusBadGateway, "upstream_error", "Failed to read upstream stream")
 		}
@@ -495,6 +496,7 @@ func (s *GeminiMessagesCompatService) handleChatCompletionsNonStreamingResponseF
 			respBody = unwrappedBody
 		}
 	}
+	upstreamResponseModelObserverFromContext(c).ObserveGemini(respBody)
 
 	var geminiResp map[string]any
 	if err := json.Unmarshal(respBody, &geminiResp); err != nil {
@@ -669,6 +671,7 @@ func (s *GeminiMessagesCompatService) handleChatCompletionsStreamingResponseFrom
 							rawBytes = innerBytes
 						}
 					}
+					upstreamResponseModelObserverFromContext(c).ObserveGemini(rawBytes)
 					if statusCode, errorBody, isError := geminiStreamErrorPayload(rawBytes); isError {
 						message := extractUpstreamErrorMessage(errorBody)
 						if ruleErr := s.geminiStreamErrorHandlingRuleOverride(

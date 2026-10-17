@@ -288,3 +288,121 @@ func TestResponseOutcome_RawChatDoneWithoutFinishReasonIsUnknown(t *testing.T) {
 	require.True(t, outcome.MissingFinishReason)
 	require.Equal(t, responseoutcome.ReasonUnknown, outcome.FinishReason(), "missing finish_reason is unknown, not interrupted")
 }
+
+func geminiOutcomeOAuthAccount() *Account {
+	return &Account{
+		ID:          704,
+		Platform:    PlatformGemini,
+		Type:        AccountTypeOAuth,
+		Credentials: map[string]any{"access_token": "ya29.test-token", "project_id": "project-1"},
+		Concurrency: 1,
+	}
+}
+
+func newGeminiOutcomeService(contentType, body string) *GeminiMessagesCompatService {
+	svc := newGeminiSignalService(contentType, body)
+	svc.tokenProvider = &GeminiTokenProvider{}
+	return svc
+}
+
+// geminiOutcomeTrailingFinishSSE 的 finishReason 在不带 parts 的末尾 chunk 上，聚合结果会丢掉它。
+const geminiOutcomeTrailingFinishSSE = `data: {"response":{"candidates":[{"content":{"parts":[{"text":"partial"}],"role":"model"}}],"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":1}}}
+
+data: {"response":{"candidates":[{"content":{},"finishReason":"MAX_TOKENS"}],"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":8}}}
+
+`
+
+func TestResponseOutcome_GeminiNativeStreamContentFilter(t *testing.T) {
+	svc := newGeminiOutcomeService("text/event-stream", geminiSignalTestProhibitedSSE)
+	c, _ := newGeminiNativeTestContext(t)
+
+	_, err := svc.ForwardNative(context.Background(), c, geminiSignalTestAccount(),
+		"gemini-3.7-flash", "streamGenerateContent", true, geminiSignalTestRequest())
+	require.NoError(t, err)
+
+	outcome := ResponseOutcomeFromContext(c)
+	require.NotNil(t, outcome)
+	require.Equal(t, responseoutcome.ProtocolGeminiGenerateContent, outcome.Protocol)
+	require.Equal(t, "PROHIBITED_CONTENT", outcome.StopReason)
+	require.Equal(t, responseoutcome.ReasonContentFilter, outcome.FinishReason())
+}
+
+func TestResponseOutcome_GeminiNativeNonStreamToolCall(t *testing.T) {
+	body := `{"candidates":[{"content":{"parts":[{"functionCall":{"name":"lookup","args":{}}}],"role":"model"},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":4,"candidatesTokenCount":2}}`
+	svc := newGeminiOutcomeService("application/json", body)
+	c, _ := newGeminiNativeTestContext(t)
+
+	_, err := svc.ForwardNative(context.Background(), c, geminiSignalTestAccount(),
+		"gemini-3.7-flash", "generateContent", false, geminiSignalTestRequest())
+	require.NoError(t, err)
+	require.Equal(t, responseoutcome.ReasonToolUse, ResponseOutcomeFromContext(c).FinishReason())
+}
+
+func TestResponseOutcome_GeminiNativeCountTokensStaysNil(t *testing.T) {
+	svc := newGeminiOutcomeService("application/json", `{"totalTokens":12}`)
+	c, _ := newGeminiNativeTestContext(t)
+
+	_, err := svc.ForwardNative(context.Background(), c, geminiSignalTestAccount(),
+		"gemini-3.7-flash", "countTokens", false, geminiSignalTestRequest())
+	require.NoError(t, err)
+	require.Nil(t, ResponseOutcomeFromContext(c))
+}
+
+// 客户端非流式、上游流式（Code Assist）时，三条 Gemini 入口都必须逐 chunk 观测，不能只看聚合结果。
+func TestResponseOutcome_GeminiAggregatedUpstreamStreamKeepsTrailingFinishReason(t *testing.T) {
+	cases := []struct {
+		name    string
+		forward func(svc *GeminiMessagesCompatService, c *gin.Context) error
+	}{
+		{"native", func(svc *GeminiMessagesCompatService, c *gin.Context) error {
+			_, err := svc.ForwardNative(context.Background(), c, geminiOutcomeOAuthAccount(),
+				"gemini-3.7-flash", "generateContent", false, geminiSignalTestRequest())
+			return err
+		}},
+		{"messages", func(svc *GeminiMessagesCompatService, c *gin.Context) error {
+			_, err := svc.Forward(context.Background(), c, geminiOutcomeOAuthAccount(),
+				[]byte(`{"model":"gemini-3.7-flash","max_tokens":16,"messages":[{"role":"user","content":"hi"}]}`))
+			return err
+		}},
+		{"chat_completions", func(svc *GeminiMessagesCompatService, c *gin.Context) error {
+			_, err := svc.ForwardAsChatCompletions(context.Background(), c, geminiOutcomeOAuthAccount(),
+				[]byte(`{"model":"gemini-3.7-flash","messages":[{"role":"user","content":"hi"}]}`))
+			return err
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := newGeminiOutcomeService("text/event-stream", geminiOutcomeTrailingFinishSSE)
+			c, _ := newGeminiNativeTestContext(t)
+			require.NoError(t, tc.forward(svc, c))
+
+			outcome := ResponseOutcomeFromContext(c)
+			require.NotNil(t, outcome)
+			require.Equal(t, "MAX_TOKENS", outcome.StopReason)
+			require.True(t, outcome.HasOutput)
+			require.Equal(t, responseoutcome.ReasonTruncated, outcome.FinishReason())
+		})
+	}
+}
+
+func TestResponseOutcome_GeminiChatCompletionsCompat(t *testing.T) {
+	t.Run("stream", func(t *testing.T) {
+		sse := `data: {"candidates":[{"content":{"parts":[{"text":"hel"}]}}]}` + "\n\n" +
+			`data: {"candidates":[{"content":{"parts":[{"text":"lo"}]},"finishReason":"SAFETY"}],"usageMetadata":{"promptTokenCount":2,"candidatesTokenCount":2}}` + "\n\n"
+		svc := newGeminiOutcomeService("text/event-stream", sse)
+		c, _ := newGeminiNativeTestContext(t)
+		_, err := svc.ForwardAsChatCompletions(context.Background(), c, geminiSignalTestAccount(),
+			[]byte(`{"model":"gemini-3.7-flash","stream":true,"messages":[{"role":"user","content":"hi"}]}`))
+		require.NoError(t, err)
+		require.Equal(t, responseoutcome.ReasonContentFilter, ResponseOutcomeFromContext(c).FinishReason())
+	})
+	t.Run("non_stream", func(t *testing.T) {
+		body := `{"candidates":[{"content":{"parts":[{"text":"hello"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":2,"candidatesTokenCount":1}}`
+		svc := newGeminiOutcomeService("application/json", body)
+		c, _ := newGeminiNativeTestContext(t)
+		_, err := svc.ForwardAsChatCompletions(context.Background(), c, geminiSignalTestAccount(),
+			[]byte(`{"model":"gemini-3.7-flash","messages":[{"role":"user","content":"hi"}]}`))
+		require.NoError(t, err)
+		require.Equal(t, responseoutcome.ReasonStop, ResponseOutcomeFromContext(c).FinishReason())
+	})
+}

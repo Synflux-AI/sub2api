@@ -1,7 +1,7 @@
 // Package responseoutcome 从上游原始响应里提取"这次响应是怎么结束的"。
 //
 // 观测只读上游协议语义（Anthropic Messages / OpenAI Chat Completions /
-// OpenAI Responses），必须在兼容转换之前喂入，避免转换层把 refusal /
+// OpenAI Responses / Gemini GenerateContent），必须在兼容转换之前喂入，避免转换层把 refusal /
 // incomplete 映射成 stop 后丢失证据。观测结果只用于用量明细展示与筛选，
 // 不参与计费、换号、SLA 或账号健康度判断。
 package responseoutcome
@@ -21,6 +21,7 @@ const (
 	ProtocolAnthropicMessages     = "anthropic_messages"
 	ProtocolOpenAIChatCompletions = "openai_chat_completions"
 	ProtocolOpenAIResponses       = "openai_responses"
+	ProtocolGeminiGenerateContent = "gemini_generate_content"
 )
 
 // 标准化结束原因，用于列表展示与筛选。原始值另存于 Outcome，不以此为唯一事实。
@@ -119,12 +120,15 @@ type Outcome struct {
 	Protocol string `json:"protocol"`
 	// Status 是 Responses 顶层 status（completed / incomplete / failed / cancelled）。
 	Status string `json:"status,omitempty"`
-	// StopReason 是请求级原始结束原因：Anthropic stop_reason 或 Chat 汇总选中的 finish_reason。
+	// StopReason 是请求级原始结束原因：Anthropic stop_reason、Chat 汇总选中的 finish_reason
+	// 或 Gemini 首候选的 finishReason。
 	StopReason string `json:"stop_reason,omitempty"`
 	// ChoiceFinishReasons 仅在 Chat 有多个 choice 时记录，按 index 排列，未结束的 choice 为空串。
 	ChoiceFinishReasons []string `json:"choice_finish_reasons,omitempty"`
 	// IncompleteReason 是 Responses incomplete_details.reason。
 	IncompleteReason string `json:"incomplete_reason,omitempty"`
+	// BlockReason 是 Gemini promptFeedback.blockReason：提示词整体被拦，没有候选。
+	BlockReason string `json:"block_reason,omitempty"`
 	// StopDetailsType / StopDetailsCategory 来自 Anthropic refusal 的 stop_details。
 	StopDetailsType     string `json:"stop_details_type,omitempty"`
 	StopDetailsCategory string `json:"stop_details_category,omitempty"`
@@ -139,7 +143,8 @@ type Outcome struct {
 	// HasOutput 表示观察到可消费输出：非空文本、工具调用、拒答说明或图像/音频等非推理内容。
 	HasOutput bool `json:"has_output"`
 	// Terminal 表示观察到完整终态（Anthropic message_stop、Chat 所有已出现的
-	// choice 都给出 finish_reason 或收到 [DONE]、Responses 终态事件，或非流式完整响应体）。
+	// choice 都给出 finish_reason 或收到 [DONE]、Responses 终态事件、Gemini 首候选给出
+	// finishReason 或提示词被拦，或非流式完整响应体）。
 	Terminal bool `json:"terminal"`
 	// MissingFinishReason 表示 Chat 响应已结束，但有 choice 没有给出 finish_reason
 	//（部分兼容上游只发 [DONE]，或非流式 finish_reason 为 null），汇总为 unknown。
@@ -216,6 +221,13 @@ func (o *Outcome) rawReasons() []string {
 		if o.Status != "" {
 			out = append(out, normalizeResponsesStatus(o.Status, o.IncompleteReason, o.ToolCall))
 		}
+	case ProtocolGeminiGenerateContent:
+		if o.BlockReason != "" {
+			out = append(out, ReasonContentFilter)
+		}
+		if o.StopReason != "" {
+			out = append(out, normalizeGeminiFinishReason(o.StopReason, o.ToolCall))
+		}
 	}
 	return out
 }
@@ -247,6 +259,33 @@ func normalizeChatFinishReason(reason string) string {
 		return ReasonToolUse
 	case "content_filter":
 		return ReasonContentFilter
+	default:
+		return ReasonUnknown
+	}
+}
+
+// normalizeGeminiFinishReason 的取值以官方 FinishReason 枚举为准
+// （https://ai.google.dev/api/generate-content#FinishReason）。内容过滤集合在
+// service.isGeminiContentFilterFinishReason 之外加了 ESCALATION（被升级规则过滤）；
+// 工具调用出错、缺思考签名、响应格式错误、该出图没出图等模型侧生成失败归为 incomplete；
+// PUP_LIMITED_DISABLED 是上游账号因违反使用政策被限制，与本次内容无关，归为 failed。
+func normalizeGeminiFinishReason(reason string, toolCall bool) string {
+	switch strings.ToUpper(reason) {
+	case "STOP":
+		if toolCall {
+			return ReasonToolUse
+		}
+		return ReasonStop
+	case "MAX_TOKENS", "CONTINUATION":
+		return ReasonTruncated
+	case "SAFETY", "RECITATION", "LANGUAGE", "BLOCKLIST", "PROHIBITED_CONTENT", "SPII",
+		"IMAGE_SAFETY", "IMAGE_PROHIBITED_CONTENT", "IMAGE_RECITATION", "ESCALATION":
+		return ReasonContentFilter
+	case "MALFORMED_FUNCTION_CALL", "UNEXPECTED_TOOL_CALL", "TOO_MANY_TOOL_CALLS",
+		"MISSING_THOUGHT_SIGNATURE", "MALFORMED_RESPONSE", "NO_IMAGE", "IMAGE_OTHER":
+		return ReasonIncomplete
+	case "PUP_LIMITED_DISABLED":
+		return ReasonFailed
 	default:
 		return ReasonUnknown
 	}
@@ -745,6 +784,83 @@ func (o *Observer) observeResponsesItem(item gjson.Result) {
 		o.outcome.ToolCall = true
 	}
 	o.outcome.HasOutput = true
+}
+
+// ObserveGeminiPayload 喂入一个 Gemini GenerateContentResponse：流式 chunk 与非流式完整
+// 响应体形状相同，Code Assist / v1internal 的 {"response":{...}} 包装先解包。Gemini 流没有
+// 独立的终态事件，首候选给出 finishReason 或提示词整体被拦即视为终态。多候选只看首候选
+// （index 缺省或为 0），与 service.geminiPrimaryCandidate 一致。
+func (o *Observer) ObserveGeminiPayload(payload []byte) {
+	if o == nil || len(payload) == 0 {
+		return
+	}
+	root := gjson.ParseBytes(payload)
+	for i := 0; i < 2 && root.Get("response").IsObject(); i++ {
+		root = root.Get("response")
+	}
+	if !root.IsObject() {
+		return
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if errNode := root.Get("error"); errNode.IsObject() {
+		o.ensureProtocol(ProtocolGeminiGenerateContent)
+		o.observed = true
+		o.setErrorType(firstNonEmpty(errNode.Get("status").String(), errNode.Get("code").String(), "error"))
+		return
+	}
+	candidates := root.Get("candidates")
+	feedback := root.Get("promptFeedback")
+	if !candidates.Exists() && !feedback.Exists() && !root.Get("usageMetadata").Exists() {
+		return
+	}
+	o.ensureProtocol(ProtocolGeminiGenerateContent)
+	o.observed = true
+	if block := feedback.Get("blockReason").String(); !isUnspecifiedGeminiBlockReason(block) && o.outcome.BlockReason == "" {
+		o.outcome.BlockReason = truncateRaw(block)
+		o.outcome.Terminal = true
+	}
+	for _, cand := range candidates.Array() {
+		if index := cand.Get("index"); index.Exists() && index.Int() != 0 {
+			continue
+		}
+		for _, part := range cand.Get("content.parts").Array() {
+			o.observeGeminiPart(part)
+		}
+		if reason := cand.Get("finishReason").String(); reason != "" && o.outcome.StopReason == "" {
+			o.outcome.StopReason = truncateRaw(reason)
+			o.outcome.Terminal = true
+		}
+		break
+	}
+}
+
+// isUnspecifiedGeminiBlockReason：Gemini API 写作 BLOCK_REASON_UNSPECIFIED，Vertex 写作
+// BLOCKED_REASON_UNSPECIFIED，都表示没有拦截。
+func isUnspecifiedGeminiBlockReason(reason string) bool {
+	switch reason {
+	case "", "BLOCK_REASON_UNSPECIFIED", "BLOCKED_REASON_UNSPECIFIED":
+		return true
+	default:
+		return false
+	}
+}
+
+func (o *Observer) observeGeminiPart(part gjson.Result) {
+	switch {
+	case part.Get("thought").Bool():
+		return
+	case part.Get("functionCall").Exists():
+		o.outcome.ToolCall = true
+		o.outcome.HasOutput = true
+	case part.Get("text").Exists():
+		if part.Get("text").String() != "" {
+			o.outcome.HasOutput = true
+		}
+	case part.Get("inlineData").Exists(), part.Get("fileData").Exists(),
+		part.Get("executableCode").Exists(), part.Get("codeExecutionResult").Exists():
+		o.outcome.HasOutput = true
+	}
 }
 
 func (o *Observer) ensureProtocol(protocol string) {
