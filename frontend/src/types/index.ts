@@ -1828,6 +1828,8 @@ export interface UsageLog {
   trace_id?: string | null
   model: string
   service_tier?: string | null
+  // 标准化结束原因；历史行与未采集路径为空，不能视为 stop。
+  finish_reason?: string | null
   reasoning_effort?: string | null
   inbound_endpoint?: string | null
   upstream_endpoint?: string | null
@@ -1894,6 +1896,21 @@ export interface UsageLogAccountSummary {
   name: string
 }
 
+export interface UsageResponseOutcome {
+  protocol: string
+  status?: string
+  stop_reason?: string
+  choice_finish_reasons?: string[]
+  incomplete_reason?: string
+  stop_details_type?: string
+  stop_details_category?: string
+  error_type?: string
+  refusal?: boolean
+  tool_call?: boolean
+  has_output: boolean
+  terminal: boolean
+}
+
 export interface AdminUsageLog extends UsageLog {
   upstream_model?: string | null
   upstream_reasoning_effort?: string | null
@@ -1901,6 +1918,8 @@ export interface AdminUsageLog extends UsageLog {
   upstream_model_mismatch?: boolean | null
   model_mapping_chain?: string | null
   upstream_request_id?: string | null
+  // 上游原始结束原因与拒答/工具调用/输出/终态等结构化事实，仅管理端可见。
+  response_outcome?: UsageResponseOutcome | null
 
   // 账号计费倍率（仅管理员可见）
   account_rate_multiplier?: number | null
@@ -2294,6 +2313,8 @@ export interface UsageQueryParams {
   native_compaction_v2?: boolean | null
   billing_type?: number | null
   billing_mode?: string | null
+  // 逗号分隔的标准化结束原因，abnormal 表示异常结束集合；只作用于明细列表与统计卡片。
+  finish_reason?: string | null
   start_date?: string
   end_date?: string
   timezone?: string

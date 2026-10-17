@@ -164,6 +164,11 @@
           <Select v-model="filters.upstream_model_mismatch" :options="upstreamModelMismatchOptions" @change="emitChange" />
         </div>
 
+        <div v-if="mode === 'usage'" class="w-full sm:w-auto sm:min-w-[180px]">
+          <label class="input-label" :title="t('usage.finishReasonHint')">{{ t('usage.finishReasonFilter') }}</label>
+          <Select v-model="filters.finish_reason" :options="finishReasonOptions" @change="emitChange" />
+        </div>
+
         <!-- Error Phase Filter (errors only) -->
         <div v-if="mode === 'errors'" class="w-full sm:w-auto sm:min-w-[180px]">
           <label class="input-label">{{ t('admin.ops.errorLog.type') }}</label>
@@ -218,6 +223,7 @@ import { useI18n } from 'vue-i18n'
 import { adminAPI } from '@/api/admin'
 import Select, { type SelectOption } from '@/components/common/Select.vue'
 import { COMMON_ERROR_STATUS_CODES } from '@/utils/errorBadges'
+import { buildUsageFinishReasonOptions } from '@/utils/usageFinishReason'
 import type { SimpleApiKey, SimpleUser } from '@/api/admin/usage'
 
 type ModelValue = Record<string, any>
@@ -342,6 +348,8 @@ const upstreamModelMismatchOptions = ref<SelectOption[]>([
   { value: true, label: t('admin.usage.upstreamModelMismatchOnly') },
   { value: false, label: t('admin.usage.upstreamModelMatchedOnly') }
 ])
+
+const finishReasonOptions = computed<SelectOption[]>(() => buildUsageFinishReasonOptions(t))
 
 const emitChange = () => emit('change')
 

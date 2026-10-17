@@ -40,3 +40,16 @@ func TestUsageStatsCacheKey_NormalizesListsWithoutMutation(t *testing.T) {
 	require.Equal(t, []int64{7, 2, 7}, left.UserIDs)
 	require.Equal(t, []string{"gpt-4o", "claude-3", "gpt-4o"}, left.Models)
 }
+
+func TestUsageStatsCacheKey_DistinguishesFinishReasons(t *testing.T) {
+	start := time.Date(2026, 5, 29, 0, 0, 0, 0, time.UTC)
+	end := time.Date(2026, 5, 31, 0, 0, 0, 0, time.UTC)
+	base := usagestats.UsageLogFilters{StartTime: &start, EndTime: &end}
+	refusal := base
+	refusal.FinishReasons = []string{"refusal"}
+	truncated := base
+	truncated.FinishReasons = []string{"truncated"}
+
+	require.NotEqual(t, usageStatsCacheKey(base), usageStatsCacheKey(refusal), "filtered stats must not reuse unfiltered cache")
+	require.NotEqual(t, usageStatsCacheKey(refusal), usageStatsCacheKey(truncated))
+}

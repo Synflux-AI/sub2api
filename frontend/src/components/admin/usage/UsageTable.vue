@@ -145,6 +145,18 @@
           </span>
         </template>
 
+        <template #cell-finish_reason="{ row }">
+          <span
+            v-if="row.finish_reason"
+            class="inline-flex items-center rounded px-2 py-0.5 text-xs font-medium"
+            :class="getUsageFinishReasonBadgeClass(row.finish_reason)"
+            :title="formatResponseOutcomeTitle(row)"
+          >
+            {{ getUsageFinishReasonLabel(row.finish_reason, t) }}
+          </span>
+          <span v-else class="text-xs text-gray-400 dark:text-gray-500">-</span>
+        </template>
+
         <template #cell-tokens="{ row }">
           <!-- 图片生成请求（仅按次计费时显示图片格式） -->
           <div v-if="isImageUsage(row)" class="flex items-center gap-1.5">
@@ -559,6 +571,7 @@ import { formatDateTime, formatReasoningEffort, reasoningEffortValuesEqual } fro
 import { formatCacheTokens, formatMultiplier, calcCacheHitRate } from '@/utils/formatters'
 import { formatTokenPricePerMillion } from '@/utils/usagePricing'
 import { getUsageServiceTierLabel } from '@/utils/usageServiceTier'
+import { getUsageFinishReasonBadgeClass, getUsageFinishReasonLabel } from '@/utils/usageFinishReason'
 import { resolveUsageRequestType } from '@/utils/usageRequestType'
 import {
   LATENCY_BAR_CLASSES,
@@ -718,6 +731,24 @@ const tooltipData = ref<AdminUsageLog | null>(null)
 const tokenTooltipVisible = ref(false)
 const tokenTooltipPosition = ref({ x: 0, y: 0 })
 const tokenTooltipData = ref<AdminUsageLog | null>(null)
+
+// 管理端悬停展示上游原始结束原因；用户侧没有 response_outcome，不显示 title。
+const formatResponseOutcomeTitle = (row: AdminUsageLog): string | undefined => {
+  const outcome = row.response_outcome
+  if (!outcome) return undefined
+  const parts = [outcome.protocol]
+  if (outcome.status) parts.push(`status=${outcome.status}`)
+  if (outcome.stop_reason) parts.push(`reason=${outcome.stop_reason}`)
+  if (outcome.choice_finish_reasons?.length) parts.push(`choices=${outcome.choice_finish_reasons.join(',')}`)
+  if (outcome.incomplete_reason) parts.push(`incomplete=${outcome.incomplete_reason}`)
+  if (outcome.stop_details_category) parts.push(`category=${outcome.stop_details_category}`)
+  if (outcome.error_type) parts.push(`error=${outcome.error_type}`)
+  if (outcome.refusal) parts.push('refusal')
+  if (outcome.tool_call) parts.push('tool_call')
+  if (!outcome.has_output) parts.push('no_output')
+  if (!outcome.terminal) parts.push('no_terminal')
+  return parts.join(' · ')
+}
 
 const getRequestTypeLabel = (row: AdminUsageLog): string => {
   const requestType = resolveUsageRequestType(row)

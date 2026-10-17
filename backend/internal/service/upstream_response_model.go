@@ -3,6 +3,7 @@ package service
 import (
 	"strings"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/responseoutcome"
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
 )
@@ -36,6 +37,10 @@ type upstreamResponseModelObserver struct {
 	firstTier         string
 	firstTierConflict bool
 	terminalTier      string
+
+	// outcome 观测上游响应如何结束（拒答 / 截断 / 内容过滤 / 工具调用等），
+	// 与模型、服务层级共用同一组原始上游载荷喂入点，因此天然按尝试/WS 轮次隔离。
+	outcome *responseoutcome.Observer
 }
 
 func (o *upstreamResponseModelObserver) Observe(model string, terminal bool) {
@@ -69,6 +74,7 @@ func normalizeObservedUpstreamResponseModel(model string) string {
 }
 
 func (o *upstreamResponseModelObserver) ObserveOpenAI(payload []byte, eventType string) {
+	o.outcomeObserver().ObserveOpenAIPayload(payload, eventType)
 	model := firstValidTrimmedGJSONString(payload, "response.model", "model")
 	terminal := isUpstreamResponseModelTerminalEvent(eventType)
 	o.Observe(model, terminal)
@@ -88,6 +94,7 @@ func (o *upstreamResponseModelObserver) ObserveOpenAI(payload []byte, eventType 
 }
 
 func (o *upstreamResponseModelObserver) ObserveAnthropic(payload []byte) {
+	o.outcomeObserver().ObserveAnthropicPayload(payload)
 	model := firstValidTrimmedGJSONString(payload, "message.model", "model")
 	o.Observe(model, false)
 	// usage.speed travels with the message object (message_start in streams,
@@ -181,6 +188,25 @@ func (o *upstreamResponseModelObserver) Model() string {
 	return o.first
 }
 
+// outcomeObserver 懒创建结束原因观测器；nil 接收者返回 nil（其方法均为空操作）。
+func (o *upstreamResponseModelObserver) outcomeObserver() *responseoutcome.Observer {
+	if o == nil {
+		return nil
+	}
+	if o.outcome == nil {
+		o.outcome = responseoutcome.NewObserver("")
+	}
+	return o.outcome
+}
+
+// ResponseOutcome 返回结束原因观测快照；从未喂入上游数据时为 nil。
+func (o *upstreamResponseModelObserver) ResponseOutcome() *responseoutcome.Outcome {
+	if o == nil {
+		return nil
+	}
+	return o.outcome.Snapshot()
+}
+
 func (o *upstreamResponseModelObserver) Conflict() bool {
 	return o != nil && o.conflict
 }
@@ -207,6 +233,12 @@ func upstreamResponseModelObserverFromContext(c *gin.Context) *upstreamResponseM
 
 func observedUpstreamResponseModel(c *gin.Context) string {
 	return upstreamResponseModelObserverFromContext(c).Model()
+}
+
+// ResponseOutcomeFromContext 返回当前请求最后一次 Forward 尝试的结束原因观测快照。
+// handler 在提交异步记账前调用：记账 worker 拿不到 *gin.Context。
+func ResponseOutcomeFromContext(c *gin.Context) *responseoutcome.Outcome {
+	return upstreamResponseModelObserverFromContext(c).ResponseOutcome()
 }
 
 func observedUpstreamResponseModelConflict(c *gin.Context) bool {

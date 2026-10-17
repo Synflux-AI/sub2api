@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/responseoutcome"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
 )
@@ -402,4 +403,37 @@ func TestUsageLogFromService_OmitsUpstreamReasoningEffortWhenUnmapped(t *testing
 	adminJSON, err := json.Marshal(adminDTO)
 	require.NoError(t, err)
 	require.NotContains(t, string(adminJSON), "upstream_reasoning_effort")
+}
+
+func TestUsageLogFromService_FinishReasonVisibleOutcomeAdminOnly(t *testing.T) {
+	t.Parallel()
+
+	reason := "refusal"
+	log := &service.UsageLog{
+		RequestID:    "req_refusal",
+		Model:        "claude-x",
+		FinishReason: &reason,
+		ResponseOutcome: &responseoutcome.Outcome{
+			Protocol:   responseoutcome.ProtocolAnthropicMessages,
+			StopReason: "refusal",
+			ErrorType:  "internal_upstream_detail",
+			Refusal:    true,
+			Terminal:   true,
+		},
+	}
+
+	userJSON, err := json.Marshal(UsageLogFromService(log))
+	require.NoError(t, err)
+	require.Contains(t, string(userJSON), `"finish_reason":"refusal"`)
+	require.NotContains(t, string(userJSON), "response_outcome", "raw upstream facts are admin-only")
+	require.NotContains(t, string(userJSON), "internal_upstream_detail")
+
+	adminJSON, err := json.Marshal(UsageLogFromServiceAdmin(log))
+	require.NoError(t, err)
+	require.Contains(t, string(adminJSON), `"finish_reason":"refusal"`)
+	require.Contains(t, string(adminJSON), `"response_outcome":{"protocol":"anthropic_messages"`)
+
+	legacyJSON, err := json.Marshal(UsageLogFromService(&service.UsageLog{RequestID: "req_legacy"}))
+	require.NoError(t, err)
+	require.NotContains(t, string(legacyJSON), "finish_reason", "historical rows omit the field instead of defaulting to stop")
 }

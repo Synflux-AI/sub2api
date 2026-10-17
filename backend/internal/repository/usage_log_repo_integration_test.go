@@ -13,6 +13,7 @@ import (
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/responseoutcome"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/usagestats"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -703,6 +704,73 @@ func (s *UsageLogRepoSuite) TestListWithFilters_OutputTokensZero() {
 	s.Require().Len(logs, 1)
 	s.Require().Zero(logs[0].OutputTokens)
 	s.Require().Equal(int64(1), page.Total)
+}
+
+func (s *UsageLogRepoSuite) TestListWithFilters_FinishReason() {
+	user := mustCreateUser(s.T(), s.client, &service.User{Email: "filters-finish-reason@test.com"})
+	apiKey := mustCreateApiKey(s.T(), s.client, &service.APIKey{UserID: user.ID, Key: "sk-filters-finish-reason", Name: "k"})
+	account := mustCreateAccount(s.T(), s.client, &service.Account{Name: "acc-filters-finish-reason"})
+
+	base := time.Now().UTC()
+	create := func(reason *string, outcome *responseoutcome.Outcome, offset time.Duration) {
+		log := &service.UsageLog{
+			UserID:          user.ID,
+			APIKeyID:        apiKey.ID,
+			AccountID:       account.ID,
+			RequestID:       uuid.New().String(),
+			Model:           "claude-3",
+			InputTokens:     10,
+			OutputTokens:    1,
+			TotalCost:       0.1,
+			ActualCost:      0.1,
+			FinishReason:    reason,
+			ResponseOutcome: outcome,
+			CreatedAt:       base.Add(offset),
+		}
+		_, err := s.repo.Create(s.ctx, log)
+		s.Require().NoError(err)
+	}
+	refusal, stop, truncated := "refusal", "stop", "truncated"
+	create(&refusal, &responseoutcome.Outcome{Protocol: responseoutcome.ProtocolAnthropicMessages, StopReason: "refusal", Refusal: true, Terminal: true}, 0)
+	create(&stop, &responseoutcome.Outcome{Protocol: responseoutcome.ProtocolOpenAIChatCompletions, StopReason: "stop", HasOutput: true, Terminal: true}, time.Second)
+	create(&truncated, &responseoutcome.Outcome{Protocol: responseoutcome.ProtocolOpenAIResponses, Status: "incomplete", IncompleteReason: "max_output_tokens", HasOutput: true, Terminal: true}, 2*time.Second)
+	create(nil, nil, 3*time.Second) // 历史/未采集行
+
+	filters := usagestats.UsageLogFilters{UserID: user.ID, FinishReasons: []string{"refusal"}}
+	logs, page, err := s.repo.ListWithFilters(s.ctx, pagination.PaginationParams{Page: 1, PageSize: 10}, filters)
+	s.Require().NoError(err)
+	s.Require().Len(logs, 1)
+	s.Require().Equal(int64(1), page.Total)
+	s.Require().NotNil(logs[0].FinishReason)
+	s.Require().Equal("refusal", *logs[0].FinishReason)
+	s.Require().NotNil(logs[0].ResponseOutcome, "jsonb round-trip")
+	s.Require().True(logs[0].ResponseOutcome.Refusal)
+	s.Require().Equal("refusal", logs[0].ResponseOutcome.StopReason)
+
+	abnormal, err := responseoutcome.ParseFilter("abnormal")
+	s.Require().NoError(err)
+	filters.FinishReasons = abnormal
+	logs, page, err = s.repo.ListWithFilters(s.ctx, pagination.PaginationParams{Page: 1, PageSize: 10}, filters)
+	s.Require().NoError(err)
+	s.Require().Len(logs, 2, "abnormal = refusal + truncated; stop and NULL rows excluded")
+	s.Require().Equal(int64(2), page.Total)
+
+	stats, err := s.repo.GetStatsWithFilters(s.ctx, filters)
+	s.Require().NoError(err)
+	s.Require().Equal(int64(2), stats.TotalRequests, "stats cards honor the same finish_reason filter")
+
+	filters.FinishReasons = nil
+	logs, _, err = s.repo.ListWithFilters(s.ctx, pagination.PaginationParams{Page: 1, PageSize: 10}, filters)
+	s.Require().NoError(err)
+	s.Require().Len(logs, 4)
+	var legacyCount int
+	for _, l := range logs {
+		if l.FinishReason == nil {
+			legacyCount++
+			s.Require().Nil(l.ResponseOutcome)
+		}
+	}
+	s.Require().Equal(1, legacyCount, "uncollected rows stay NULL instead of defaulting to stop")
 }
 
 // --- GetDashboardStats ---

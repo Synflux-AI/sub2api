@@ -12,6 +12,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/responseoutcome"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/usagestats"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
@@ -192,6 +193,11 @@ func (h *UsageHandler) List(c *gin.Context) {
 		}
 		upstreamModelMismatch = &value
 	}
+	finishReasons, err := responseoutcome.ParseFilter(c.Query("finish_reason"))
+	if err != nil {
+		response.BadRequest(c, "Invalid finish_reason")
+		return
+	}
 
 	// Parse date range
 	var startTime, endTime *time.Time
@@ -243,6 +249,7 @@ func (h *UsageHandler) List(c *gin.Context) {
 		BillingType:           billingType,
 		BillingMode:           billingMode,
 		UpstreamModelMismatch: upstreamModelMismatch,
+		FinishReasons:         finishReasons,
 		StartTime:             startTime,
 		EndTime:               endTime,
 		ExactTotal:            exactTotal,
@@ -339,6 +346,11 @@ func (h *UsageHandler) Stats(c *gin.Context) {
 		}
 		upstreamModelMismatch = &value
 	}
+	finishReasons, err := responseoutcome.ParseFilter(c.Query("finish_reason"))
+	if err != nil {
+		response.BadRequest(c, "Invalid finish_reason")
+		return
+	}
 
 	// Parse date range
 	userTZ := c.Query("timezone")
@@ -397,6 +409,7 @@ func (h *UsageHandler) Stats(c *gin.Context) {
 		BillingType:           billingType,
 		BillingMode:           billingMode,
 		UpstreamModelMismatch: upstreamModelMismatch,
+		FinishReasons:         finishReasons,
 		StartTime:             &startTime,
 		EndTime:               &endTime,
 	}

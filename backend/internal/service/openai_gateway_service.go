@@ -19,6 +19,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/responseoutcome"
 	"github.com/Wei-Shaw/sub2api/internal/platform/liveattestation"
 	"github.com/Wei-Shaw/sub2api/internal/util/responseheaders"
 	"github.com/cespare/xxhash/v2"
@@ -237,6 +238,9 @@ type OpenAIForwardResult struct {
 	ResponseID string
 	// UpstreamHeaders 是直接上游的响应头，用于按账户配置解析上游请求标识。
 	UpstreamHeaders http.Header
+	// ResponseOutcome 是上游响应结束方式的结构化观测（只用于用量明细展示与筛选）。
+	// WS 轮次由转发层按轮写入；HTTP 路径由 handler 记账前从请求上下文补齐。
+	ResponseOutcome *responseoutcome.Outcome
 	Usage           OpenAIUsage
 	Model           string // 原始模型（用于响应和日志显示）
 	// BillingModel is the model used for cost calculation.

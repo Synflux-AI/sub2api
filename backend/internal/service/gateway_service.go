@@ -23,6 +23,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/domain"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/responseoutcome"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 	"github.com/Wei-Shaw/sub2api/internal/util/responseheaders"
 	"github.com/cespare/xxhash/v2"
@@ -621,6 +622,9 @@ type ForwardResult struct {
 	RequestID string
 	// UpstreamHeaders 是直接上游的响应头，用于按账户配置解析上游请求标识。
 	UpstreamHeaders http.Header
+	// ResponseOutcome 是上游响应结束方式的结构化观测（只用于用量明细展示与筛选）。
+	// HTTP 路径由 handler 记账前从请求上下文补齐；nil 表示该路径未采集。
+	ResponseOutcome *responseoutcome.Outcome
 	Usage           ClaudeUsage
 	Model           string
 	// UpstreamModel is the actual upstream model after mapping.

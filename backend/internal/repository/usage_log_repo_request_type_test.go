@@ -109,6 +109,8 @@ func TestUsageLogRepositoryCreateSyncRequestTypeAndLegacyFields(t *testing.T) {
 			sqlmock.AnyArg(), // session_id
 			traceID,
 			sqlmock.AnyArg(), // image_response_format
+			sqlmock.AnyArg(), // finish_reason
+			sqlmock.AnyArg(), // response_outcome
 			log.NativeCompactionV2,
 			createdAt,
 		).
@@ -210,6 +212,8 @@ func TestUsageLogRepositoryCreate_PersistsServiceTier(t *testing.T) {
 			sqlmock.AnyArg(), // session_id
 			sqlmock.AnyArg(), // trace_id
 			sqlmock.AnyArg(), // image_response_format
+			sqlmock.AnyArg(), // finish_reason
+			sqlmock.AnyArg(), // response_outcome
 			log.NativeCompactionV2,
 			createdAt,
 		).
@@ -237,7 +241,7 @@ func TestBuildUsageLogBestEffortInsertQuery_IncludesRequestedModelColumn(t *test
 	require.Contains(t, query, "INSERT INTO usage_logs (")
 	require.Contains(t, query, "\n\t\t\tmodel,\n\t\t\trequested_model,\n\t\t\tupstream_model,\n\t\t\tupstream_response_model,\n\t\t\tupstream_model_mismatch,")
 	require.Contains(t, query, "\n\t\t\trequest_id,\n\t\t\tmodel,\n\t\t\trequested_model,\n\t\t\tupstream_model,\n\t\t\tupstream_response_model,\n\t\t\tupstream_model_mismatch,")
-	require.Contains(t, query, "\n\t\t\tsession_id,\n\t\t\ttrace_id,\n\t\t\timage_response_format,\n\t\t\tnative_compaction_v2,\n\t\t\tcreated_at")
+	require.Contains(t, query, "\n\t\t\tsession_id,\n\t\t\ttrace_id,\n\t\t\timage_response_format,\n\t\t\tfinish_reason,\n\t\t\tresponse_outcome,\n\t\t\tnative_compaction_v2,\n\t\t\tcreated_at")
 	require.Len(t, args, len(prepared.args))
 	require.Equal(t, prepared.args[5], args[5])
 }
@@ -307,7 +311,7 @@ func TestPrepareUsageLogInsert_PersistsImageSizeMetadata(t *testing.T) {
 	breakdownJSON, ok := prepared.args[46].(string)
 	require.True(t, ok)
 	require.JSONEq(t, `{"1K":1,"4K":1}`, breakdownJSON)
-	require.Equal(t, sql.NullString{String: responseFormat, Valid: true}, prepared.args[len(prepared.args)-3])
+	require.Equal(t, sql.NullString{String: responseFormat, Valid: true}, prepared.args[len(prepared.args)-5])
 }
 
 func TestCoalesceTrimmedString(t *testing.T) {
@@ -1008,7 +1012,9 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullString{},
 			sql.NullString{},
 			sql.NullString{Valid: true, String: "url"}, // image_response_format
-			false, // native_compaction_v2
+			sql.NullString{}, // finish_reason
+			sql.NullString{}, // response_outcome
+			false,            // native_compaction_v2
 			now,
 		}})
 		require.NoError(t, err)
@@ -1096,6 +1102,8 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullString{},  // session_id
 			sql.NullString{},  // trace_id
 			sql.NullString{},  // image_response_format
+			sql.NullString{},  // finish_reason
+			sql.NullString{},  // response_outcome
 			false,             // native_compaction_v2
 			now,
 		}})
@@ -1165,6 +1173,8 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullString{},  // session_id
 			sql.NullString{},  // trace_id
 			sql.NullString{},  // image_response_format
+			sql.NullString{},  // finish_reason
+			sql.NullString{},  // response_outcome
 			true,              // native_compaction_v2
 			now,
 		}})
@@ -1235,6 +1245,8 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullString{},  // session_id
 			sql.NullString{Valid: true, String: "trace-visible-123"}, // trace_id
 			sql.NullString{}, // image_response_format
+			sql.NullString{}, // finish_reason
+			sql.NullString{}, // response_outcome
 			false,            // native_compaction_v2
 			now,
 		}})

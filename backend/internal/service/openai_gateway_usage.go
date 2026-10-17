@@ -389,6 +389,8 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		RequestID:                requestID,
 		TraceID:                  usageTraceID(ctx),
 		UpstreamRequestID:        usageUpstreamRequestIDPtr(account, result.UpstreamHeaders, result.OpenAIWSMode),
+		FinishReason:             usageFinishReasonPtr(result.ResponseOutcome),
+		ResponseOutcome:          result.ResponseOutcome,
 		Model:                    result.Model,
 		RequestedModel:           requestedModel,
 		UpstreamModel:            optionalTrimmedStringPtr(result.UpstreamModel),

@@ -35,6 +35,8 @@ func (s *GatewayService) ForwardAsResponses(
 	parsed *ParsedRequest,
 ) (*ForwardResult, error) {
 	startTime := time.Now()
+	// 每次尝试新建观测器，换号重试不会把上一个账号的结束原因带到最终记账。
+	beginUpstreamResponseModelObservation(c)
 
 	normalizedBody, normalized, err := normalizeOpenAIResponsesLegacyIngressWithConfig(s.cfg, body)
 	if err != nil {
@@ -437,6 +439,7 @@ func (s *GatewayService) handleResponsesBufferedStreamingResponse(
 			continue
 		}
 
+		observeAnthropicResponseOutcome(c, []byte(payload))
 		var event apicompat.AnthropicStreamEvent
 		if err := json.Unmarshal([]byte(payload), &event); err != nil {
 			gatewayLog(ctx).Warn("forward_as_responses buffered: failed to parse event",
@@ -697,6 +700,7 @@ func (s *GatewayService) handleResponsesStreamingResponse(
 			continue
 		}
 
+		observeAnthropicResponseOutcome(c, []byte(payload))
 		var event apicompat.AnthropicStreamEvent
 		if err := json.Unmarshal([]byte(payload), &event); err != nil {
 			gatewayLog(ctx).Warn("forward_as_responses stream: failed to parse event",

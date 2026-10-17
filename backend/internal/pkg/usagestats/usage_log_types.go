@@ -321,8 +321,10 @@ type UsageLogFilters struct {
 	BillingType           *int8
 	BillingMode           string
 	UpstreamModelMismatch *bool
-	StartTime             *time.Time
-	EndTime               *time.Time
+	// FinishReasons 按标准化结束原因精确匹配（IN），空表示不过滤；未采集的历史行（NULL）不会命中。
+	FinishReasons []string
+	StartTime     *time.Time
+	EndTime       *time.Time
 	// IncludeLatency forces trend queries to read raw logs because aggregate tables do not store percentiles.
 	IncludeLatency bool
 	// ExactTotal requests exact COUNT(*) for pagination. Default false for fast large-table paging.

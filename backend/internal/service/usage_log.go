@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/pkg/responseoutcome"
 )
 
 const (
@@ -193,6 +195,11 @@ type UsageLog struct {
 	// (e.g. the session_id / X-Session-Id headers). Nil when the client sent no
 	// valid session header. It is never derived from prompt_cache_key or content.
 	SessionID *string
+	// FinishReason 是按固定优先级汇总的标准化结束原因（见 responseoutcome.Reason*），
+	// 仅用于展示与筛选；nil 表示历史行或未采集路径，不能视为 stop。
+	FinishReason *string
+	// ResponseOutcome 保留上游原始结束原因、拒答/工具调用/输出/终态等结构化事实。
+	ResponseOutcome *responseoutcome.Outcome
 	// UpstreamRequestID 是直接上游在响应头中声明的请求标识，只读账户
 	// extra.upstream_request_id_header 指定的头；账户未指定头名、WS 轮次
 	// 与上游没有该头的路径为 nil。
