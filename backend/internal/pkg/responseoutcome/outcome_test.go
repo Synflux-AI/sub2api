@@ -413,3 +413,94 @@ func TestResponsesBareErrorThenFailedKeepsFailedCode(t *testing.T) {
 	require.Equal(t, "invalid_prompt", out.ErrorType)
 	require.Equal(t, ReasonFailed, out.FinishReason())
 }
+
+// PR #303 review §2：Chat 终态判定。
+func TestChatStreamMultiChoicePartialFinishThenDisconnectIsInterrupted(t *testing.T) {
+	o := NewObserver(ProtocolOpenAIChatCompletions)
+	feedChat(o,
+		`{"choices":[{"index":0,"delta":{"content":"a"}},{"index":1,"delta":{"content":"b"}}]}`,
+		`{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`,
+	)
+	out := o.Snapshot()
+	require.False(t, out.Terminal, "choice 1 never finished")
+	require.Equal(t, []string{"stop", ""}, out.ChoiceFinishReasons)
+	require.Equal(t, ReasonInterrupted, out.FinishReason())
+}
+
+func TestChatStreamMultiChoiceAllFinishedIsTerminal(t *testing.T) {
+	o := NewObserver(ProtocolOpenAIChatCompletions)
+	feedChat(o,
+		`{"choices":[{"index":0,"delta":{"content":"a"}},{"index":1,"delta":{"content":"b"}}]}`,
+		`{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`,
+		`{"choices":[{"index":1,"delta":{},"finish_reason":"length"}]}`,
+	)
+	out := o.Snapshot()
+	require.True(t, out.Terminal)
+	require.False(t, out.MissingFinishReason)
+	require.Equal(t, ReasonTruncated, out.FinishReason())
+}
+
+func TestChatCompletionNullFinishReasonIsUnknown(t *testing.T) {
+	o := NewObserver(ProtocolOpenAIChatCompletions)
+	o.ObserveChatCompletion([]byte(`{"object":"chat.completion","choices":[{"index":0,"message":{"content":"hi"},"finish_reason":null}]}`))
+	out := o.Snapshot()
+	require.True(t, out.Terminal, "a complete body is terminal by itself")
+	require.True(t, out.MissingFinishReason)
+	require.Equal(t, ReasonUnknown, out.FinishReason())
+}
+
+func TestChatStreamDoneWithoutFinishReasonIsUnknown(t *testing.T) {
+	o := NewObserver(ProtocolOpenAIChatCompletions)
+	o.ObserveOpenAIPayload([]byte(`{"object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"hi"}}]}`), "")
+	o.ObserveOpenAIPayload([]byte(" [DONE] "), "")
+	out := o.Snapshot()
+	require.True(t, out.Terminal)
+	require.Equal(t, ReasonUnknown, out.FinishReason(), "unknown is not counted as abnormal")
+	require.NotContains(t, AbnormalReasons, out.FinishReason())
+}
+
+func TestChatCompletionEmptyChoicesIsEmpty(t *testing.T) {
+	o := NewObserver(ProtocolOpenAIChatCompletions)
+	o.ObserveChatCompletion([]byte(`{"object":"chat.completion","choices":[]}`))
+	out := o.Snapshot()
+	require.NotNil(t, out, "a complete empty body is observed, not uncollected")
+	require.True(t, out.Terminal)
+	require.Equal(t, ReasonEmpty, out.FinishReason())
+}
+
+func TestDoneAloneDoesNotClaimProtocol(t *testing.T) {
+	o := NewObserver("")
+	o.ObserveOpenAIPayload([]byte("[DONE]"), "")
+	require.Nil(t, o.Snapshot(), "[DONE] by itself must not mark anything observed")
+
+	o.ObserveOpenAIPayload([]byte(`{"type":"response.completed","response":{"status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"x"}]}]}}`), "response.completed")
+	out := o.Snapshot()
+	require.Equal(t, ProtocolOpenAIResponses, out.Protocol)
+	require.Equal(t, ReasonStop, out.FinishReason())
+}
+
+// PR #303 review §7：服务端执行的工具不算客户端工具调用。
+func TestResponsesMCPCallIsServerSide(t *testing.T) {
+	o := NewObserver(ProtocolOpenAIResponses)
+	o.ObserveResponse([]byte(`{"status":"completed","output":[
+		{"type":"mcp_call","name":"lookup","output":"..."},
+		{"type":"web_search_call","status":"completed"},
+		{"type":"message","content":[{"type":"output_text","text":"final answer"}]}
+	]}`))
+	out := o.Snapshot()
+	require.False(t, out.ToolCall)
+	require.Equal(t, ReasonStop, out.FinishReason())
+
+	o = NewObserver(ProtocolOpenAIResponses)
+	o.ObserveResponse([]byte(`{"status":"completed","output":[{"type":"mcp_approval_request","name":"lookup"}]}`))
+	require.Equal(t, ReasonToolUse, o.Snapshot().FinishReason(), "approval requests need the client")
+}
+
+func TestAnthropicServerToolUseIsNotClientToolCall(t *testing.T) {
+	o := NewObserver(ProtocolAnthropicMessages)
+	o.ObserveAnthropicMessage([]byte(`{"type":"message","content":[{"type":"server_tool_use","id":"s1","name":"web_search","input":{}},{"type":"text","text":"done"}],"stop_reason":"end_turn"}`))
+	out := o.Snapshot()
+	require.False(t, out.ToolCall)
+	require.True(t, out.HasOutput)
+	require.Equal(t, ReasonStop, out.FinishReason())
+}

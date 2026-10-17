@@ -27,3 +27,19 @@ func observeAnthropicResponseOutcome(c *gin.Context, payload []byte) {
 func observeOpenAIResponseOutcome(c *gin.Context, payload []byte, eventType string) {
 	upstreamResponseModelObserverFromContext(c).outcomeObserver().ObserveOpenAIPayload(payload, eventType)
 }
+
+// usageResponseOutcomeForStorage 决定原始事实是否随用量行落库。正常结束（stop / tool_use）
+// 的事实几乎都能由 finish_reason 推出，usage_logs 是写入最频繁的大表，因此不写；
+// 但客户端中途断开属于传输层事实，仍保留。
+func usageResponseOutcomeForStorage(outcome *responseoutcome.Outcome) *responseoutcome.Outcome {
+	if outcome == nil {
+		return nil
+	}
+	switch outcome.FinishReason() {
+	case responseoutcome.ReasonStop, responseoutcome.ReasonToolUse:
+		if !outcome.ClientDisconnected {
+			return nil
+		}
+	}
+	return outcome
+}

@@ -414,6 +414,7 @@ func (s *GatewayService) handleBedrockNonStreamingResponse(
 	// 转换 Bedrock 特有的 amazon-bedrock-invocationMetrics 为标准 Anthropic usage 格式
 	// 并移除该字段避免透传给客户端
 	body = transformBedrockInvocationMetrics(body)
+	observeAnthropicResponseOutcome(c, body)
 
 	usage := parseClaudeUsageFromResponseBody(body, account.IsUpstreamUsageOpenAISemantic())
 

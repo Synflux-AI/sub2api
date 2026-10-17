@@ -1370,7 +1370,7 @@ func (s *GatewayService) buildRecordUsageLog(
 		TraceID:                  usageTraceID(ctx),
 		UpstreamRequestID:        usageUpstreamRequestIDPtr(account, result.UpstreamHeaders, false),
 		FinishReason:             usageFinishReasonPtr(result.ResponseOutcome),
-		ResponseOutcome:          result.ResponseOutcome,
+		ResponseOutcome:          usageResponseOutcomeForStorage(result.ResponseOutcome),
 		Model:                    result.Model,
 		RequestedModel:           requestedModel,
 		UpstreamModel:            optionalTrimmedStringPtr(result.UpstreamModel),

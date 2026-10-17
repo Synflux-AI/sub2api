@@ -7,6 +7,7 @@
 package responseoutcome
 
 import (
+	"bytes"
 	"fmt"
 	"slices"
 	"strings"
@@ -132,13 +133,19 @@ type Outcome struct {
 	// Refusal 表示观察到供应商明示的结构化拒答（stop_reason=refusal、
 	// message.refusal / delta.refusal、Responses refusal 内容块或事件）。
 	Refusal bool `json:"refusal,omitempty"`
-	// ToolCall 表示观察到工具调用。
+	// ToolCall 表示观察到需要客户端执行的工具调用；服务端工具（Anthropic
+	// server_tool_use / mcp_tool_use、Responses mcp_call / web_search_call 等）不计入。
 	ToolCall bool `json:"tool_call,omitempty"`
 	// HasOutput 表示观察到可消费输出：非空文本、工具调用、拒答说明或图像/音频等非推理内容。
 	HasOutput bool `json:"has_output"`
-	// Terminal 表示观察到完整终态（Anthropic message_stop、Chat finish_reason、
-	// Responses 终态事件或非流式完整响应体）。
+	// Terminal 表示观察到完整终态（Anthropic message_stop、Chat 所有已出现的
+	// choice 都给出 finish_reason 或收到 [DONE]、Responses 终态事件，或非流式完整响应体）。
 	Terminal bool `json:"terminal"`
+	// MissingFinishReason 表示 Chat 响应已结束，但有 choice 没有给出 finish_reason
+	//（部分兼容上游只发 [DONE]，或非流式 finish_reason 为 null），汇总为 unknown。
+	MissingFinishReason bool `json:"missing_finish_reason,omitempty"`
+	// ClientDisconnected 表示客户端在响应过程中断开；网关继续读完上游时结束原因仍取上游终态。
+	ClientDisconnected bool `json:"client_disconnected,omitempty"`
 }
 
 // FinishReason 按固定优先级把多项事实汇总为一个标准化原因：
@@ -201,6 +208,9 @@ func (o *Outcome) rawReasons() []string {
 			}
 		} else if o.StopReason != "" {
 			out = append(out, normalizeChatFinishReason(o.StopReason))
+		}
+		if o.MissingFinishReason {
+			out = append(out, ReasonUnknown)
 		}
 	case ProtocolOpenAIResponses:
 		if o.Status != "" {
@@ -267,13 +277,19 @@ func normalizeResponsesStatus(status, incompleteReason string, toolCall bool) st
 	}
 }
 
-// Observer 累积一次上游响应的观测事实。并发安全；nil Observer 的所有方法都是空操作，
-// 因此调用点不需要判空。
+// Observer 累积一次上游响应的观测事实。nil Observer 的所有方法都是空操作，
+// 因此调用点不需要判空。方法内部加锁，但外层 upstreamResponseModelObserver
+// 懒创建不加锁：约定同一次尝试（或同一 WS 响应）只在一个 goroutine 内喂入与读取。
 type Observer struct {
 	mu       sync.Mutex
 	outcome  Outcome
 	observed bool
-	choices  map[int]string
+	// choices 记录已给出 finish_reason 的 Chat choice；chatSeen 记录出现过的所有 choice，
+	// 只有全部 choice 结束（或收到 [DONE] / 完整响应体）才算终态。
+	choices      map[int]string
+	chatSeen     map[int]struct{}
+	chatDone     bool
+	chatComplete bool
 	// pendingError 记录 Responses 流中尚未被终态事件确认的裸 error 事件。
 	// 网关以之后到达的成功终态为准，因此裸 error 只有在没有任何终态时才落为 failed。
 	pendingError string
@@ -300,19 +316,48 @@ func (o *Observer) Snapshot() *Outcome {
 		out.ErrorType = o.pendingError
 		out.Terminal = true
 	}
-	if len(o.choices) > 1 {
+	if out.Protocol == ProtocolOpenAIChatCompletions {
+		o.fillChatTerminal(&out)
+	}
+	return &out
+}
+
+func (o *Observer) fillChatTerminal(out *Outcome) {
+	missing := false
+	for idx := range o.chatSeen {
+		if _, finished := o.choices[idx]; !finished {
+			missing = true
+			break
+		}
+	}
+	allFinished := len(o.chatSeen) > 0 && !missing
+	out.Terminal = o.chatComplete || o.chatDone || allFinished
+	out.MissingFinishReason = out.Terminal && missing
+	if len(o.chatSeen) > 1 {
 		maxIdx := 0
-		for idx := range o.choices {
+		for idx := range o.chatSeen {
 			if idx > maxIdx {
 				maxIdx = idx
 			}
 		}
 		out.ChoiceFinishReasons = make([]string, maxIdx+1)
 		for idx, r := range o.choices {
-			out.ChoiceFinishReasons[idx] = r
+			if idx <= maxIdx {
+				out.ChoiceFinishReasons[idx] = r
+			}
 		}
 	}
-	return &out
+}
+
+// ObserveChatDone 记录 Chat Completions 流的 [DONE] 哨兵。只置标记，不设定协议，
+// 避免其它协议的流把 [DONE] 误判为 Chat。
+func (o *Observer) ObserveChatDone() {
+	if o == nil {
+		return
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.chatDone = true
 }
 
 // ObserveAnthropicPayload 自动区分非流式完整消息（type=message）与流式事件。
@@ -332,6 +377,10 @@ func (o *Observer) ObserveAnthropicPayload(payload []byte) {
 // 流式 chunk 与完整响应体。eventType 为 SSE event 名，可为空。
 func (o *Observer) ObserveOpenAIPayload(payload []byte, eventType string) {
 	if o == nil || len(payload) == 0 {
+		return
+	}
+	if string(bytes.TrimSpace(payload)) == "[DONE]" {
+		o.ObserveChatDone()
 		return
 	}
 	payloadType := gjson.GetBytes(payload, "type").String()
@@ -442,7 +491,7 @@ func (o *Observer) observeAnthropicBlock(block gjson.Result) {
 			o.outcome.HasOutput = true
 		}
 		return
-	case "tool_use", "server_tool_use", "mcp_tool_use":
+	case "tool_use":
 		o.outcome.ToolCall = true
 	}
 	o.outcome.HasOutput = true
@@ -464,7 +513,7 @@ func (o *Observer) setAnthropicStop(node gjson.Result) {
 }
 
 // ObserveChatChunk 喂入一条 OpenAI Chat Completions 流式 chunk 的 data JSON。
-// "[DONE]" 哨兵不需要喂入；终态以 finish_reason 为准。
+// "[DONE]" 哨兵经 ObserveOpenAIPayload 或 ObserveChatDone 喂入。
 func (o *Observer) ObserveChatChunk(data []byte) {
 	if o == nil || len(data) == 0 {
 		return
@@ -484,8 +533,7 @@ func (o *Observer) ObserveChatChunk(data []byte) {
 	o.observed = true
 	// 最终 usage chunk 的 choices 为空数组，不会覆盖已采集的结束原因。
 	for _, choice := range root.Get("choices").Array() {
-		o.observeChatMessage(choice.Get("delta"))
-		o.setChatFinish(int(choice.Get("index").Int()), choice.Get("finish_reason").String())
+		o.observeChatChoice(choice, "delta")
 	}
 }
 
@@ -506,15 +554,22 @@ func (o *Observer) ObserveChatCompletion(body []byte) {
 		o.setErrorType(firstNonEmpty(errNode.Get("type").String(), errNode.Get("code").String(), "error"))
 		return
 	}
-	choices := root.Get("choices").Array()
-	if len(choices) == 0 {
-		return
-	}
+	// 完整响应体本身就说明响应已结束：choices 为空时汇总为 empty，finish_reason 为 null 时为 unknown。
 	o.observed = true
-	for _, choice := range choices {
-		o.observeChatMessage(choice.Get("message"))
-		o.setChatFinish(int(choice.Get("index").Int()), choice.Get("finish_reason").String())
+	o.chatComplete = true
+	for _, choice := range root.Get("choices").Array() {
+		o.observeChatChoice(choice, "message")
 	}
+}
+
+func (o *Observer) observeChatChoice(choice gjson.Result, messageKey string) {
+	index := int(choice.Get("index").Int())
+	if o.chatSeen == nil {
+		o.chatSeen = make(map[int]struct{}, 1)
+	}
+	o.chatSeen[index] = struct{}{}
+	o.observeChatMessage(choice.Get(messageKey))
+	o.setChatFinish(index, choice.Get("finish_reason").String())
 }
 
 func (o *Observer) observeChatMessage(msg gjson.Result) {
@@ -560,7 +615,6 @@ func (o *Observer) setChatFinish(index int, reason string) {
 		return
 	}
 	o.choices[index] = truncateRaw(reason)
-	o.outcome.Terminal = true
 	// 请求级 StopReason 取汇总优先级最高的 choice 原因。
 	best := ""
 	bestRank := -1
@@ -687,7 +741,7 @@ func (o *Observer) observeResponsesItem(item gjson.Result) {
 			}
 		}
 		return
-	case "function_call", "custom_tool_call", "local_shell_call", "shell_call", "apply_patch_call", "computer_call", "mcp_call":
+	case "function_call", "custom_tool_call", "local_shell_call", "shell_call", "apply_patch_call", "computer_call", "mcp_approval_request":
 		o.outcome.ToolCall = true
 	}
 	o.outcome.HasOutput = true

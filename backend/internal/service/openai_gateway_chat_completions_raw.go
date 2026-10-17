@@ -375,7 +375,9 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 		if payload, ok := extractOpenAISSEDataLine(line); ok {
 			trimmedPayload := strings.TrimSpace(payload)
 			terminal.ObserveDataLine(trimmedPayload)
-			if trimmedPayload != "[DONE]" {
+			if trimmedPayload == "[DONE]" {
+				observer.outcomeObserver().ObserveChatDone()
+			} else {
 				eventType := strings.TrimSpace(gjson.Get(payload, "type").String())
 				observer.ObserveOpenAI([]byte(payload), eventType)
 				usageOnlyChunk := isOpenAIChatUsageOnlyStreamChunk(payload)

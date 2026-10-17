@@ -747,6 +747,8 @@ const formatResponseOutcomeTitle = (row: AdminUsageLog): string | undefined => {
   if (outcome.tool_call) parts.push('tool_call')
   if (!outcome.has_output) parts.push('no_output')
   if (!outcome.terminal) parts.push('no_terminal')
+  if (outcome.missing_finish_reason) parts.push('missing_finish_reason')
+  if (outcome.client_disconnected) parts.push('client_disconnected')
   return parts.join(' · ')
 }
 

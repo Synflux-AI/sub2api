@@ -95,7 +95,8 @@ func TestResponseOutcome_NativeAnthropicChatPauseTurn(t *testing.T) {
 
 	outcome := ResponseOutcomeFromContext(c)
 	require.NotNil(t, outcome)
-	require.True(t, outcome.ToolCall)
+	require.False(t, outcome.ToolCall, "server_tool_use runs on the server, not the client")
+	require.True(t, outcome.HasOutput)
 	require.Equal(t, responseoutcome.ReasonPauseTurn, outcome.FinishReason(), "pause_turn is normal control flow, not refusal or failure")
 }
 
@@ -217,4 +218,73 @@ func TestResponseOutcome_RecordUsagePersistsFinishReason(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, usageRepo.lastLog.FinishReason, "uncollected paths keep NULL")
 	require.Nil(t, usageRepo.lastLog.ResponseOutcome)
+}
+
+func TestResponseOutcome_RecordUsageSkipsOutcomeForNormalEndings(t *testing.T) {
+	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+	svc := newOpenAIRecordUsageServiceForTest(usageRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{}, nil)
+	record := func(outcome *responseoutcome.Outcome) *UsageLog {
+		usageRepo.lastLog = nil
+		err := svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
+			Result:  &OpenAIForwardResult{RequestID: "resp_" + outcome.Protocol + outcome.Status + outcome.StopReason, Usage: OpenAIUsage{InputTokens: 1}, Model: "gpt-5.1", ResponseOutcome: outcome},
+			APIKey:  &APIKey{ID: 1, User: &User{ID: 2}},
+			User:    &User{ID: 2},
+			Account: &Account{ID: 3, Type: AccountTypeAPIKey},
+		})
+		require.NoError(t, err)
+		require.NotNil(t, usageRepo.lastLog)
+		return usageRepo.lastLog
+	}
+
+	stopped := record(&responseoutcome.Outcome{Protocol: responseoutcome.ProtocolAnthropicMessages, StopReason: "end_turn", HasOutput: true, Terminal: true})
+	require.Equal(t, responseoutcome.ReasonStop, *stopped.FinishReason)
+	require.Nil(t, stopped.ResponseOutcome, "normal endings keep only finish_reason")
+
+	tool := record(&responseoutcome.Outcome{Protocol: responseoutcome.ProtocolOpenAIChatCompletions, StopReason: "tool_calls", ToolCall: true, HasOutput: true, Terminal: true})
+	require.Equal(t, responseoutcome.ReasonToolUse, *tool.FinishReason)
+	require.Nil(t, tool.ResponseOutcome)
+
+	disconnected := record(&responseoutcome.Outcome{Protocol: responseoutcome.ProtocolOpenAIResponses, Status: "completed", HasOutput: true, Terminal: true, ClientDisconnected: true})
+	require.Equal(t, responseoutcome.ReasonStop, *disconnected.FinishReason, "upstream finished; disconnect does not change the reason")
+	require.NotNil(t, disconnected.ResponseOutcome, "client disconnect is a transport fact worth keeping")
+	require.True(t, disconnected.ResponseOutcome.ClientDisconnected)
+
+	paused := record(&responseoutcome.Outcome{Protocol: responseoutcome.ProtocolAnthropicMessages, StopReason: "pause_turn", HasOutput: true, Terminal: true})
+	require.NotNil(t, paused.ResponseOutcome)
+}
+
+func TestResponseOutcome_BedrockNonStreamingRefusal(t *testing.T) {
+	svc := newStreamingResponseTestGatewayService()
+	c, _ := newResponseOutcomeTestContext("/v1/messages", nil)
+	beginUpstreamResponseModelObservation(c)
+	body := `{"id":"msg_1","type":"message","role":"assistant","model":"claude-x","content":[],"stop_reason":"refusal","stop_details":{"type":"refusal","category":"cyber"},"usage":{"input_tokens":3,"output_tokens":0}}`
+	resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body))}
+
+	_, err := svc.handleBedrockNonStreamingResponse(context.Background(), resp, c, &Account{ID: 1})
+	require.NoError(t, err)
+
+	outcome := ResponseOutcomeFromContext(c)
+	require.NotNil(t, outcome, "Bedrock speaks Anthropic Messages and must be collected")
+	require.Equal(t, responseoutcome.ProtocolAnthropicMessages, outcome.Protocol)
+	require.Equal(t, "cyber", outcome.StopDetailsCategory)
+	require.Equal(t, responseoutcome.ReasonRefusal, outcome.FinishReason())
+}
+
+func TestResponseOutcome_RawChatDoneWithoutFinishReasonIsUnknown(t *testing.T) {
+	sse := "data: {\"id\":\"c1\",\"object\":\"chat.completion.chunk\",\"model\":\"m\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"Hello\"}}]}\n\n" +
+		"data: {\"id\":\"c1\",\"object\":\"chat.completion.chunk\",\"model\":\"m\",\"choices\":[],\"usage\":{\"prompt_tokens\":2,\"completion_tokens\":3,\"total_tokens\":5}}\n\n" +
+		"data: [DONE]\n\n"
+	body := []byte(`{"model":"m","messages":[{"role":"user","content":"hi"}],"stream":true}`)
+	c, _ := newResponseOutcomeTestContext("/v1/chat/completions", body)
+	beginUpstreamResponseModelObservation(c)
+	svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig(), httpUpstream: sseUpstream(sse)}
+
+	_, err := svc.forwardAsRawChatCompletions(context.Background(), c, rawChatCompletionsTestAccount(), body, "")
+	require.NoError(t, err)
+
+	outcome := ResponseOutcomeFromContext(c)
+	require.NotNil(t, outcome)
+	require.True(t, outcome.Terminal, "[DONE] ends the stream")
+	require.True(t, outcome.MissingFinishReason)
+	require.Equal(t, responseoutcome.ReasonUnknown, outcome.FinishReason(), "missing finish_reason is unknown, not interrupted")
 }

@@ -1909,6 +1909,8 @@ export interface UsageResponseOutcome {
   tool_call?: boolean
   has_output: boolean
   terminal: boolean
+  missing_finish_reason?: boolean
+  client_disconnected?: boolean
 }
 
 export interface AdminUsageLog extends UsageLog {
