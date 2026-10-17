@@ -504,3 +504,141 @@ func TestAnthropicServerToolUseIsNotClientToolCall(t *testing.T) {
 	require.True(t, out.HasOutput)
 	require.Equal(t, ReasonStop, out.FinishReason())
 }
+
+func feedGemini(o *Observer, chunks ...string) {
+	for _, c := range chunks {
+		o.ObserveGeminiPayload([]byte(c))
+	}
+}
+
+func TestGeminiFinishReasons(t *testing.T) {
+	cases := []struct {
+		finishReason string
+		want         string
+	}{
+		{"STOP", ReasonStop},
+		{"MAX_TOKENS", ReasonTruncated},
+		{"SAFETY", ReasonContentFilter},
+		{"RECITATION", ReasonContentFilter},
+		{"PROHIBITED_CONTENT", ReasonContentFilter},
+		{"IMAGE_SAFETY", ReasonContentFilter},
+		{"MALFORMED_FUNCTION_CALL", ReasonIncomplete},
+		{"TOO_MANY_TOOL_CALLS", ReasonIncomplete},
+		{"MISSING_THOUGHT_SIGNATURE", ReasonIncomplete},
+		{"NO_IMAGE", ReasonIncomplete},
+		{"OTHER", ReasonUnknown},
+		{"SOME_FUTURE_REASON", ReasonUnknown},
+	}
+	for _, tc := range cases {
+		t.Run(tc.finishReason, func(t *testing.T) {
+			o := NewObserver("")
+			feedGemini(o, `{"candidates":[{"content":{"parts":[{"text":"hi"}],"role":"model"},"finishReason":"`+tc.finishReason+`"}]}`)
+			out := o.Snapshot()
+			require.NotNil(t, out)
+			require.Equal(t, ProtocolGeminiGenerateContent, out.Protocol)
+			require.Equal(t, tc.finishReason, out.StopReason, "raw reason must be preserved")
+			require.True(t, out.Terminal)
+			require.Equal(t, tc.want, out.FinishReason())
+		})
+	}
+}
+
+// Gemini 流的 finishReason 常在不带 parts 的末尾 chunk 上；之前 chunk 的输出必须累积。
+func TestGeminiStreamFinishOnTrailingChunk(t *testing.T) {
+	o := NewObserver("")
+	feedGemini(o,
+		`{"candidates":[{"content":{"parts":[{"text":"hel"}],"role":"model"}}],"usageMetadata":{"promptTokenCount":3}}`,
+		`{"candidates":[{"content":{"parts":[{"text":"lo"}],"role":"model"}}]}`,
+		`{"candidates":[{"content":{},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":3,"candidatesTokenCount":2}}`,
+	)
+	out := o.Snapshot()
+	require.True(t, out.HasOutput)
+	require.True(t, out.Terminal)
+	require.Equal(t, ReasonStop, out.FinishReason())
+}
+
+func TestGeminiStreamWithoutFinishIsInterrupted(t *testing.T) {
+	o := NewObserver("")
+	feedGemini(o, `{"candidates":[{"content":{"parts":[{"text":"partial"}],"role":"model"}}]}`)
+	require.Equal(t, ReasonInterrupted, o.Snapshot().FinishReason())
+}
+
+func TestGeminiFunctionCallIsToolUse(t *testing.T) {
+	o := NewObserver("")
+	feedGemini(o, `{"candidates":[{"content":{"parts":[{"functionCall":{"name":"get_weather","args":{}},"thoughtSignature":"sig"}],"role":"model"},"finishReason":"STOP"}]}`)
+	out := o.Snapshot()
+	require.True(t, out.ToolCall)
+	require.True(t, out.HasOutput)
+	require.Equal(t, ReasonToolUse, out.FinishReason())
+}
+
+func TestGeminiThoughtOnlyIsEmpty(t *testing.T) {
+	o := NewObserver("")
+	feedGemini(o,
+		`{"candidates":[{"content":{"parts":[{"text":"thinking...","thought":true}],"role":"model"}}]}`,
+		`{"candidates":[{"content":{"parts":[{"text":"","thoughtSignature":"sig"}],"role":"model"},"finishReason":"STOP"}]}`,
+	)
+	out := o.Snapshot()
+	require.False(t, out.HasOutput)
+	require.Equal(t, ReasonEmpty, out.FinishReason())
+}
+
+func TestGeminiInlineImageIsOutput(t *testing.T) {
+	o := NewObserver("")
+	feedGemini(o, `{"candidates":[{"content":{"parts":[{"inlineData":{"mimeType":"image/png","data":"aGk="}}],"role":"model"},"finishReason":"STOP"}]}`)
+	require.Equal(t, ReasonStop, o.Snapshot().FinishReason())
+}
+
+func TestGeminiPromptBlocked(t *testing.T) {
+	o := NewObserver("")
+	feedGemini(o, `{"promptFeedback":{"blockReason":"PROHIBITED_CONTENT"},"usageMetadata":{"promptTokenCount":9}}`)
+	out := o.Snapshot()
+	require.Equal(t, "PROHIBITED_CONTENT", out.BlockReason)
+	require.True(t, out.Terminal)
+	require.Equal(t, ReasonContentFilter, out.FinishReason())
+}
+
+func TestGeminiUnspecifiedBlockReasonIgnored(t *testing.T) {
+	o := NewObserver("")
+	feedGemini(o, `{"promptFeedback":{"blockReason":"BLOCKED_REASON_UNSPECIFIED"},"candidates":[{"content":{"parts":[{"text":"ok"}]},"finishReason":"STOP"}]}`)
+	out := o.Snapshot()
+	require.Empty(t, out.BlockReason)
+	require.Equal(t, ReasonStop, out.FinishReason())
+}
+
+func TestGeminiErrorEnvelopeIsFailed(t *testing.T) {
+	o := NewObserver("")
+	feedGemini(o,
+		`{"candidates":[{"content":{"parts":[{"text":"partial"}],"role":"model"}}]}`,
+		`{"error":{"code":500,"message":"Internal error encountered.","status":"INTERNAL"}}`,
+	)
+	out := o.Snapshot()
+	require.Equal(t, "INTERNAL", out.ErrorType)
+	require.Equal(t, ReasonFailed, out.FinishReason())
+}
+
+func TestGeminiCodeAssistWrapperIsUnwrapped(t *testing.T) {
+	for _, payload := range []string{
+		`{"response":{"candidates":[{"content":{"parts":[{"text":"hi"}]},"finishReason":"MAX_TOKENS"}]},"traceId":"t"}`,
+		`{"response":{"response":{"candidates":[{"content":{"parts":[{"text":"hi"}]},"finishReason":"MAX_TOKENS"}]}}}`,
+	} {
+		o := NewObserver("")
+		feedGemini(o, payload)
+		require.Equal(t, ReasonTruncated, o.Snapshot().FinishReason(), payload)
+	}
+}
+
+// 多候选只看首候选，与 service.geminiPrimaryCandidate 的判定一致。
+func TestGeminiNonPrimaryCandidateIgnored(t *testing.T) {
+	o := NewObserver("")
+	feedGemini(o, `{"candidates":[{"index":1,"content":{"parts":[{"text":"b"}]},"finishReason":"SAFETY"},{"index":0,"content":{"parts":[{"text":"a"}]},"finishReason":"STOP"}]}`)
+	out := o.Snapshot()
+	require.Equal(t, "STOP", out.StopReason)
+	require.Equal(t, ReasonStop, out.FinishReason())
+}
+
+func TestGeminiUnrelatedPayloadStaysNil(t *testing.T) {
+	o := NewObserver("")
+	feedGemini(o, `{"totalTokens":12}`, `not json`, `[]`)
+	require.Nil(t, o.Snapshot(), "countTokens and junk must not claim an outcome")
+}

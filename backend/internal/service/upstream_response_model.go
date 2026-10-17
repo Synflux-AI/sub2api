@@ -167,6 +167,7 @@ func normalizeObservedAnthropicSpeed(raw string) string {
 }
 
 func (o *upstreamResponseModelObserver) ObserveGemini(payload []byte) {
+	o.outcomeObserver().ObserveGeminiPayload(payload)
 	model := firstValidTrimmedGJSONString(
 		payload,
 		"modelVersion",
