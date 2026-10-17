@@ -31,6 +31,7 @@ type usageStatsCacheKeyData struct {
 	NativeCompactionV2    *bool    `json:"native_compaction_v2"`
 	BillingType           *int8    `json:"billing_type"`
 	UpstreamModelMismatch *bool    `json:"upstream_model_mismatch"`
+	FinishReasons         []string `json:"finish_reasons,omitempty"`
 }
 
 func usageStatsCacheKey(filters usagestats.UsageLogFilters) string {
@@ -62,6 +63,7 @@ func usageStatsCacheKey(filters usagestats.UsageLogFilters) string {
 		NativeCompactionV2:    filters.NativeCompactionV2,
 		BillingType:           filters.BillingType,
 		UpstreamModelMismatch: filters.UpstreamModelMismatch,
+		FinishReasons:         normalizeStringList(filters.FinishReasons),
 	})
 }
 

@@ -130,6 +130,7 @@ export async function getStats(params: {
   stream?: boolean
   native_compaction_v2?: boolean | null
   upstream_model_mismatch?: boolean
+  finish_reason?: string | null
   period?: string
   start_date?: string
   end_date?: string

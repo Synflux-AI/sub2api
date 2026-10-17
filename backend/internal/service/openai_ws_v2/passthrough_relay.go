@@ -15,6 +15,7 @@ import (
 	coderws "github.com/coder/websocket"
 	"github.com/tidwall/gjson"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/responseoutcome"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 )
 
@@ -39,7 +40,9 @@ type RelayResult struct {
 	ResponseModelConflict bool
 	// ResponseServiceTier is the raw service_tier declared by the last terminal
 	// response event; "" when the upstream never declared one.
-	ResponseServiceTier     string
+	ResponseServiceTier string
+	// ResponseOutcome 是最后一个已结束响应的结束原因观测快照。
+	ResponseOutcome         *responseoutcome.Outcome
 	Usage                   Usage
 	RequestID               string
 	TerminalEventType       string
@@ -55,12 +58,14 @@ type RelayTurnResult struct {
 	ResponseModel         string
 	ResponseModelConflict bool
 	ResponseServiceTier   string
-	Usage                 Usage
-	RequestID             string
-	TerminalEventType     string
-	StartedAt             time.Time
-	Duration              time.Duration
-	FirstTokenMs          *int
+	// ResponseOutcome 按 response_id 隔离观测，连接关闭不会被当作每个响应的结束原因。
+	ResponseOutcome   *responseoutcome.Outcome
+	Usage             Usage
+	RequestID         string
+	TerminalEventType string
+	StartedAt         time.Time
+	Duration          time.Duration
+	FirstTokenMs      *int
 }
 
 type RelayExit struct {
@@ -110,6 +115,7 @@ type relayState struct {
 	lastResponseID          string
 	lastResponseModel       string
 	lastResponseServiceTier string
+	lastResponseOutcome     *responseoutcome.Outcome
 	responseConflict        bool
 	terminalEventType       string
 	firstTokenMs            *int
@@ -134,6 +140,7 @@ type observedUpstreamEvent struct {
 	responseModel       string
 	responseConflict    bool
 	responseServiceTier string
+	responseOutcome     *responseoutcome.Outcome
 	duration            time.Duration
 	firstToken          *int
 }
@@ -147,6 +154,7 @@ type relayTurnTiming struct {
 	// terminalResponseServiceTier is only taken from terminal events: earlier
 	// events echo the requested tier, not the one the upstream actually used.
 	terminalResponseServiceTier string
+	outcome                     *responseoutcome.Observer
 }
 
 func Relay(
@@ -799,6 +807,7 @@ func observeUpstreamMessage(
 		turnTiming = state.activeTurn
 	}
 	observeRelayTurnResponseModel(turnTiming, firstRelayResponseModel(message), isTerminalEvent(eventType))
+	observeRelayTurnOutcome(turnTiming, message)
 	if !isTerminalEvent(eventType) {
 		return observed
 	}
@@ -862,6 +871,8 @@ func finalizeObservedRelayTerminal(state *relayState, observed observedUpstreamE
 			observed.responseModel = relayTurnResponseModel(&turnTiming)
 			observed.responseConflict = turnTiming.responseModelConflict
 			observed.responseServiceTier = turnTiming.terminalResponseServiceTier
+			observed.responseOutcome = turnTiming.outcome.Snapshot()
+			state.lastResponseOutcome = observed.responseOutcome
 			state.lastResponseModel = observed.responseModel
 			state.responseConflict = observed.responseConflict
 			state.lastResponseServiceTier = observed.responseServiceTier
@@ -901,6 +912,7 @@ func emitTurnComplete(
 		ResponseModel:         observed.responseModel,
 		ResponseModelConflict: observed.responseConflict,
 		ResponseServiceTier:   observed.responseServiceTier,
+		ResponseOutcome:       observed.responseOutcome,
 		Usage:                 observed.usage,
 		RequestID:             responseID,
 		TerminalEventType:     observed.eventType,
@@ -945,6 +957,17 @@ func observeRelayTurnResponseModel(turn *relayTurnTiming, model string, terminal
 	if turn.firstResponseModel == "" {
 		turn.firstResponseModel = model
 	}
+}
+
+// observeRelayTurnOutcome 把上游帧喂给该响应自己的结束原因观测器。
+func observeRelayTurnOutcome(turn *relayTurnTiming, message []byte) {
+	if turn == nil {
+		return
+	}
+	if turn.outcome == nil {
+		turn.outcome = responseoutcome.NewObserver(responseoutcome.ProtocolOpenAIResponses)
+	}
+	turn.outcome.ObserveResponsesEvent(message)
 }
 
 func relayTurnResponseModel(turn *relayTurnTiming) string {
@@ -1267,6 +1290,7 @@ func enrichResult(result *RelayResult, state *relayState, duration time.Duration
 	result.ResponseModel = state.lastResponseModel
 	result.ResponseModelConflict = state.responseConflict
 	result.ResponseServiceTier = state.lastResponseServiceTier
+	result.ResponseOutcome = state.lastResponseOutcome
 	result.Usage = state.usage
 	result.RequestID = state.lastResponseID
 	result.TerminalEventType = state.terminalEventType

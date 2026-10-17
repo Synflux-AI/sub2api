@@ -328,6 +328,7 @@ func (s *OpenAIGatewayService) scanCCStream(
 		}
 		if payload == "[DONE]" {
 			st.SawDone = true
+			upstreamResponseModelObserverFromContext(c).outcomeObserver().ObserveChatDone()
 			break
 		}
 		// 观察上游 CC chunk 回显的 model / service_tier（计费以回显为准）。

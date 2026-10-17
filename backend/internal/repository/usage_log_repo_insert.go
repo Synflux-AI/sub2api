@@ -90,6 +90,8 @@ var usageLogInsertArgTypes = [...]string{
 	"text",        // session_id
 	"text",        // trace_id
 	"text",        // image_response_format
+	"text",        // finish_reason
+	"jsonb",       // response_outcome
 	"boolean",     // native_compaction_v2
 	"timestamptz", // created_at
 }
@@ -297,6 +299,8 @@ func (r *usageLogRepository) createSingle(ctx context.Context, sqlq sqlExecutor,
 			session_id,
 			trace_id,
 			image_response_format,
+			finish_reason,
+			response_outcome,
 			native_compaction_v2,
 			created_at
 		) VALUES (
@@ -305,7 +309,7 @@ func (r *usageLogRepository) createSingle(ctx context.Context, sqlq sqlExecutor,
 			$12, $13, $14, $15,
 			$16, $17, $18, $19,
 			$20, $21, $22, $23, $24, $25,
-			$26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55, $56, $57, $58, $59, $60, $61, $62, $63, $64, $65, $66, $67, $68
+			$26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55, $56, $57, $58, $59, $60, $61, $62, $63, $64, $65, $66, $67, $68, $69, $70
 		)
 		ON CONFLICT (request_id, api_key_id) DO NOTHING
 		RETURNING id, created_at
@@ -763,6 +767,8 @@ func buildUsageLogBatchInsertQuery(keys []string, preparedByKey map[string]usage
 			session_id,
 			trace_id,
 			image_response_format,
+			finish_reason,
+			response_outcome,
 			native_compaction_v2,
 			created_at
 		) AS (VALUES `)
@@ -864,6 +870,8 @@ func buildUsageLogBatchInsertQuery(keys []string, preparedByKey map[string]usage
 				session_id,
 				trace_id,
 				image_response_format,
+				finish_reason,
+				response_outcome,
 				native_compaction_v2,
 				created_at
 			)
@@ -934,6 +942,8 @@ func buildUsageLogBatchInsertQuery(keys []string, preparedByKey map[string]usage
 				session_id,
 				trace_id,
 				image_response_format,
+				finish_reason,
+				response_outcome,
 				native_compaction_v2,
 				created_at
 			FROM input
@@ -1044,6 +1054,8 @@ func buildUsageLogBestEffortInsertQuery(preparedList []usageLogInsertPrepared) (
 			session_id,
 			trace_id,
 			image_response_format,
+			finish_reason,
+			response_outcome,
 			native_compaction_v2,
 			created_at
 		) AS (VALUES `)
@@ -1140,6 +1152,8 @@ func buildUsageLogBestEffortInsertQuery(preparedList []usageLogInsertPrepared) (
 			session_id,
 			trace_id,
 			image_response_format,
+			finish_reason,
+			response_outcome,
 			native_compaction_v2,
 			created_at
 		)
@@ -1210,6 +1224,8 @@ func buildUsageLogBestEffortInsertQuery(preparedList []usageLogInsertPrepared) (
 			session_id,
 			trace_id,
 			image_response_format,
+			finish_reason,
+			response_outcome,
 			native_compaction_v2,
 			created_at
 		FROM input
@@ -1288,6 +1304,8 @@ func execUsageLogInsertNoResult(ctx context.Context, sqlq sqlExecutor, prepared 
 			session_id,
 			trace_id,
 			image_response_format,
+			finish_reason,
+			response_outcome,
 			native_compaction_v2,
 			created_at
 		) VALUES (
@@ -1296,7 +1314,7 @@ func execUsageLogInsertNoResult(ctx context.Context, sqlq sqlExecutor, prepared 
 			$12, $13, $14, $15,
 			$16, $17, $18, $19,
 			$20, $21, $22, $23, $24, $25,
-			$26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55, $56, $57, $58, $59, $60, $61, $62, $63, $64, $65, $66, $67, $68
+			$26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, $50, $51, $52, $53, $54, $55, $56, $57, $58, $59, $60, $61, $62, $63, $64, $65, $66, $67, $68, $69, $70
 		)
 		ON CONFLICT (request_id, api_key_id) DO NOTHING
 	`, prepared.args...)
@@ -1343,6 +1361,8 @@ func prepareUsageLogInsert(log *service.UsageLog) usageLogInsertPrepared {
 	billingTier := nullString(log.BillingTier)
 	billingMode := nullString(log.BillingMode)
 	upstreamRequestID := nullString(log.UpstreamRequestID)
+	finishReason := nullString(log.FinishReason)
+	responseOutcome := nullResponseOutcomeJSON(log.ResponseOutcome)
 	sessionID := nullString(log.SessionID)
 	traceID := nullString(log.TraceID)
 	imageResponseFormat := nullString(log.ImageResponseFormat)
@@ -1431,6 +1451,8 @@ func prepareUsageLogInsert(log *service.UsageLog) usageLogInsertPrepared {
 			sessionID,              // session_id
 			traceID,                // trace_id
 			imageResponseFormat,    // image_response_format
+			finishReason,           // finish_reason
+			responseOutcome,        // response_outcome
 			log.NativeCompactionV2, // native_compaction_v2
 			createdAt,
 		},

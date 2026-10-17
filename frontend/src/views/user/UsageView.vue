@@ -123,6 +123,10 @@
               <label class="input-label">{{ t('admin.usage.billingMode') }}</label>
               <Select v-model="filters.billing_mode" :options="billingModeOptions" @change="applyFilters" />
             </div>
+            <div class="w-full sm:w-auto sm:min-w-[200px]">
+              <label class="input-label" :title="t('usage.finishReasonHint')">{{ t('usage.finishReasonFilter') }}</label>
+              <Select v-model="filters.finish_reason" :options="finishReasonOptions" @change="applyFilters" />
+            </div>
           </div>
 
           <div class="flex w-full flex-wrap items-center justify-end gap-3 sm:w-auto">
@@ -239,6 +243,7 @@ import UserErrorRequestsTable from '@/components/user/UserErrorRequestsTable.vue
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import { formatReasoningEffort } from '@/utils/format'
 import { getBillingModeLabel, getDisplayBillingMode as resolveDisplayBillingMode } from '@/utils/billingMode'
+import { buildUsageFinishReasonOptions, getUsageFinishReasonLabel } from '@/utils/usageFinishReason'
 import { resolveUsageRequestType, requestTypeToLegacyStream } from '@/utils/usageRequestType'
 import type {
   ApiKey,
@@ -365,6 +370,7 @@ const filters = ref<UsageQueryParams>({
   native_compaction_v2: null,
   billing_type: null,
   billing_mode: null,
+  finish_reason: null,
 })
 
 const pagination = reactive({
@@ -399,6 +405,7 @@ const billingTypeOptions = computed<SelectOption[]>(() => [
   { value: 0, label: t('admin.usage.billingTypeBalance') },
   { value: 1, label: t('admin.usage.billingTypeSubscription') },
 ])
+const finishReasonOptions = computed<SelectOption[]>(() => buildUsageFinishReasonOptions(t))
 const billingModeOptions = computed<SelectOption[]>(() => [
   { value: null, label: t('admin.usage.allBillingModes') },
   { value: 'token', label: t('admin.usage.billingModeToken') },
@@ -434,6 +441,9 @@ const normalizedFilters = computed<UsageQueryParams>(() => {
     stream: legacyStream === null ? undefined : legacyStream,
   }
 })
+
+// 图表与模型统计走预聚合，不支持按结束原因筛选；显式剔除避免误以为已过滤。
+const chartFilters = computed<UsageQueryParams>(() => ({ ...normalizedFilters.value, finish_reason: undefined }))
 
 const buildUsageListParams = (page: number, pageSize: number): UsageQueryParams => ({
   page,
@@ -491,7 +501,7 @@ const loadModelStats = async () => {
   modelStatsLoading.value = true
   try {
     const response = await usageAPI.getDashboardModels({
-      ...normalizedFilters.value,
+      ...chartFilters.value,
       model_source: 'requested',
     })
     if (seq !== modelStatsReqSeq) return
@@ -511,7 +521,7 @@ const loadChartData = async () => {
   chartsLoading.value = true
   try {
     const snapshot = await usageAPI.getDashboardSnapshotV2({
-      ...normalizedFilters.value,
+      ...chartFilters.value,
       granularity: granularity.value,
       include_trend: true,
       include_model_stats: false,
@@ -568,6 +578,7 @@ const resetFilters = () => {
     native_compaction_v2: null,
     billing_type: null,
     billing_mode: null,
+    finish_reason: null,
   }
   granularity.value = getGranularityForRange(range.start, range.end)
   applyFilters()
@@ -662,6 +673,7 @@ const exportToCSV = async () => {
       'IP Address',
       'Type',
       'Billing Mode',
+      'Finish Reason',
       'Input Tokens',
       'Output Tokens',
       'Cache Read Tokens',
@@ -684,6 +696,7 @@ const exportToCSV = async () => {
       log.ip_address || '',
       getRequestTypeExportText(log),
       getBillingModeLabel(getDisplayBillingMode(log), t),
+      log.finish_reason ? getUsageFinishReasonLabel(log.finish_reason, t) : '',
       log.input_tokens,
       log.output_tokens,
       log.cache_read_tokens,
@@ -729,6 +742,7 @@ const allColumns = computed<Column[]>(() => [
   { key: 'group', label: t('admin.usage.group'), sortable: false },
   { key: 'stream', label: t('usage.type'), sortable: false },
   { key: 'billing_mode', label: t('admin.usage.billingMode'), sortable: false },
+  { key: 'finish_reason', label: t('usage.finishReason'), sortable: false },
   { key: 'tokens', label: t('usage.tokens'), sortable: false },
   { key: 'cost', label: t('usage.cost'), sortable: false },
   { key: 'latency', label: t('usage.latency'), sortable: false },

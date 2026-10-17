@@ -9,6 +9,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/responseoutcome"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/usagestats"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
@@ -105,6 +106,12 @@ func (h *UsageHandler) parseUserUsageFilters(c *gin.Context, requireRange bool) 
 			return nil, false
 		}
 		groupID = id
+	}
+
+	finishReasons, err := responseoutcome.ParseFilter(c.Query("finish_reason"))
+	if err != nil {
+		response.BadRequest(c, "Invalid finish_reason")
+		return nil, false
 	}
 
 	var requestType *int16
@@ -215,6 +222,7 @@ func (h *UsageHandler) parseUserUsageFilters(c *gin.Context, requireRange bool) 
 			NativeCompactionV2: nativeCompactionV2,
 			BillingType:        billingType,
 			BillingMode:        billingMode,
+			FinishReasons:      finishReasons,
 			StartTime:          startPtr,
 			EndTime:            endPtr,
 		},

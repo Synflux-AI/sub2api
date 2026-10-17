@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/domain"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/responseoutcome"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
@@ -612,6 +613,9 @@ type UsageLog struct {
 	Model     string  `json:"model"`
 	// ServiceTier records the OpenAI service tier used for billing, e.g. "priority" / "flex".
 	ServiceTier *string `json:"service_tier,omitempty"`
+	// FinishReason 是标准化结束原因（stop / tool_use / refusal / truncated 等）；
+	// 历史行与未采集路径为空，不能视为 stop。
+	FinishReason *string `json:"finish_reason,omitempty"`
 	// ReasoningEffort is the client-requested effort (mapping-hidden, like Model).
 	// OpenAI: "low"/"medium"/"high"/"xhigh"; Claude: "low"/"medium"/"high"/"max".
 	// Historical rows without requested_reasoning_effort fall back to the stored effective value.
@@ -719,6 +723,8 @@ type AdminUsageLog struct {
 	ModelMappingChain *string `json:"model_mapping_chain,omitempty"`
 	// UpstreamRequestID 是直接上游声明的请求标识，仅管理端可见。
 	UpstreamRequestID *string `json:"upstream_request_id,omitempty"`
+	// ResponseOutcome 是上游原始结束原因与拒答/工具调用/输出/终态等结构化事实，仅管理端可见。
+	ResponseOutcome *responseoutcome.Outcome `json:"response_outcome,omitempty"`
 	// BillingTier 计费层级标签（per_request/image 模式）
 	BillingTier *string `json:"billing_tier,omitempty"`
 

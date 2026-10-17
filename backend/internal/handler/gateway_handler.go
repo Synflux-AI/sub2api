@@ -606,6 +606,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			upstreamEndpoint := GetUpstreamEndpoint(c, account.Platform)
 
 			stampForwardReasoningEffort(result, parsedReq, account)
+			stampForwardResponseOutcome(c, result)
 
 			// 使用量记录通过有界 worker 池提交，避免请求热路径创建无界 goroutine。
 			// ForceCacheBilling 提前拍成标量，避免 worker 闭包保活 failover 状态里的响应体。
@@ -974,6 +975,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 				upstreamEndpoint := GetUpstreamEndpoint(c, account.Platform)
 
 				stampForwardReasoningEffort(result, attemptParsedReq, account)
+				stampForwardResponseOutcome(c, result)
 
 				// 使用量记录通过有界 worker 池提交，避免请求热路径创建无界 goroutine。
 				// ForceCacheBilling 提前拍成标量，避免 worker 闭包保活 failover 状态里的响应体。

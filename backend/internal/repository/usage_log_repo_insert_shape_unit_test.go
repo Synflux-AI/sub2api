@@ -129,8 +129,8 @@ func TestPrepareUsageLogInsert_UpstreamRequestIDArgWiring(t *testing.T) {
 	})
 	require.Len(t, prepared.args, len(usageLogInsertArgTypes))
 
-	// 本仓库尾序：upstream_request_id, session_id, trace_id, image_response_format, native_compaction_v2, created_at。
-	idx := len(prepared.args) - 6
+	// 本仓库尾序：upstream_request_id, session_id, trace_id, image_response_format, finish_reason, response_outcome, native_compaction_v2, created_at。
+	idx := len(prepared.args) - 8
 	arg, ok := prepared.args[idx].(sql.NullString)
 	require.True(t, ok, "upstream_request_id arg should be sql.NullString, got %T", prepared.args[idx])
 	require.True(t, arg.Valid)

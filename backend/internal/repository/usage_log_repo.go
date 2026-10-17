@@ -133,6 +133,24 @@ func appendUsageLogIDWhereCondition(conditions []string, args []any, column stri
 	return conditions, args
 }
 
+// appendFinishReasonWhereCondition 按标准化结束原因过滤；逐值参数化 IN 可由谓词证明
+// 命中 idx_usage_logs_finish_reason_created_at 部分索引。
+func appendFinishReasonWhereCondition(conditions []string, args []any, reasons []string) ([]string, []any) {
+	placeholders := make([]string, 0, len(reasons))
+	for _, reason := range reasons {
+		reason = strings.TrimSpace(reason)
+		if reason == "" {
+			continue
+		}
+		placeholders = append(placeholders, fmt.Sprintf("$%d", len(args)+1))
+		args = append(args, reason)
+	}
+	if len(placeholders) == 0 {
+		return conditions, args
+	}
+	return append(conditions, fmt.Sprintf("finish_reason IN (%s)", strings.Join(placeholders, ", "))), args
+}
+
 func appendUsageLogModelWhereConditions(conditions []string, args []any, model string, models []string, source string) ([]string, []any) {
 	return appendUsageLogModelWhereConditionsWithAlias(conditions, args, model, models, source, "")
 }
