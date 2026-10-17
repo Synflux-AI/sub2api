@@ -264,8 +264,11 @@ func normalizeChatFinishReason(reason string) string {
 	}
 }
 
-// normalizeGeminiFinishReason 的内容过滤集合与 service.isGeminiContentFilterFinishReason 一致；
-// 工具调用出错、缺思考签名、该出图没出图等模型侧生成失败归为 incomplete。
+// normalizeGeminiFinishReason 的取值以官方 FinishReason 枚举为准
+// （https://ai.google.dev/api/generate-content#FinishReason）。内容过滤集合在
+// service.isGeminiContentFilterFinishReason 之外加了 ESCALATION（被升级规则过滤）；
+// 工具调用出错、缺思考签名、响应格式错误、该出图没出图等模型侧生成失败归为 incomplete；
+// PUP_LIMITED_DISABLED 是上游账号因违反使用政策被限制，与本次内容无关，归为 failed。
 func normalizeGeminiFinishReason(reason string, toolCall bool) string {
 	switch strings.ToUpper(reason) {
 	case "STOP":
@@ -273,14 +276,16 @@ func normalizeGeminiFinishReason(reason string, toolCall bool) string {
 			return ReasonToolUse
 		}
 		return ReasonStop
-	case "MAX_TOKENS":
+	case "MAX_TOKENS", "CONTINUATION":
 		return ReasonTruncated
 	case "SAFETY", "RECITATION", "LANGUAGE", "BLOCKLIST", "PROHIBITED_CONTENT", "SPII",
-		"IMAGE_SAFETY", "IMAGE_PROHIBITED_CONTENT", "IMAGE_RECITATION":
+		"IMAGE_SAFETY", "IMAGE_PROHIBITED_CONTENT", "IMAGE_RECITATION", "ESCALATION":
 		return ReasonContentFilter
 	case "MALFORMED_FUNCTION_CALL", "UNEXPECTED_TOOL_CALL", "TOO_MANY_TOOL_CALLS",
-		"MISSING_THOUGHT_SIGNATURE", "NO_IMAGE", "IMAGE_OTHER":
+		"MISSING_THOUGHT_SIGNATURE", "MALFORMED_RESPONSE", "NO_IMAGE", "IMAGE_OTHER":
 		return ReasonIncomplete
+	case "PUP_LIMITED_DISABLED":
+		return ReasonFailed
 	default:
 		return ReasonUnknown
 	}
@@ -811,7 +816,7 @@ func (o *Observer) ObserveGeminiPayload(payload []byte) {
 	}
 	o.ensureProtocol(ProtocolGeminiGenerateContent)
 	o.observed = true
-	if block := feedback.Get("blockReason").String(); block != "" && block != "BLOCKED_REASON_UNSPECIFIED" && o.outcome.BlockReason == "" {
+	if block := feedback.Get("blockReason").String(); !isUnspecifiedGeminiBlockReason(block) && o.outcome.BlockReason == "" {
 		o.outcome.BlockReason = truncateRaw(block)
 		o.outcome.Terminal = true
 	}
@@ -827,6 +832,17 @@ func (o *Observer) ObserveGeminiPayload(payload []byte) {
 			o.outcome.Terminal = true
 		}
 		break
+	}
+}
+
+// isUnspecifiedGeminiBlockReason：Gemini API 写作 BLOCK_REASON_UNSPECIFIED，Vertex 写作
+// BLOCKED_REASON_UNSPECIFIED，都表示没有拦截。
+func isUnspecifiedGeminiBlockReason(reason string) bool {
+	switch reason {
+	case "", "BLOCK_REASON_UNSPECIFIED", "BLOCKED_REASON_UNSPECIFIED":
+		return true
+	default:
+		return false
 	}
 }
 

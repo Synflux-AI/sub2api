@@ -518,14 +518,18 @@ func TestGeminiFinishReasons(t *testing.T) {
 	}{
 		{"STOP", ReasonStop},
 		{"MAX_TOKENS", ReasonTruncated},
+		{"CONTINUATION", ReasonTruncated},
 		{"SAFETY", ReasonContentFilter},
 		{"RECITATION", ReasonContentFilter},
 		{"PROHIBITED_CONTENT", ReasonContentFilter},
 		{"IMAGE_SAFETY", ReasonContentFilter},
+		{"ESCALATION", ReasonContentFilter},
 		{"MALFORMED_FUNCTION_CALL", ReasonIncomplete},
 		{"TOO_MANY_TOOL_CALLS", ReasonIncomplete},
 		{"MISSING_THOUGHT_SIGNATURE", ReasonIncomplete},
+		{"MALFORMED_RESPONSE", ReasonIncomplete},
 		{"NO_IMAGE", ReasonIncomplete},
+		{"PUP_LIMITED_DISABLED", ReasonFailed},
 		{"OTHER", ReasonUnknown},
 		{"SOME_FUTURE_REASON", ReasonUnknown},
 	}
@@ -599,11 +603,13 @@ func TestGeminiPromptBlocked(t *testing.T) {
 }
 
 func TestGeminiUnspecifiedBlockReasonIgnored(t *testing.T) {
-	o := NewObserver("")
-	feedGemini(o, `{"promptFeedback":{"blockReason":"BLOCKED_REASON_UNSPECIFIED"},"candidates":[{"content":{"parts":[{"text":"ok"}]},"finishReason":"STOP"}]}`)
-	out := o.Snapshot()
-	require.Empty(t, out.BlockReason)
-	require.Equal(t, ReasonStop, out.FinishReason())
+	for _, unspecified := range []string{"BLOCK_REASON_UNSPECIFIED", "BLOCKED_REASON_UNSPECIFIED"} {
+		o := NewObserver("")
+		feedGemini(o, `{"promptFeedback":{"blockReason":"`+unspecified+`"},"candidates":[{"content":{"parts":[{"text":"ok"}]},"finishReason":"STOP"}]}`)
+		out := o.Snapshot()
+		require.Empty(t, out.BlockReason, unspecified)
+		require.Equal(t, ReasonStop, out.FinishReason(), unspecified)
+	}
 }
 
 func TestGeminiErrorEnvelopeIsFailed(t *testing.T) {
