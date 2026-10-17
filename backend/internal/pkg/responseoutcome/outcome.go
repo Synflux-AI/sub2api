@@ -269,6 +269,8 @@ func normalizeChatFinishReason(reason string) string {
 // service.isGeminiContentFilterFinishReason 之外加了 ESCALATION（被升级规则过滤）；
 // 工具调用出错、缺思考签名、响应格式错误、该出图没出图等模型侧生成失败归为 incomplete；
 // PUP_LIMITED_DISABLED 是上游账号因违反使用政策被限制，与本次内容无关，归为 failed。
+// MISSING_THOUGHT_SIGNATURE 表示请求里缺了思考签名，多半是签名在多轮往返中丢失；
+// 频繁出现时应排查网关的 thoughtSignature 回传与清洗逻辑，而不是模型本身。
 func normalizeGeminiFinishReason(reason string, toolCall bool) string {
 	switch strings.ToUpper(reason) {
 	case "STOP":
