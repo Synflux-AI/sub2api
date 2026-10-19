@@ -238,6 +238,7 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 			}
 			return &ForwardResult{
 				RequestID:                     resp.Header.Get("x-request-id"),
+				UpstreamHeaders:               resp.Header,
 				Usage:                         *streamResult.usage,
 				Model:                         input.OriginalModel,
 				UpstreamModel:                 input.RequestModel,

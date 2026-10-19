@@ -1917,3 +1917,52 @@ func TestSonnet55BedrockCCCompatTransformsBeforeValidation(t *testing.T) {
 		})
 	}
 }
+
+// 流式成功返回必须带上直接上游的响应头，否则用量明细的“上游ID”只在非流式时有值。
+func TestGatewayService_AnthropicAPIKeyPassthrough_StreamingResultCarriesUpstreamRequestID(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+
+	upstreamSSE := strings.Join([]string{
+		`data: {"type":"message_start","message":{"usage":{"input_tokens":5}}}`,
+		"",
+		`data: {"type":"message_delta","usage":{"output_tokens":2}}`,
+		"",
+		`data: {"type":"message_stop"}`,
+		"",
+	}, "\n")
+	upstream := &anthropicHTTPUpstreamRecorder{
+		resp: &http.Response{
+			StatusCode: http.StatusOK,
+			Header: http.Header{
+				"Content-Type":        []string{"text/event-stream"},
+				"X-Client-Request-Id": []string{"upstream-stream-rid"},
+			},
+			Body: io.NopCloser(strings.NewReader(upstreamSSE)),
+		},
+	}
+	cfg := &config.Config{Gateway: config.GatewayConfig{MaxLineSize: defaultMaxLineSize}}
+	svc := &GatewayService{
+		cfg:                  cfg,
+		responseHeaderFilter: compileResponseHeaderFilter(cfg),
+		httpUpstream:         upstream,
+		rateLimitService:     &RateLimitService{},
+		deferredService:      &DeferredService{},
+	}
+
+	account := newAnthropicAPIKeyAccountForTest()
+	account.Extra = map[string]any{
+		"anthropic_passthrough":             true,
+		AccountExtraUpstreamRequestIDHeader: "X-Client-Request-ID",
+	}
+
+	result, err := svc.forwardAnthropicAPIKeyPassthrough(context.Background(), c, account, []byte(`{"model":"x","stream":true}`), "x", "x", true, time.Now())
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.True(t, result.Stream)
+	got := usageUpstreamRequestIDPtr(account, result.UpstreamHeaders, false)
+	require.NotNil(t, got)
+	require.Equal(t, "upstream-stream-rid", *got)
+}
