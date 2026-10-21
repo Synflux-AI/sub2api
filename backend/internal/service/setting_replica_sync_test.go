@@ -211,3 +211,26 @@ func TestReplicaSettingsSyncPeriodicallyRefreshesForwardedIP(t *testing.T) {
 	svc.Stop()
 	svc.Stop() // idempotent
 }
+
+// 异步生图对象存储设置（含 url_mode）不归 SettingService 管，靠 reload 钩子随广播失效。
+func TestImageStorageSettingsSaveOnOneReplicaInvalidatesOtherReplicas(t *testing.T) {
+	repo := newSharedSettingRepo()
+	bus := &fakeSettingsBus{}
+	newReplica := func(id string) (*SettingService, *ImageStorageSettingService) {
+		settings := NewSettingService(repo, &config.Config{})
+		settings.SetSettingsChangeNotifier(bus.notifier(id))
+		settings.startReplicaSettingsSync(context.Background(), time.Hour)
+		t.Cleanup(settings.Stop)
+		images := NewImageStorageSettingService(repo, reversibleEncryptor{}, nil, nil, config.ImageStorageConfig{})
+		images.SetChangePublisher(settings.PublishSettingsUpdated)
+		settings.AddReplicaSettingsReloadHook(images.Invalidate)
+		return settings, images
+	}
+	_, imagesA := newReplica("a")
+	_, imagesB := newReplica("b")
+
+	require.Equal(t, ImageURLModePassthrough, imagesB.resolveURLPolicy().Mode, "replica B caches passthrough")
+	_, err := imagesA.Update(context.Background(), ImageStorageSettings{URLMode: ImageURLModeInline})
+	require.NoError(t, err)
+	require.Equal(t, ImageURLModeInline, imagesB.resolveURLPolicy().Mode, "replica B must not wait for the TTL")
+}

@@ -114,6 +114,14 @@ export default {
         publicBaseUrl: '公开访问域名',
         publicBaseUrlPlaceholder: '留空则返回预签名临时链接',
         presignExpiryHours: '预签名链接有效期（小时）',
+        urlMode: '同步生图的上游图片链接',
+        urlModePassthrough: '原样透传（不改写）',
+        urlModeInline: '内联：换成 data URL / b64_json，不落存储',
+        urlModeRehost: '转存：下载后上传到本存储，返回自己的直链',
+        urlModeHint: '作用于非流式 /v1/images/generations 与 /v1/images/edits，独立于上方的异步生图开关，保存后立即生效。默认尽力隐藏：下载上游图片失败时仍会返回原链接（可在下方开启严格模式）。不覆盖 Grok 平台生图与 stream=true 的流式响应。内联模式下 url 字段为 data: 链接，会用 HTTP 去下载 url 的客户端可能不兼容，且体积约为原图的 1.33 倍。',
+        urlRewriteStrict: '无法隐藏时返回 502（严格模式）',
+        urlRewriteStrictHint: '默认关闭：图片下载失败时保留上游原链接，保证可用。开启后，只要有一张图仍会返回上游链接，整个请求就返回 502，不换号重试、不计费（上游已出图的成本由平台承担）。仅在内联/转存模式下生效。',
+        urlModeRehostNeedsPublicBaseUrl: '转存模式需要填写公开访问域名（预签名链接会暴露存储服务域名），未填写时按内联处理。',
         saved: '异步生图对象存储配置已保存'
       },
       schedule: {

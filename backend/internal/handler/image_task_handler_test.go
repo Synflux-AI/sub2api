@@ -143,3 +143,16 @@ func TestAsyncImageHandlerDisabledReturns404(t *testing.T) {
 	// No task was created / persisted.
 	require.Empty(t, store.tasks)
 }
+
+// 异步任务完成时由 ImageTaskService.Complete 统一转存；同步子请求必须跳过 url_mode 改写，
+// 否则 rehost 会重复下载/上传、inline 会白占一份内存。
+func TestNewAsyncImageContextSkipsImageURLRewrite(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations/async", strings.NewReader(`{}`))
+	require.False(t, service.ImageURLRewriteSkipped(c.Request.Context()))
+
+	taskCtx, _, cancel := newAsyncImageContext(c, []byte(`{"prompt":"a cat"}`), time.Minute)
+	defer cancel()
+	require.True(t, service.ImageURLRewriteSkipped(taskCtx.Request.Context()))
+}

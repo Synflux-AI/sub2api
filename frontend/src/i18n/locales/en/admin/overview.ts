@@ -114,6 +114,14 @@ export default {
         publicBaseUrl: 'Public base URL',
         publicBaseUrlPlaceholder: 'Leave empty to return presigned links',
         presignExpiryHours: 'Presigned link TTL (hours)',
+        urlMode: 'Upstream image URLs in synchronous responses',
+        urlModePassthrough: 'Pass through unchanged',
+        urlModeInline: 'Inline: replace with data URL / b64_json, no storage',
+        urlModeRehost: 'Rehost: download and upload to this storage, return our own link',
+        urlModeHint: 'Applies to non-streaming /v1/images/generations and /v1/images/edits, independent of the async switch above, and takes effect on save. Best effort by default: if downloading the upstream image fails, the original URL is still returned (see strict mode below). Grok image generation and stream=true responses are not covered. In inline mode the url field is a data: URL, which clients that fetch url over HTTP may not support, and it is about 1.33x the image size.',
+        urlRewriteStrict: 'Return 502 when an image cannot be hidden (strict)',
+        urlRewriteStrictHint: 'Off by default: if an image download fails, the original upstream URL is kept so the request still succeeds. When on, the whole request returns 502 if any image would still expose an upstream URL — no account switch, no charge (the upstream cost is absorbed). Only applies in inline/rehost modes.',
+        urlModeRehostNeedsPublicBaseUrl: 'Rehost requires a public base URL (presigned links expose the storage endpoint domain); without one it behaves like inline.',
         saved: 'Async image object storage saved'
       },
       schedule: {

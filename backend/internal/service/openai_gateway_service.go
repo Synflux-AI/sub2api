@@ -514,6 +514,8 @@ type OpenAIGatewayService struct {
 	// 剥离跨账号回带（openai_codex_turn_state.go）。
 	openaiCodexTurnStateOrigins sync.Map
 	openaiCodexTurnStateWrites  atomic.Uint64
+	// imageURLPolicy 解析 image_storage.url_mode（见 openai_images_url_policy.go）；未注入即 passthrough。
+	imageURLPolicy atomic.Pointer[ImageURLPolicyResolver]
 }
 
 // NewOpenAIGatewayService creates a new OpenAIGatewayService

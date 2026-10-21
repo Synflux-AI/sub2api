@@ -7,16 +7,40 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"go.uber.org/zap"
 )
 
 const settingKeyImageStorageConfig = "image_storage_config"
 
+// image_storage.url_mode 的取值，见 config.ImageStorageConfig.URLMode。
+const (
+	ImageURLModePassthrough = "passthrough"
+	ImageURLModeInline      = "inline"
+	ImageURLModeRehost      = "rehost"
+)
+
+const (
+	// imageURLPolicyTTL 是 url_mode 解析结果的缓存时长：多副本未收到设置广播时据此收敛。
+	imageURLPolicyTTL = 30 * time.Second
+	// imageStorageLoadRetry 是读设置失败后的重试间隔：失败不长期缓存，避免一次 DB 抖动让功能一直关闭。
+	imageStorageLoadRetry = 5 * time.Second
+	// maxImagePresignExpiryHours 是 S3 SigV4 presigned URL 的有效期上限（7 天）。
+	maxImagePresignExpiryHours = 168
+)
+
 // ErrImageStorageIncomplete 表示开关已打开但凭证不全，无法启用异步生图。
 var ErrImageStorageIncomplete = errors.New("image storage is enabled but bucket/access_key_id/secret_access_key are incomplete")
+
+// ErrInvalidImageURLMode 表示后台提交了未知的 url_mode。
+var ErrInvalidImageURLMode = infraerrors.BadRequest(
+	"INVALID_IMAGE_URL_MODE",
+	"url_mode must be one of passthrough, inline, rehost",
+)
 
 // ImageStorageFactory 由 repository 层提供，把配置变成一个可用的对象存储实现。
 // 与 BackupObjectStoreFactory 同样的注入方式，避免 service 反向依赖 repository。
@@ -42,7 +66,27 @@ type ImageStorageSettings struct {
 	AccessKeyID     string `json:"access_key_id"`
 	SecretAccessKey string `json:"secret_access_key,omitempty"` //nolint:revive // field name follows AWS convention
 	ForcePathStyle  bool   `json:"force_path_style"`
+
+	// URLMode 见 config.ImageStorageConfig.URLMode；保存时留空表示沿用已保存的值。
+	URLMode string `json:"url_mode"`
+	// URLRewriteStrict 见 config.ImageStorageConfig.URLRewriteStrict；保存时缺省（nil）表示沿用已保存的值。
+	URLRewriteStrict *bool `json:"url_rewrite_strict,omitempty"`
 }
+
+// ImageURLPolicy 是同步生图响应改写上游图片 url 的运行时策略。
+type ImageURLPolicy struct {
+	Mode string
+	// Storage 仅在 rehost 可用（凭证齐全且配了 public_base_url）时非空；
+	// Mode 为 rehost 而 Storage 为空时调用方按 inline 处理。
+	Storage          ImageStorage
+	Prefix           string
+	MaxDownloadBytes int64
+	// Strict 为真时，仍会暴露上游 url 的响应改为 502，而不是保留上游 url。
+	Strict bool
+}
+
+// ImageURLPolicyResolver 返回当前生效的 url 改写策略，由网关在每次非流式生图响应时调用。
+type ImageURLPolicyResolver func() ImageURLPolicy
 
 // ImageStorageSettingService 读写后台设置，并把结果解析成一个可直接使用的 uploader。
 //
@@ -60,8 +104,21 @@ type ImageStorageSettingService struct {
 
 	mu       sync.Mutex
 	resolved bool
+	// retryAt 非零表示上次解析因读设置失败而未缓存，到点前沿用"关闭"、到点后重试。
+	retryAt  time.Time
 	uploader *ImageResultUploader
 	enabled  bool
+
+	// url_mode 独立解析：不受 Enabled 影响，并带 TTL，使未收到广播的副本也能收敛。
+	policyMu        sync.Mutex
+	policy          ImageURLPolicy
+	policyExpiresAt time.Time
+	policyStorage   ImageStorage
+	policyCfg       config.ImageStorageConfig
+
+	// publishChange 把"设置已保存"广播给其他副本（复用 SettingsChangeNotifier）。
+	publishChange func(ctx context.Context)
+	now           func() time.Time
 }
 
 func NewImageStorageSettingService(
@@ -77,7 +134,18 @@ func NewImageStorageSettingService(
 		backup:      backup,
 		factory:     factory,
 		fallback:    fallback,
+		now:         time.Now,
 	}
+}
+
+// SetChangePublisher 注入跨副本广播；保存设置后调用，其他副本收到后执行 Invalidate。
+func (s *ImageStorageSettingService) SetChangePublisher(publish func(ctx context.Context)) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.publishChange = publish
+	s.mu.Unlock()
 }
 
 // Resolver 返回可注入 ImageTaskService 的解析函数。
@@ -96,16 +164,22 @@ func (s *ImageStorageSettingService) resolve() (*ImageResultUploader, bool) {
 	if s.resolved {
 		return s.uploader, s.enabled
 	}
+	if !s.retryAt.IsZero() && s.now().Before(s.retryAt) {
+		return nil, false
+	}
 
 	ctx := context.Background()
-	s.resolved = true
 	s.uploader, s.enabled = nil, false
 
 	cfg, err := s.effectiveConfig(ctx)
 	if err != nil {
-		logger.L().Warn("image_storage.settings_load_failed; async image tasks stay disabled", zap.Error(err))
+		// 读设置失败不缓存：否则一次 DB 抖动会让异步生图一直关闭直到下次保存或重启。
+		s.retryAt = s.now().Add(imageStorageLoadRetry)
+		logger.L().Warn("image_storage.settings_load_failed; async image tasks are disabled until the next retry", zap.Error(err))
 		return nil, false
 	}
+	s.resolved = true
+	s.retryAt = time.Time{}
 	if !cfg.Enabled {
 		return nil, false
 	}
@@ -132,9 +206,118 @@ func (s *ImageStorageSettingService) Invalidate() {
 	}
 	s.mu.Lock()
 	s.resolved = false
+	s.retryAt = time.Time{}
 	s.uploader = nil
 	s.enabled = false
 	s.mu.Unlock()
+
+	s.policyMu.Lock()
+	s.policyExpiresAt = time.Time{}
+	s.policyMu.Unlock()
+}
+
+// URLPolicyResolver 返回可注入网关的 url_mode 解析函数。
+func (s *ImageStorageSettingService) URLPolicyResolver() ImageURLPolicyResolver {
+	return func() ImageURLPolicy {
+		return s.resolveURLPolicy()
+	}
+}
+
+func (s *ImageStorageSettingService) resolveURLPolicy() ImageURLPolicy {
+	if s == nil {
+		return ImageURLPolicy{Mode: ImageURLModePassthrough}
+	}
+	s.policyMu.Lock()
+	defer s.policyMu.Unlock()
+	now := s.now()
+	if now.Before(s.policyExpiresAt) {
+		return s.policy
+	}
+
+	ctx := context.Background()
+	settings, err := s.load(ctx)
+	if err != nil {
+		// 沿用上一次的策略（首次即为 passthrough），稍后重试。
+		logger.L().Warn("image_storage.url_mode_load_failed; keeping the previous url mode", zap.Error(err))
+		if s.policy.Mode == "" {
+			s.policy = ImageURLPolicy{Mode: ImageURLModePassthrough}
+		}
+		s.policyExpiresAt = now.Add(imageStorageLoadRetry)
+		return s.policy
+	}
+	var cfg *config.ImageStorageConfig
+	if settings == nil {
+		fallback := s.fallback
+		cfg = &fallback
+	} else if cfg, err = s.toImageStorageConfig(ctx, settings); err != nil {
+		// 凭证解析失败（如复用的备份 S3 未配置）只影响 rehost 的存储，模式本身仍生效。
+		logger.L().Warn("image_storage.url_mode_storage_unavailable", zap.Error(err))
+		cfg = &config.ImageStorageConfig{
+			URLMode: settings.URLMode, URLRewriteStrict: s.urlRewriteStrictOrFallback(settings.URLRewriteStrict),
+			Prefix: settings.Prefix, MaxDownloadByte: settings.MaxDownloadBytes,
+		}
+	}
+	s.policy = s.buildURLPolicy(ctx, cfg)
+	s.policyExpiresAt = now.Add(imageURLPolicyTTL)
+	return s.policy
+}
+
+// buildURLPolicy 在持有 policyMu 时调用。存储客户端只在配置变化时重建，TTL 到期不重复握手。
+func (s *ImageStorageSettingService) buildURLPolicy(ctx context.Context, cfg *config.ImageStorageConfig) ImageURLPolicy {
+	policy := ImageURLPolicy{
+		Mode:             NormalizeImageURLMode(cfg.URLMode),
+		Prefix:           cfg.Prefix,
+		MaxDownloadBytes: cfg.MaxDownloadByte,
+		Strict:           cfg.URLRewriteStrict,
+	}
+	if policy.Mode == "" {
+		policy.Mode = ImageURLModePassthrough
+	}
+	if policy.Prefix == "" {
+		policy.Prefix = "images/"
+	}
+	if policy.MaxDownloadBytes <= 0 {
+		policy.MaxDownloadBytes = defaultImageMaxDownloadBytes
+	}
+	if policy.Mode != ImageURLModeRehost {
+		s.policyStorage = nil
+		return policy
+	}
+	// presigned URL 带对象存储 endpoint 域名，暴露的是我们自己的基础设施，
+	// 因此 rehost 只用公开直链；未配 public_base_url 或凭证不全时退化为 inline。
+	if strings.TrimSpace(cfg.PublicBaseURL) == "" || !cfg.IsConfigured() {
+		logger.L().Warn("image_storage.url_mode=rehost requires public_base_url and complete storage credentials; falling back to inline",
+			zap.Bool("public_base_url_configured", strings.TrimSpace(cfg.PublicBaseURL) != ""),
+			zap.Strings("missing_keys", cfg.MissingCredentialKeys()))
+		s.policyStorage = nil
+		return policy
+	}
+	if s.policyStorage == nil || s.policyCfg != *cfg {
+		storage, err := s.factory(ctx, cfg)
+		if err != nil {
+			logger.L().Error("image_storage.url_mode_client_build_failed; falling back to inline", zap.Error(err))
+			s.policyStorage = nil
+			return policy
+		}
+		s.policyStorage = storage
+		s.policyCfg = *cfg
+	}
+	policy.Storage = s.policyStorage
+	return policy
+}
+
+// NormalizeImageURLMode 规范化 url_mode；未知值返回空串。
+func NormalizeImageURLMode(mode string) string {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case ImageURLModePassthrough:
+		return ImageURLModePassthrough
+	case ImageURLModeInline:
+		return ImageURLModeInline
+	case ImageURLModeRehost:
+		return ImageURLModeRehost
+	default:
+		return ""
+	}
 }
 
 // Get 返回后台设置（SecretAccessKey 已脱敏）。从未保存过时返回 config.yaml 的等价值。
@@ -145,6 +328,13 @@ func (s *ImageStorageSettingService) Get(ctx context.Context) (*ImageStorageSett
 	}
 	if settings == nil {
 		settings = settingsFromConfig(s.fallback)
+	}
+	if settings.URLMode = NormalizeImageURLMode(settings.URLMode); settings.URLMode == "" {
+		settings.URLMode = ImageURLModePassthrough
+	}
+	if settings.URLRewriteStrict == nil {
+		strict := s.fallback.URLRewriteStrict
+		settings.URLRewriteStrict = &strict
 	}
 	settings.SecretAccessKey = ""
 	return settings, nil
@@ -166,6 +356,16 @@ func (s *ImageStorageSettingService) SecretConfigured(ctx context.Context) bool 
 // Update 保存设置并立即生效。SecretAccessKey 留空表示沿用已保存的值。
 func (s *ImageStorageSettingService) Update(ctx context.Context, in ImageStorageSettings) (*ImageStorageSettings, error) {
 	normalizeImageStorageSettings(&in)
+	// 旧版前端整结构体保存时不带 url_mode：留空沿用已保存的值，而不是悄悄重置为 passthrough。
+	if strings.TrimSpace(in.URLMode) == "" {
+		in.URLMode = s.storedURLMode(ctx)
+	} else if in.URLMode = NormalizeImageURLMode(in.URLMode); in.URLMode == "" {
+		return nil, ErrInvalidImageURLMode
+	}
+	if in.URLRewriteStrict == nil {
+		strict := s.storedURLRewriteStrict(ctx)
+		in.URLRewriteStrict = &strict
+	}
 
 	if in.ReuseBackupS3 {
 		// 复用备份凭证时不落自己的密钥，避免同一份密钥在库里存两份。
@@ -196,9 +396,42 @@ func (s *ImageStorageSettingService) Update(ctx context.Context, in ImageStorage
 		return nil, fmt.Errorf("save image storage settings: %w", err)
 	}
 	s.Invalidate()
+	s.mu.Lock()
+	publish := s.publishChange
+	s.mu.Unlock()
+	if publish != nil {
+		publish(ctx)
+	}
 
 	in.SecretAccessKey = ""
 	return &in, nil
+}
+
+// storedURLRewriteStrict 返回已保存的 url_rewrite_strict；从未保存过（或旧数据无此字段）时回落到 config.yaml。
+func (s *ImageStorageSettingService) storedURLRewriteStrict(ctx context.Context) bool {
+	if old, err := s.load(ctx); err == nil && old != nil {
+		return s.urlRewriteStrictOrFallback(old.URLRewriteStrict)
+	}
+	return s.fallback.URLRewriteStrict
+}
+
+func (s *ImageStorageSettingService) urlRewriteStrictOrFallback(v *bool) bool {
+	if v == nil {
+		return s.fallback.URLRewriteStrict
+	}
+	return *v
+}
+
+// storedURLMode 返回已保存的 url_mode；从未保存过时回落到 config.yaml。
+func (s *ImageStorageSettingService) storedURLMode(ctx context.Context) string {
+	mode := NormalizeImageURLMode(s.fallback.URLMode)
+	if old, err := s.load(ctx); err == nil && old != nil {
+		mode = NormalizeImageURLMode(old.URLMode)
+	}
+	if mode == "" {
+		mode = ImageURLModePassthrough
+	}
+	return mode
 }
 
 // TestConnection 用给定设置试建一次客户端，用于后台的"测试连接"按钮。
@@ -250,6 +483,9 @@ func (s *ImageStorageSettingService) toImageStorageConfig(ctx context.Context, i
 		AccessKeyID:     in.AccessKeyID,
 		SecretAccessKey: in.SecretAccessKey,
 		ForcePathStyle:  in.ForcePathStyle,
+		URLMode:         in.URLMode,
+		// 旧数据无此字段时回落到 config.yaml。
+		URLRewriteStrict: s.urlRewriteStrictOrFallback(in.URLRewriteStrict),
 	}
 
 	if in.ReuseBackupS3 {
@@ -317,6 +553,8 @@ func settingsFromConfig(cfg config.ImageStorageConfig) *ImageStorageSettings {
 		AccessKeyID:      cfg.AccessKeyID,
 		SecretAccessKey:  cfg.SecretAccessKey,
 		ForcePathStyle:   cfg.ForcePathStyle,
+		URLMode:          cfg.URLMode,
+		URLRewriteStrict: &cfg.URLRewriteStrict,
 	}
 }
 
@@ -340,6 +578,9 @@ func normalizeImageStorageSettings(in *ImageStorageSettings) {
 	}
 	if in.PresignExpiry <= 0 {
 		in.PresignExpiry = 24
+	}
+	if in.PresignExpiry > maxImagePresignExpiryHours {
+		in.PresignExpiry = maxImagePresignExpiryHours
 	}
 	if in.MaxDownloadBytes <= 0 {
 		in.MaxDownloadBytes = defaultImageMaxDownloadBytes

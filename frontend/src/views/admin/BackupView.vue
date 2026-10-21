@@ -115,7 +115,29 @@
           </div>
           <div>
             <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">{{ t('admin.backup.imageStorage.presignExpiryHours') }}</label>
-            <input v-model.number="imageStorageForm.presign_expiry_hours" type="number" min="1" class="input w-full" />
+            <input v-model.number="imageStorageForm.presign_expiry_hours" type="number" min="1" max="168" class="input w-full" />
+          </div>
+          <div class="md:col-span-2">
+            <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">{{ t('admin.backup.imageStorage.urlMode') }}</label>
+            <select v-model="imageStorageForm.url_mode" class="input w-full" data-testid="image-storage-url-mode">
+              <option value="passthrough">{{ t('admin.backup.imageStorage.urlModePassthrough') }}</option>
+              <option value="inline">{{ t('admin.backup.imageStorage.urlModeInline') }}</option>
+              <option value="rehost">{{ t('admin.backup.imageStorage.urlModeRehost') }}</option>
+            </select>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.backup.imageStorage.urlModeHint') }}</p>
+            <p v-if="imageStorageForm.url_mode === 'rehost' && !imageStorageForm.public_base_url?.trim()" class="mt-1 text-xs text-amber-600 dark:text-amber-400">
+              {{ t('admin.backup.imageStorage.urlModeRehostNeedsPublicBaseUrl') }}
+            </p>
+            <label class="mt-2 inline-flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+              <input
+                v-model="imageStorageForm.url_rewrite_strict"
+                type="checkbox"
+                data-testid="image-storage-url-rewrite-strict"
+                :disabled="imageStorageForm.url_mode === 'passthrough'"
+              />
+              <span>{{ t('admin.backup.imageStorage.urlRewriteStrict') }}</span>
+            </label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.backup.imageStorage.urlRewriteStrictHint') }}</p>
           </div>
         </div>
 
@@ -474,6 +496,8 @@ const imageStorageForm = ref<ImageStorageConfig>({
   access_key_id: '',
   secret_access_key: '',
   force_path_style: false,
+  url_mode: 'passthrough',
+  url_rewrite_strict: false,
 })
 const imageStorageSecretConfigured = ref(false)
 const savingImageStorage = ref(false)
@@ -695,6 +719,8 @@ async function loadImageStorageConfig() {
       ...config,
       prefix: config.prefix || 'images/',
       region: config.region || 'auto',
+      url_mode: config.url_mode || 'passthrough',
+      url_rewrite_strict: config.url_rewrite_strict ?? false,
       secret_access_key: '',
     }
     imageStorageSecretConfigured.value = secret_configured

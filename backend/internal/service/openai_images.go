@@ -26,6 +26,7 @@ import (
 	"github.com/imroc/req/v3"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
+	"go.uber.org/zap"
 )
 
 const (
@@ -999,8 +1000,41 @@ func (s *OpenAIGatewayService) handleOpenAIImagesNonStreamingResponse(
 		return OpenAIUsage{}, 0, nil, "", s.handleOpenAIUpstreamResponseBodyReadError(
 			ctx, c, account, err, false, upstreamURL)
 	}
-	body = s.backfillOpenAIImagesB64JSON(ctx, account, parsed, body)
+	policy, rewriteURLs := s.activeImageURLPolicy(ctx, c)
+	if !rewriteURLs {
+		// url_mode 非 passthrough 时由改写统一处理 b64 偏好，避免重复下载、体积翻倍。
+		body = s.backfillOpenAIImagesB64JSON(ctx, account, parsed, body)
+	}
+	// 计费数据取自改写前的 body：改写不改变图片张数，但 response_format 以上游实际返回为准。
+	usage, _ := extractOpenAIUsageFromJSONBytes(body)
+	counter := newOpenAIImageOutputCounter()
+	counter.AddJSONResponse(body)
+
+	bodyRewritten := false
+	if rewriteURLs {
+		// ctx 已与客户端脱钩；改写只为这次响应服务，客户端断开即放弃下载/上传。
+		rewriteCtx := ctx
+		if c != nil && c.Request != nil {
+			rewriteCtx = c.Request.Context()
+		}
+		var exposed int
+		body, bodyRewritten, exposed = s.rewriteOpenAIImagesResponseURLs(rewriteCtx, account, parsed, policy, body)
+		if exposed > 0 && policy.Strict {
+			// 不写响应体，交给 handler 的兜底写 502（keepalive 已提交 200 时写 JSON 错误体）；
+			// 不返回用量，客户端没拿到图就不计费。
+			logger.L().Warn("openai.images.url_rewrite_strict_rejected",
+				zap.Int64("account_id", accountIDOf(account)),
+				zap.String("url_mode", policy.Mode),
+				zap.Int("exposed_images", exposed),
+				zap.Int("image_count", counter.Count()),
+			)
+			return OpenAIUsage{}, 0, nil, "", ErrOpenAIImagesURLRewriteIncomplete
+		}
+	}
 	responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
+	if bodyRewritten {
+		stripRewrittenBodyValidators(c.Writer.Header())
+	}
 	contentType := "application/json"
 	if s.cfg != nil && !s.cfg.Security.ResponseHeaders.Enabled {
 		if upstreamType := resp.Header.Get("Content-Type"); upstreamType != "" {
@@ -1008,10 +1042,6 @@ func (s *OpenAIGatewayService) handleOpenAIImagesNonStreamingResponse(
 		}
 	}
 	c.Data(resp.StatusCode, contentType, body)
-
-	usage, _ := extractOpenAIUsageFromJSONBytes(body)
-	counter := newOpenAIImageOutputCounter()
-	counter.AddJSONResponse(body)
 	return usage, counter.Count(), counter.Sizes(), counter.ResponseFormat(), nil
 }
 

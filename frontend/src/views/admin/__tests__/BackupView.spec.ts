@@ -6,6 +6,7 @@ import BackupView from '../BackupView.vue'
 const {
   getS3Config,
   getImageStorageConfig,
+  updateImageStorageConfig,
   getSchedule,
   updateSchedule,
   deleteBackup,
@@ -14,6 +15,7 @@ const {
 } = vi.hoisted(() => ({
   getS3Config: vi.fn(),
   getImageStorageConfig: vi.fn(),
+  updateImageStorageConfig: vi.fn(),
   getSchedule: vi.fn(),
   updateSchedule: vi.fn(),
   deleteBackup: vi.fn(),
@@ -28,7 +30,7 @@ vi.mock('@/api', () => ({
       updateS3Config: vi.fn(),
       testS3Connection: vi.fn(),
       getImageStorageConfig,
-      updateImageStorageConfig: vi.fn(),
+      updateImageStorageConfig,
       testImageStorageConnection: vi.fn(),
       getSchedule,
       updateSchedule,
@@ -94,6 +96,7 @@ describe('admin BackupView', () => {
   beforeEach(() => {
     getS3Config.mockResolvedValue({})
     getImageStorageConfig.mockResolvedValue({ config: {}, secret_configured: false })
+    updateImageStorageConfig.mockReset().mockResolvedValue({})
     getSchedule.mockResolvedValue({ enabled: false, cron_expr: '', retain_days: 14, retain_count: 10 })
     updateSchedule.mockReset().mockResolvedValue({})
     deleteBackup.mockReset().mockResolvedValue(undefined)
@@ -127,6 +130,55 @@ describe('admin BackupView', () => {
       vi.clearAllTimers()
       vi.useRealTimers()
     }
+  })
+
+  it('加载并保存同步生图 url_mode，rehost 缺公开域名时提示', async () => {
+    getImageStorageConfig.mockResolvedValue({
+      config: { enabled: false, reuse_backup_s3: true, public_base_url: '', url_mode: 'rehost' },
+      secret_configured: false,
+    })
+    const wrapper = mountBackupView()
+    await flushPromises()
+
+    const select = wrapper.get('[data-testid="image-storage-url-mode"]')
+    expect((select.element as HTMLSelectElement).value).toBe('rehost')
+    expect(wrapper.text()).toContain('admin.backup.imageStorage.urlModeRehostNeedsPublicBaseUrl')
+
+    await select.setValue('inline')
+    expect(wrapper.text()).not.toContain('admin.backup.imageStorage.urlModeRehostNeedsPublicBaseUrl')
+    const saveButton = wrapper.findAll('button').find(button => button.attributes('class')?.includes('btn-primary') && button.element.closest('.card')?.contains(select.element))
+    expect(saveButton).toBeDefined()
+    await saveButton!.trigger('click')
+    await flushPromises()
+    expect(updateImageStorageConfig).toHaveBeenCalledWith(expect.objectContaining({ url_mode: 'inline', url_rewrite_strict: false }))
+  })
+
+  it('严格模式开关默认关闭，passthrough 下禁用，可随时打开并保存', async () => {
+    getImageStorageConfig.mockResolvedValue({
+      config: { enabled: false, reuse_backup_s3: true, public_base_url: '', url_mode: 'passthrough' },
+      secret_configured: false,
+    })
+    const wrapper = mountBackupView()
+    await flushPromises()
+
+    const strict = wrapper.get('[data-testid="image-storage-url-rewrite-strict"]')
+    expect((strict.element as HTMLInputElement).checked).toBe(false)
+    expect((strict.element as HTMLInputElement).disabled).toBe(true)
+
+    await wrapper.get('[data-testid="image-storage-url-mode"]').setValue('inline')
+    expect((strict.element as HTMLInputElement).disabled).toBe(false)
+    await strict.setValue(true)
+    const select = wrapper.get('[data-testid="image-storage-url-mode"]')
+    const saveButton = wrapper.findAll('button').find(button => button.attributes('class')?.includes('btn-primary') && button.element.closest('.card')?.contains(select.element))
+    await saveButton!.trigger('click')
+    await flushPromises()
+    expect(updateImageStorageConfig).toHaveBeenCalledWith(expect.objectContaining({ url_mode: 'inline', url_rewrite_strict: true }))
+  })
+
+  it('旧数据缺 url_mode 时回落为 passthrough', async () => {
+    const wrapper = mountBackupView()
+    await flushPromises()
+    expect((wrapper.get('[data-testid="image-storage-url-mode"]').element as HTMLSelectElement).value).toBe('passthrough')
   })
 
   it('显示分卷数并在下载时列出每个分卷链接', async () => {

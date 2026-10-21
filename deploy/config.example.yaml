@@ -179,6 +179,11 @@ security:
     # Allowed hosts for CRS sync (required when using CRS sync)
     # 允许 CRS 同步的主机列表（使用 CRS 同步功能时必须配置）
     crs_hosts: []
+    # Allowed hosts for downloading upstream image URLs when image_storage.url_mode is inline/rehost
+    # (supports *.example.com). Empty = public-address check only. upstream_hosts is NOT used here.
+    # image_storage.url_mode 为 inline/rehost 时下载上游生图 url 的域名白名单（支持 *.example.com）。
+    # 为空只做公网校验；不复用 upstream_hosts（图片 CDN 通常不在其中）。
+    media_hosts: []
     # Allow localhost/private IPs for upstream/pricing/CRS (use only in trusted networks)
     # 允许本地/私有 IP 地址用于上游/定价/CRS（仅在可信网络中使用）
     allow_private_hosts: true
@@ -1402,3 +1407,15 @@ image_storage:
   presign_expiry_hours: 24
   # 当上游返回的是图片 url 时，下载该图片再转存的字节上限（默认 32MB）
   max_download_bytes: 33554432
+  # 同步生图（/v1/images/generations、/v1/images/edits 非流式）响应里上游图片 url 的处理，
+  # 后台「异步生图对象存储」可改、热生效；后台从未保存过时以这里为准：
+  #   passthrough：原样透传（默认）
+  #   inline：不落存储，url 换成 data:image/...;base64,...（或按 response_format 写 b64_json）
+  #   rehost：下载后转存对象存储，返回 public_base_url/<prefix><uuid>.<ext>；
+  #           必须配置 public_base_url 与存储凭证，否则退化为 inline。不要求 enabled=true。
+  # 默认尽力隐藏：下载失败时保留上游 url。不覆盖 Grok 平台生图与 stream=true 的 SSE。
+  url_mode: "passthrough"
+  # 严格模式：url_mode 为 inline/rehost 时，只要有一张图仍会返回上游 url（下载失败、私网地址、
+  # 不在 media_hosts 内等），整个请求返回 502；不换号重试、不计费。默认 false（保留上游 url）。
+  # 后台可随时开关、热生效。
+  url_rewrite_strict: false

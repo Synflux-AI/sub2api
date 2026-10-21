@@ -201,3 +201,76 @@ func TestOpenAIGatewayHandlerImages_ServerErrorFailsOverAndReturnsClearErrorWhen
 	require.Equal(t, "failover", events[0].Kind)
 	require.Equal(t, "failover", events[1].Kind)
 }
+
+// strictImageURLUpstream 生图请求返回带上游 url 的 JSON，图片 CDN 下载一律 403。
+type strictImageURLUpstream struct {
+	service.HTTPUpstream
+	mu        sync.Mutex
+	posts     []int64
+	downloads int
+}
+
+func (u *strictImageURLUpstream) Do(req *http.Request, _ string, accountID int64, _ int) (*http.Response, error) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if req.Method == http.MethodGet {
+		u.downloads++
+		return &http.Response{StatusCode: http.StatusForbidden, Header: http.Header{}, Body: io.NopCloser(bytes.NewBufferString("denied"))}, nil
+	}
+	u.posts = append(u.posts, accountID)
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(bytes.NewBufferString(`{"created":1,"data":[{"url":"https://cdn.upstream.example.com/a.png"}]}`)),
+	}, nil
+}
+
+func TestOpenAIGatewayHandlerImages_URLRewriteStrictReturns502WithoutFailover(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	groupID := int64(3131)
+	newAccount := func(id int64) service.Account {
+		return service.Account{
+			ID: id, Name: "image-apikey", Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey,
+			Status: service.StatusActive, Schedulable: true, Priority: int(id),
+			Credentials: map[string]any{"api_key": "sk-test", "base_url": "https://relay.example.com/v1"},
+		}
+	}
+	accountRepo := openAIImagesFailoverAccountRepo{accounts: []service.Account{newAccount(1), newAccount(2)}}
+	upstream := &strictImageURLUpstream{}
+	cfg := &config.Config{RunMode: config.RunModeSimple}
+	gatewayService := service.NewOpenAIGatewayService(
+		accountRepo, nil, nil, nil, nil, nil, nil, cfg, nil, nil, nil, nil, nil, upstream,
+		nil, nil, nil, nil, nil, nil, nil, nil,
+	)
+	gatewayService.SetImageURLPolicyResolver(func() service.ImageURLPolicy {
+		return service.ImageURLPolicy{Mode: service.ImageURLModeInline, MaxDownloadBytes: 1 << 20, Strict: true}
+	})
+	billingService := service.NewBillingCacheService(nil, nil, nil, nil, nil, nil, cfg, nil)
+	t.Cleanup(billingService.Stop)
+	handler := NewOpenAIGatewayHandler(
+		gatewayService, service.NewConcurrencyService(nil), billingService,
+		service.NewAPIKeyService(nil, nil, nil, nil, nil, nil, cfg), nil, nil, nil, nil, cfg,
+	)
+	handler.maxAccountSwitches = 10
+
+	body := []byte(`{"model":"gpt-image-1","prompt":"draw a cat","response_format":"url"}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = req
+	c.Set(string(middleware2.ContextKeyAPIKey), &service.APIKey{
+		ID: 99, GroupID: &groupID,
+		Group: &service.Group{ID: groupID, AllowImageGeneration: true},
+		User:  &service.User{ID: 100},
+	})
+	c.Set(string(middleware2.ContextKeyUser), middleware2.AuthSubject{UserID: 100, Concurrency: 0})
+
+	handler.Images(c)
+
+	require.Equal(t, http.StatusBadGateway, rec.Code)
+	require.Equal(t, "upstream_error", gjson.GetBytes(rec.Body.Bytes(), "error.type").String())
+	require.NotContains(t, rec.Body.String(), "upstream.example.com", "严格模式绝不返回上游 url")
+	require.Equal(t, []int64{1}, upstream.posts, "上游已出图，不能换号重新生成")
+	require.Equal(t, 1, upstream.downloads)
+}
