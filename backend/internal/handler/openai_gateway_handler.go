@@ -4220,6 +4220,9 @@ type cyberPolicyOpsErrorMeta struct {
 	ClientIP        string
 	CreatedAt       time.Time
 	SessionBlockKey string
+	// 请求属性与总耗时在请求内同步快照（落库在异步 goroutine 里）。
+	RequestAttributes service.OpsRequestAttributes
+	DurationMs        *int
 }
 
 // buildCyberPolicyOpsErrorEntry builds the ops_error_logs entry for an upstream
@@ -4249,6 +4252,9 @@ func buildCyberPolicyOpsErrorEntry(meta cyberPolicyOpsErrorMeta, mark *service.C
 		ErrorSource: "upstream_http",
 		ErrorOwner:  "provider",
 		CreatedAt:   meta.CreatedAt,
+
+		DurationMs:           meta.DurationMs,
+		OpsRequestAttributes: meta.RequestAttributes,
 	}
 	if meta.UserID > 0 {
 		entry.UserID = &meta.UserID
@@ -4296,6 +4302,9 @@ func buildCyberSessionBlockedOpsEntry(meta cyberPolicyOpsErrorMeta) *service.Ops
 		ErrorOwner:        "platform",
 		CreatedAt:         meta.CreatedAt,
 		// AccountID 有意不设：请求在账号选择前即被拒绝。
+
+		DurationMs:           meta.DurationMs,
+		OpsRequestAttributes: meta.RequestAttributes,
 	}
 	if meta.SessionBlockKey != "" {
 		entry.ErrorBody = "session_block_key=" + meta.SessionBlockKey
@@ -4416,7 +4425,10 @@ func (h *OpenAIGatewayHandler) enqueueCyberSessionBlockedOpsEntry(c *gin.Context
 	// The dedicated cyber_session_blocked entry owns Ops semantics for this
 	// request; suppress the generic middleware record of the same 403 response.
 	c.Set(opsDedicatedErrorRecordedKey, true)
-	meta := cyberPolicyOpsErrorMeta{Model: model, InboundEndpoint: GetInboundEndpoint(c), CreatedAt: time.Now(), SessionBlockKey: sessionBlockKey}
+	meta := cyberPolicyOpsErrorMeta{
+		Model: model, InboundEndpoint: GetInboundEndpoint(c), CreatedAt: time.Now(), SessionBlockKey: sessionBlockKey,
+		RequestAttributes: service.GetOpsRequestAttributes(c), DurationMs: service.OpsRequestElapsedMs(c),
+	}
 	meta.RequestID = c.Writer.Header().Get("X-Request-Id")
 	if c.Request != nil && c.Request.URL != nil {
 		meta.RequestPath = c.Request.URL.Path
@@ -4531,6 +4543,9 @@ func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarked(c *gin.Context, apiKey 
 		GroupID:         groupID,
 		ClientIP:        clientIPStr,
 		CreatedAt:       time.Now(),
+
+		RequestAttributes: service.GetOpsRequestAttributes(c),
+		DurationMs:        service.OpsRequestElapsedMs(c),
 	}
 	cyberLogOnly := h.cyberPolicyLogOnly(c, apiKey)
 	if gwSvc != nil && apiKey != nil && !cyberLogOnly {

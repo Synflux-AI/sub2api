@@ -103,6 +103,11 @@ func (s *GeminiMessagesCompatService) forwardClaudeBodyAsChatCompletions(
 	}
 	geminiReq = ensureGeminiFunctionCallThoughtSignatures(geminiReq)
 	geminiReq = applyGeminiCompatThinkingConfig(geminiReq, claudeBody, mappedModel, clientStream)
+	SetOpsReasoningEffort(c, extractGeminiReasoningEffortFromBody(geminiReq))
+	if isImageGenerationModel(originalModel) {
+		imageInputSize := s.extractImageInputSize(claudeBody)
+		SetOpsImageRequest(c, normalizeOpenAIImageSizeTier(imageInputSize), imageInputSize, 1)
+	}
 
 	proxyURL := ""
 	if account.ProxyID != nil && account.Proxy != nil {

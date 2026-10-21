@@ -158,6 +158,11 @@ type OpsInsertErrorLogInput struct {
 	UpstreamLatencyMs  *int64
 	ResponseLatencyMs  *int64
 	TimeToFirstTokenMs *int64
+	// DurationMs 是请求进入网关（ops 错误日志中间件）到写错误日志时的总耗时；WebSocket 按 turn 计。
+	DurationMs *int
+
+	// 请求属性（推理强度 / service tier / 图片参数），口径同 usage_logs 同名列；零值落 NULL。
+	OpsRequestAttributes
 
 	CreatedAt time.Time
 

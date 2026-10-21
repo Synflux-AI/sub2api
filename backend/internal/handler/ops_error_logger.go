@@ -431,7 +431,9 @@ func estimateOpsErrorLogJobBytes(entry *service.OpsInsertErrorLogInput) int64 {
 		len(entry.RequestedModel) + len(entry.UpstreamModel) + len(entry.UserAgent) +
 		len(entry.ErrorPhase) + len(entry.ErrorType) + len(entry.Severity) +
 		len(entry.ErrorMessage) + len(entry.ErrorBody) + len(entry.ErrorSource) +
-		len(entry.ErrorOwner) + len(entry.APIKeyPrefix)
+		len(entry.ErrorOwner) + len(entry.APIKeyPrefix) +
+		len(entry.ReasoningEffort) + len(entry.ServiceTier) + len(entry.ImageSize) +
+		len(entry.ImageInputSize) + len(entry.ImageResponseFormat)
 	if entry.UpstreamErrorMessage != nil {
 		size += len(*entry.UpstreamErrorMessage)
 	}
@@ -494,6 +496,7 @@ func setOpsSelectedAccount(c *gin.Context, account *service.Account) {
 		return
 	}
 	service.ClearOpsUpstreamModel(c)
+	service.ClearOpsAttemptRequestAttributes(c)
 	c.Set(opsAccountIDKey, account.ID)
 	if c.Request != nil {
 		ctx := context.WithValue(c.Request.Context(), ctxkey.AccountID, account.ID)
@@ -1099,6 +1102,7 @@ func (state *opsCaptureWriterState) shouldCapture() bool {
 // - Streaming errors after the response has started (SSE) may still need explicit logging.
 func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		c.Set(service.OpsRequestStartedAtKey, time.Now())
 		originalWriter := c.Writer
 		w := acquireOpsCaptureWriter(originalWriter)
 		w.setContext(c)
@@ -1276,6 +1280,7 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 			CreatedAt: time.Now(),
 		}
 		applyOpsLatencyFieldsFromContext(c, entry)
+		applyOpsRequestAttributesFromContext(c, entry)
 		applyOpsUpstreamFieldsFromContext(c, entry)
 		if parsed.StreamFailure {
 			if message := strings.TrimSpace(parsed.Message); message != "" {
@@ -1426,6 +1431,7 @@ func logOpsRecoveredUpstream(c *gin.Context, ops *service.OpsService, finalStatu
 		entry.ClientIP = &clientIP
 	}
 	applyOpsLatencyFieldsFromContext(c, entry)
+	applyOpsRequestAttributesFromContext(c, entry)
 	enqueueOpsErrorLog(opsErrorLogRequestContext(c), ops, entry)
 }
 
@@ -1590,6 +1596,9 @@ func logOpsStreamErrorValue(c *gin.Context, ops *service.OpsService, wireStatus 
 		CreatedAt: time.Now(),
 	}
 	applyOpsLatencyFieldsFromContext(c, entry)
+	// 请求属性与耗时取标记时的快照：WebSocket 在连接结束才落库，届时 context 里是最后一个 turn 的值。
+	entry.OpsRequestAttributes = streamErr.RequestAttributes
+	entry.DurationMs = streamErr.DurationMs
 	if !streamErr.RequestScoped {
 		applyOpsUpstreamFieldsFromContext(c, entry)
 	}
@@ -1769,6 +1778,15 @@ func applyOpsLatencyFieldsFromContext(c *gin.Context, entry *service.OpsInsertEr
 	entry.UpstreamLatencyMs = getContextLatencyMs(c, service.OpsUpstreamLatencyMsKey)
 	entry.ResponseLatencyMs = getContextLatencyMs(c, service.OpsResponseLatencyMsKey)
 	entry.TimeToFirstTokenMs = getContextLatencyMs(c, service.OpsTimeToFirstTokenMsKey)
+}
+
+// applyOpsRequestAttributesFromContext 写入请求属性（口径同 usage_logs 同名列）与总耗时。
+func applyOpsRequestAttributesFromContext(c *gin.Context, entry *service.OpsInsertErrorLogInput) {
+	if c == nil || entry == nil {
+		return
+	}
+	entry.OpsRequestAttributes = service.GetOpsRequestAttributes(c)
+	entry.DurationMs = service.OpsRequestElapsedMs(c)
 }
 
 // applyOpsUpstreamFieldsFromContext captures attempt-level upstream context.

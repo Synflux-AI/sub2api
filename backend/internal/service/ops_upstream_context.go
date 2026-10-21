@@ -236,6 +236,9 @@ type OpsStreamError struct {
 	RequestScoped bool
 	// NonStream 表示带内信号来自非流式 2xx 响应体，落库 stream=false。
 	NonStream bool
+	// RequestAttributes / DurationMs 在标记时快照，供 WebSocket turn 落库（连接结束才写日志）。
+	RequestAttributes OpsRequestAttributes
+	DurationMs        *int
 }
 
 const maxOpsStreamErrorsPerRequest = 64
@@ -252,6 +255,8 @@ func BeginOpsStreamTurn(c *gin.Context, turn int) {
 	c.Set(OpsUpstreamStatusCodeKey, 0)
 	c.Set(OpsUpstreamErrorMessageKey, "")
 	c.Set(OpsUpstreamErrorDetailKey, "")
+	c.Set(OpsRequestAttributesKey, OpsRequestAttributes{})
+	c.Set(OpsRequestStartedAtKey, time.Now())
 }
 
 // MarkOpsStreamError 记录一次就地 SSE 错误，供 ops 日志采集。
@@ -337,6 +342,8 @@ func snapshotOpsStreamErrorContext(c *gin.Context, streamErr *OpsStreamError) {
 		streamErr.UpstreamModel, _ = value.(string)
 		streamErr.UpstreamModel = strings.TrimSpace(streamErr.UpstreamModel)
 	}
+	streamErr.RequestAttributes = GetOpsRequestAttributes(c)
+	streamErr.DurationMs = OpsRequestElapsedMs(c)
 	if streamErr.RequestScoped {
 		return
 	}

@@ -106,6 +106,7 @@ func (s *OpenAIGatewayService) forwardResponsesViaRawChatCompletions(
 	// Keep the final outbound tier for usage-time reconciliation. A policy
 	// filter that removes the field therefore leaves this nil.
 	serviceTier := extractOpenAIServiceTierFromBody(chatBody)
+	setOpsOpenAIRequestAttributes(c, reasoningEffort, serviceTier)
 
 	logger.L().Debug("openai responses: forwarding via raw chat completions",
 		zap.Int64("account_id", account.ID),

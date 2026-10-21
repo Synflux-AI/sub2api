@@ -541,6 +541,9 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 		actualModel = canonicalOpenAIAccountSchedulingModel(account, originalModel)
 	}
 	SetOpsUpstreamModel(c, actualModel)
+	setOpsOpenAIRequestAttributes(c,
+		ApplyThinkingEnabledFallback(extractOpenAIReasoningEffortFromBody(body, actualModel, originalModel), body, actualModel),
+		extractOpenAIServiceTierFromBody(body))
 
 	proxyURL := ""
 	if account.ProxyID != nil && account.Proxy != nil {

@@ -590,6 +590,7 @@ func (s *OpenAIGatewayService) forwardGrokChatCompletionsViaResponses(
 		return nil, policyErr
 	}
 	responsesBody = updatedBody
+	setOpsOpenAIRequestAttributes(c, extractOpenAIReasoningEffortFromBody(body, upstreamModel, billingModel, originalModel), nil)
 
 	token, _, err := s.getRequestCredential(ctx, c, account)
 	if err != nil {

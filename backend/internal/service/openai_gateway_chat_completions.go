@@ -335,6 +335,7 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 	}
 	responsesBody = updatedBody
 	responsesReq.ServiceTier = normalizedOpenAIServiceTierValue(gjson.GetBytes(responsesBody, "service_tier").String())
+	setOpsOpenAIRequestAttributes(c, responsesRequestReasoningEffort(responsesReq), extractOpenAIServiceTierFromBody(responsesBody))
 
 	// 5. Get access token
 	token, _, err := s.GetAccessToken(ctx, account)
@@ -450,9 +451,8 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 		if tier := resolvedOpenAIUpstreamServiceTier(c, extractOpenAIServiceTierFromBody(responsesBody)); tier != nil {
 			result.ServiceTier = tier
 		}
-		if responsesReq.Reasoning != nil && responsesReq.Reasoning.Effort != "" {
-			re := responsesReq.Reasoning.Effort
-			result.ReasoningEffort = &re
+		if re := responsesRequestReasoningEffort(responsesReq); re != nil {
+			result.ReasoningEffort = re
 		}
 	}
 

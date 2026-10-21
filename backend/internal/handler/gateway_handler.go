@@ -530,6 +530,10 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			} else {
 				result, err = h.geminiCompatService.Forward(requestCtx, c, account, body)
 			}
+			// Gemini 转发已登记的推理强度等同 result.ReasoningEffort，失败时不覆盖。
+			if result != nil || service.GetOpsRequestAttributes(c).ReasoningEffort == "" {
+				setOpsForwardReasoningEffort(c, result, parsedReq, account)
+			}
 			if accountReleaseFunc != nil {
 				accountReleaseFunc()
 			}
@@ -951,6 +955,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 				result, err = h.gatewayService.Forward(requestCtx, c, account, attemptParsedReq)
 			}
 			setOpsResponseLatencyMs(c, forwardStart)
+			setOpsForwardReasoningEffort(c, result, attemptParsedReq, account)
 
 			// 兜底释放串行锁（正常情况已通过回调提前释放）
 			if queueRelease != nil {

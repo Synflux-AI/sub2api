@@ -157,6 +157,22 @@ func stampForwardReasoningEffort(result *service.ForwardResult, parsedReq *servi
 	}
 }
 
+// setOpsForwardReasoningEffort 按 stampForwardReasoningEffort 的同一规则登记本次尝试的推理强度，
+// 供 ops 错误日志使用。转发失败（result 为 nil）时用账号映射后的模型补算 thinking 默认值。
+func setOpsForwardReasoningEffort(c *gin.Context, result *service.ForwardResult, parsedReq *service.ParsedRequest, account *service.Account) {
+	if parsedReq == nil {
+		return
+	}
+	if result == nil {
+		result = &service.ForwardResult{Model: parsedReq.Model}
+		if account != nil {
+			result.UpstreamModel = account.GetMappedModel(parsedReq.Model)
+		}
+	}
+	stampForwardReasoningEffort(result, parsedReq, account)
+	service.SetOpsReasoningEffort(c, result.ReasoningEffort)
+}
+
 func applyOpenAIReasoningEffortPolicyForRequest(c *gin.Context, apiKey *service.APIKey, body []byte) ([]byte, bool, error) {
 	bindRequestedReasoningEffort(c, body, strings.TrimSpace(gjson.GetBytes(body, "model").String()))
 	maxEffort, mappings, overLimit, ok := openAIReasoningEffortPolicyForRequest(c, apiKey)

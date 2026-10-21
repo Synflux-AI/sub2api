@@ -113,6 +113,7 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 
 	setOpsRequestContext(c, clientRequestModel, parsed.Stream)
 	setOpsEndpointContext(c, "", int16(service.RequestTypeFromLegacy(parsed.Stream, false)))
+	service.SetOpsImageRequest(c, parsed.SizeTier, parsed.Size, parsed.N)
 
 	channelMapping, _ := h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, routingModel)
 
