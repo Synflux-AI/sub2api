@@ -131,6 +131,74 @@ func TestOpenAIResponsesForwardFailureRecordsSameAttributesAsSuccess(t *testing.
 	}
 }
 
+// /v1/responses 带 image_generation 工具：上游失败时登记的图片参数与同一请求成功时写进结果的相同，
+// 张数记 1；HTTP 与 passthrough 两条路径都覆盖。
+func TestOpenAIResponsesImageToolFailureRecordsSameImageAttributesAsSuccess(t *testing.T) {
+	body := []byte(`{"model":"gpt-5.4","stream":false,"tools":[{"type":"image_generation","model":"gpt-image-2","size":"2048x1152"}],"input":"draw"}`)
+	for _, passthrough := range []bool{false, true} {
+		name := "http"
+		if passthrough {
+			name = "passthrough"
+		}
+		t.Run(name, func(t *testing.T) {
+			upstream := &httpUpstreamRecorder{responses: []*http.Response{
+				{
+					StatusCode: http.StatusInternalServerError,
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
+					Body:       io.NopCloser(strings.NewReader(`{"error":{"type":"server_error","message":"boom"}}`)),
+				},
+				{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
+					Body: io.NopCloser(strings.NewReader(
+						`{"output":[{"id":"ig_1","type":"image_generation_call","result":"final-image","size":"2048x1152"}],"usage":{"input_tokens":1,"output_tokens":2}}`,
+					)),
+				},
+			}}
+			svc := newOpenAIImageGenerationControlTestService(upstream)
+			account := newOpenAIImageGenerationControlTestAccount()
+			if passthrough {
+				account.Extra = map[string]any{"openai_passthrough": true}
+			}
+
+			failCtx, _ := newOpenAIImageGenerationControlTestContext(true, "curl/8.0")
+			_, err := svc.Forward(context.Background(), failCtx, account, body)
+			require.Error(t, err)
+			failed := GetOpsRequestAttributes(failCtx)
+
+			okCtx, _ := newOpenAIImageGenerationControlTestContext(true, "curl/8.0")
+			result, err := svc.Forward(context.Background(), okCtx, account, body)
+			require.NoError(t, err)
+			require.NotNil(t, result)
+
+			require.Equal(t, result.ImageSize, failed.ImageSize)
+			require.Equal(t, result.ImageInputSize, failed.ImageInputSize)
+			require.Equal(t, "2K", failed.ImageSize)
+			require.Equal(t, "2048x1152", failed.ImageInputSize)
+			require.Equal(t, 1, failed.ImageCount)
+		})
+	}
+}
+
+// 出图意图取决于账号的模型映射：换到没有出图意图的尝试时，上一次登记的图片参数要清掉。
+func TestOpenAIResponsesForwardClearsImageAttributesWithoutImageIntent(t *testing.T) {
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusInternalServerError,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(`{"error":{"type":"server_error","message":"boom"}}`)),
+	}}
+	svc := newOpenAIImageGenerationControlTestService(upstream)
+	c, _ := newOpenAIImageGenerationControlTestContext(true, "curl/8.0")
+	SetOpsResponsesImageRequest(c, "2K", "2048x1152")
+
+	_, err := svc.Forward(context.Background(), c, newOpenAIImageGenerationControlTestAccount(), []byte(`{"model":"gpt-5.4","stream":false,"input":"hello"}`))
+	require.Error(t, err)
+	attrs := GetOpsRequestAttributes(c)
+	require.Empty(t, attrs.ImageSize)
+	require.Empty(t, attrs.ImageInputSize)
+	require.Zero(t, attrs.ImageCount)
+}
+
 // Anthropic /v1/messages：speed=fast 的档位在转发失败时同样登记（成功时由同一 defer 写进结果）。
 func TestGatewayForwardFailureRecordsAnthropicFastServiceTier(t *testing.T) {
 	body := []byte(`{"model":"claude-opus-4-8","speed":"fast","stream":false,"messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]}`)

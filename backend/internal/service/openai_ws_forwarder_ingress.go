@@ -1013,6 +1013,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		reasoningEffort := ApplyThinkingEnabledFallback(extractOpenAIReasoningEffortFromBody(payload, mappedModel, originalModel), payload, mappedModel)
 		outboundServiceTier := extractOpenAIServiceTierFromBody(payload)
 		setOpsOpenAIRequestAttributes(c, reasoningEffort, outboundServiceTier)
+		SetOpsResponsesImageRequest(c, imageSizeTier, imageInputSize)
 		for {
 			upstreamMessage, readErr := lease.ReadMessageWithContextTimeout(ctx, s.openAIWSReadTimeout())
 			if readErr != nil {

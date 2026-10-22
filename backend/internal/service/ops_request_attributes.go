@@ -78,6 +78,18 @@ func SetOpsImageRequest(c *gin.Context, sizeTier, inputSize string, count int) {
 	})
 }
 
+// SetOpsResponsesImageRequest 登记 /v1/responses 出图意图（image_generation 工具或出图模型）的请求侧参数，
+// 在成功时写进 result.ImageSize / ImageInputSize 的同一个变量上调用。请求里没有张数，有出图意图时记 1 张
+// （同 Gemini 出图模型）。没有出图意图时 sizeTier 为空，照样调用以清掉上一次尝试的值：出图意图取决于
+// 账号的模型映射，换号后可能不同，而这几条路径上只有这里登记图片参数。
+func SetOpsResponsesImageRequest(c *gin.Context, sizeTier, inputSize string) {
+	count := 0
+	if strings.TrimSpace(sizeTier) != "" {
+		count = 1
+	}
+	SetOpsImageRequest(c, sizeTier, inputSize, count)
+}
+
 // ClearOpsAttemptRequestAttributes 在换号开始新一次尝试前清掉按尝试计算的属性
 // （推理强度 / service tier 依赖账号映射，出图返回格式依赖账号类型），避免上一次尝试的值
 // 残留到本次失败的错误日志里。请求侧的图片尺寸与张数不受影响。

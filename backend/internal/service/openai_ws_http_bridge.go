@@ -544,6 +544,7 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 	setOpsOpenAIRequestAttributes(c,
 		ApplyThinkingEnabledFallback(extractOpenAIReasoningEffortFromBody(body, actualModel, originalModel), body, actualModel),
 		extractOpenAIServiceTierFromBody(body))
+	SetOpsResponsesImageRequest(c, imageSizeTier, imageInputSize)
 
 	proxyURL := ""
 	if account.ProxyID != nil && account.Proxy != nil {

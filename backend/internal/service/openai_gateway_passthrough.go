@@ -316,6 +316,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		imageSizeTier = imageCfg.SizeTier
 		imageInputSize = imageCfg.InputSize
 	}
+	SetOpsResponsesImageRequest(c, imageSizeTier, imageInputSize)
 
 	logger.LegacyPrintf("service.openai_gateway",
 		"[OpenAI 自动透传] 命中自动透传分支: account=%d name=%s type=%s model=%s stream=%v",
