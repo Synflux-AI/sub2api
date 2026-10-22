@@ -124,6 +124,7 @@ func (s *OpenAIGatewayService) forwardResponsesViaNativeAnthropic(
 	// Bill the Anthropic effort actually sent upstream (for example xhigh → max).
 	reasoningEffort := NormalizeClaudeOutputEffort(gjson.GetBytes(forwardedBody, "output_config.effort").String())
 	reasoningEffort = ApplyThinkingEnabledFallback(reasoningEffort, forwardedBody, upstreamModel)
+	setOpsOpenAIRequestAttributes(c, reasoningEffort, nil)
 
 	resp, err := s.timedDoOpenAIUpstream(c, upstreamReq, proxyURL, account)
 	if err != nil {

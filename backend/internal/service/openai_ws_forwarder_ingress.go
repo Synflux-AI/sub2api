@@ -1010,6 +1010,10 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				mappedModelBytes = []byte(mappedModel)
 			}
 		}
+		reasoningEffort := ApplyThinkingEnabledFallback(extractOpenAIReasoningEffortFromBody(payload, mappedModel, originalModel), payload, mappedModel)
+		outboundServiceTier := extractOpenAIServiceTierFromBody(payload)
+		setOpsOpenAIRequestAttributes(c, reasoningEffort, outboundServiceTier)
+		SetOpsResponsesImageRequest(c, imageSizeTier, imageInputSize)
 		for {
 			upstreamMessage, readErr := lease.ReadMessageWithContextTimeout(ctx, s.openAIWSReadTimeout())
 			if readErr != nil {
@@ -1246,8 +1250,8 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 					UpstreamResponseModelConflict: responseModelObserver.Conflict(),
 					ResponseOutcome:               responseModelObserver.ResponseOutcome(),
 					UpstreamResponseServiceTier:   responseModelObserver.ServiceTier(),
-					ServiceTier:                   resolvedOpenAIUpstreamServiceTierFromObserver(responseModelObserver, extractOpenAIServiceTierFromBody(payload)),
-					ReasoningEffort:               ApplyThinkingEnabledFallback(extractOpenAIReasoningEffortFromBody(payload, mappedModel, originalModel), payload, mappedModel),
+					ServiceTier:                   resolvedOpenAIUpstreamServiceTierFromObserver(responseModelObserver, outboundServiceTier),
+					ReasoningEffort:               reasoningEffort,
 					RequestedReasoningEffort:      requestedReasoningEffort,
 					Stream:                        reqStream,
 					OpenAIWSMode:                  true,

@@ -564,6 +564,8 @@ func (s *GeminiMessagesCompatService) Forward(ctx context.Context, c *gin.Contex
 	includeThoughts := req.Stream && claudeRequestEnablesThinking(body)
 	geminiReq = applyGeminiCompatThinkingConfig(geminiReq, body, mappedModel, includeThoughts)
 	originalClaudeBody := body
+	SetOpsReasoningEffort(c, extractGeminiReasoningEffortFromBody(geminiReq))
+	s.setOpsGeminiImageRequest(c, body, originalModel, mappedModel)
 
 	proxyURL := ""
 	if account.ProxyID != nil && account.Proxy != nil {
@@ -1162,6 +1164,8 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 	if account.Type == AccountTypeAPIKey || account.Type == AccountTypeServiceAccount {
 		mappedModel = account.GetMappedModel(originalModel)
 	}
+	SetOpsReasoningEffort(c, extractGeminiReasoningEffortFromBody(body))
+	s.setOpsGeminiImageRequest(c, body, originalModel, mappedModel)
 
 	proxyURL := ""
 	if account.ProxyID != nil && account.Proxy != nil {
@@ -4212,6 +4216,16 @@ func convertClaudeGenerationConfig(req map[string]any) map[string]any {
 		return nil
 	}
 	return out
+}
+
+// setOpsGeminiImageRequest 只对出图模型登记请求侧图片参数：尺寸来源同成功时的
+// extractImageInputSize，张数取 resolveGeminiImageCount 未观测到输出时的 1。
+func (s *GeminiMessagesCompatService) setOpsGeminiImageRequest(c *gin.Context, body []byte, originalModel, mappedModel string) {
+	if !isImageGenerationModel(originalModel) && !isImageGenerationModel(mappedModel) {
+		return
+	}
+	imageInputSize := s.extractImageInputSize(body)
+	SetOpsImageRequest(c, normalizeOpenAIImageSizeTier(imageInputSize), imageInputSize, 1)
 }
 
 func (s *GeminiMessagesCompatService) extractImageInputSize(body []byte) string {

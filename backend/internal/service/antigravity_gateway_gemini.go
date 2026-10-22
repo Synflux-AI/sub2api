@@ -142,6 +142,10 @@ func (s *AntigravityGatewayService) ForwardGemini(ctx context.Context, c *gin.Co
 	}
 
 	injectedBody = ensureGeminiFunctionCallThoughtSignatures(injectedBody)
+	SetOpsReasoningEffort(c, extractGeminiReasoningEffortFromBody(injectedBody))
+	if isImageGenerationModel(mappedModel) {
+		SetOpsImageRequest(c, imageSize, imageInputSize, 1)
+	}
 
 	// 包装请求
 	wrappedBody, err := s.wrapV1InternalRequest(projectID, mappedModel, injectedBody)

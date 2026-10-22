@@ -114,11 +114,12 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 	// service_tier. Attach it at this shared boundary so passthrough, OAuth and
 	// partial-stream results all use the same billing and usage-log path.
 	defer func() {
-		if result != nil {
-			if tier := anthropicSpeedServiceTier(account, parsed.Speed, anthropicSpeedModel(parsed, result)); tier != nil {
-				result.ServiceTier = tier
-			}
+		tier := anthropicSpeedServiceTier(account, parsed.Speed, anthropicSpeedModel(parsed, result))
+		if result != nil && tier != nil {
+			result.ServiceTier = tier
 		}
+		// 失败时 result 为 nil，按请求模型判定同一档位，供 ops 错误日志使用。
+		SetOpsServiceTier(c, tier)
 	}()
 	beginUpstreamResponseModelObservation(c)
 

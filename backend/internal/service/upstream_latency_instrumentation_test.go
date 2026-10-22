@@ -71,7 +71,7 @@ func TestTimedUpstreamDoRecordsLatency(t *testing.T) {
 // 名单只能因以上两条之一而增长，不能因为「改起来麻烦」。
 var instrumentationExempt = map[string]string{
 	"gemini_models_endpoints.go:269": "模型列表/详情 GET 辅助路径（原 ForwardAIStudioGET），签名只有 context.Context，非请求转发路径",
-	"gemini_cached_content.go:1084": "显式缓存管理接口（create/get/patch/delete cachedContents），签名只有 context.Context，非推理请求出口",
+	"gemini_cached_content.go:1084":  "显式缓存管理接口（create/get/patch/delete cachedContents），签名只有 context.Context，非推理请求出口",
 }
 
 func TestGeminiAndAntigravityUpstreamExitsAreInstrumented(t *testing.T) {

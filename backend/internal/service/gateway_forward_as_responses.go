@@ -145,6 +145,7 @@ func (s *GatewayService) ForwardAsResponses(
 	// For example, OpenAI xhigh is forwarded as output_config.effort=max.
 	reasoningEffort := NormalizeClaudeOutputEffort(gjson.GetBytes(forwardedBody, "output_config.effort").String())
 	reasoningEffort = ApplyThinkingEnabledFallback(reasoningEffort, forwardedBody, mappedModel)
+	SetOpsReasoningEffort(c, reasoningEffort)
 
 	// 11. Send request
 	account.ApplyCustomHeaders(upstreamReq)

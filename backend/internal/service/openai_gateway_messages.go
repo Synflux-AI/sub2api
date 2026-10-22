@@ -347,6 +347,8 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 		}
 	}
 
+	setOpsOpenAIRequestAttributes(c, responsesRequestReasoningEffort(responsesReq), extractOpenAIServiceTierFromBody(responsesBody))
+
 	// 5. Get access token
 	token, _, err := s.getRequestCredential(ctx, c, account)
 	if err != nil {
@@ -544,9 +546,8 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 		if tier := resolvedOpenAIUpstreamServiceTier(c, extractOpenAIServiceTierFromBody(responsesBody)); tier != nil {
 			result.ServiceTier = tier
 		}
-		if responsesReq.Reasoning != nil && responsesReq.Reasoning.Effort != "" {
-			re := responsesReq.Reasoning.Effort
-			result.ReasoningEffort = &re
+		if re := responsesRequestReasoningEffort(responsesReq); re != nil {
+			result.ReasoningEffort = re
 		}
 	}
 

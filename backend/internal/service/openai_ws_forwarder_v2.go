@@ -39,6 +39,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		return nil, wrapOpenAIWSFallback("invalid_state", errors.New("service or account is nil"))
 	}
 	responseModelObserver := &upstreamResponseModelObserver{}
+	setOpsOpenAIRequestAttributes(c, extractOpenAIReasoningEffort(reqBody, mappedModel, originalModel), extractOpenAIServiceTier(reqBody))
 
 	wsURL, err := s.buildOpenAIResponsesWSURL(account)
 	if err != nil {

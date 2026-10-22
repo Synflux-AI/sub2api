@@ -252,6 +252,7 @@ func (s *AntigravityGatewayService) prepareAntigravityCompatCall(
 	}
 
 	request.reasoningEffort = ApplyThinkingEnabledFallback(request.reasoningEffort, request.originalBody, mappedModel)
+	SetOpsReasoningEffort(c, request.reasoningEffort)
 	return &antigravityCompatUpstreamCall{
 		request:      request,
 		billingModel: mappedModel,

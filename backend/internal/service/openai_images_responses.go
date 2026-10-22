@@ -1808,6 +1808,11 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 	direct := usesCodexDirectImages(upstreamModel) && !isOpenAIImagesForceResponses(ctx)
 	beginUpstreamResponseModelObservation(c)
 	SetOpsUpstreamModel(c, upstreamModel)
+	imageResponseFormat := openAIImageResponseFormatB64JSON
+	if strings.EqualFold(strings.TrimSpace(parsed.ResponseFormat), openAIImageResponseFormatURL) {
+		imageResponseFormat = openAIImageResponseFormatURL
+	}
+	SetOpsImageResponseFormat(c, imageResponseFormat)
 	logger.LegacyPrintf(
 		"service.openai_gateway",
 		"[OpenAI] Images request routing request_model=%s endpoint=%s account_type=%s uploads=%d",
@@ -1936,10 +1941,6 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 		imageOutputSizes []string
 		firstTokenMs     *int
 	)
-	imageResponseFormat := openAIImageResponseFormatB64JSON
-	if strings.EqualFold(strings.TrimSpace(parsed.ResponseFormat), openAIImageResponseFormatURL) {
-		imageResponseFormat = openAIImageResponseFormatURL
-	}
 	// 与 handleOpenAIImagesOAuthResponseError 的比较端同口径：排除非流式 JSON
 	// keepalive 心跳字节，避免 failover 第 2 轮起把上一轮心跳残留误判为已写响应。
 	writerSizeBeforeResponse := OpenAIImagesJSONKeepaliveAdjustedWrittenSize(c)
