@@ -1040,10 +1040,19 @@ func buildForbiddenErrorMessage(prefix string, upstreamMsg string, responseBody 
 	return prefix + fallback
 }
 
-// handle403 处理 403 Forbidden 错误
-// Antigravity 平台区分 validation/violation/generic 三种类型，均 SetError 永久禁用；
-// 其他平台保持原有 SetError 行为。
+// handle403 处理 403 Forbidden 错误。Cloudflare 1010 是请求/边缘级拦截，
+// 不应将其视为账号级故障；其他真实 403 继续按平台策略处理。
 func (s *RateLimitService) handle403(ctx context.Context, account *Account, upstreamMsg string, responseBody []byte) (shouldDisable bool) {
+	if isCloudflareBotBlockResponse(responseBody) {
+		slog.Warn(
+			"403_cloudflare_bot_block_skips_account_penalty",
+			"account_id", account.ID,
+			"platform", account.Platform,
+			"upstream_message", upstreamMsg,
+		)
+		return false
+	}
+
 	if account.Platform == PlatformAntigravity {
 		return s.handleAntigravity403(ctx, account, upstreamMsg, responseBody)
 	}
@@ -1101,16 +1110,6 @@ func (s *RateLimitService) handleOpenAI403(ctx context.Context, account *Account
 		)
 		return false
 	}
-	if isCloudflareBotBlockResponse(responseBody) {
-		slog.Warn(
-			"openai_403_cloudflare_bot_block_skips_account_penalty",
-			"account_id", account.ID,
-			"platform", account.Platform,
-			"upstream_message", upstreamMsg,
-		)
-		return false
-	}
-
 	// 全局"禁止临时停止调度"开关开启时整体跳过：403 计数/冷却机制以临时停用为前提，
 	// 只跳过冷却会让连续计数快速达到阈值并升级为永久禁用，反而违背开关意图。
 	if tempUnschedDisabledSkip(ctx, account.Platform, account.ID, "openai_403") {
@@ -1166,7 +1165,60 @@ func (s *RateLimitService) handleOpenAI403(ctx context.Context, account *Account
 // request/edge-level failure and must not consume the account 403 strike budget.
 func isCloudflareBotBlockResponse(body []byte) bool {
 	normalized := strings.ToLower(strings.TrimSpace(string(body)))
+	var payload any
+	if json.Unmarshal(body, &payload) == nil {
+		return containsCloudflareBotBlockCode(payload)
+	}
 	return strings.Contains(normalized, "error code: 1010")
+}
+
+func containsCloudflareBotBlockCode(value any) bool {
+	switch node := value.(type) {
+	case map[string]any:
+		cloudflareError := false
+		for key, child := range node {
+			if strings.EqualFold(key, "cloudflare_error") {
+				if is, ok := child.(bool); ok && is {
+					cloudflareError = true
+				}
+			}
+		}
+		for key, child := range node {
+			if strings.EqualFold(key, "error_name") {
+				if name, ok := child.(string); ok && strings.EqualFold(strings.TrimSpace(name), "browser_signature_banned") {
+					return true
+				}
+			}
+			if cloudflareError && (strings.EqualFold(key, "code") || strings.EqualFold(key, "error_code")) {
+				if isCloudflareBotBlockCode(child) {
+					return true
+				}
+			}
+			if containsCloudflareBotBlockCode(child) {
+				return true
+			}
+		}
+	case []any:
+		for _, child := range node {
+			if containsCloudflareBotBlockCode(child) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func isCloudflareBotBlockCode(value any) bool {
+	switch code := value.(type) {
+	case float64:
+		return code == 1010
+	case json.Number:
+		return code == "1010"
+	case string:
+		return strings.TrimSpace(code) == "1010"
+	default:
+		return false
+	}
 }
 
 // handleAntigravity403 处理 Antigravity 平台的 403 错误
