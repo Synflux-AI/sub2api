@@ -800,6 +800,8 @@ func ProvideImageStorageSettingService(
 	backup *BackupService,
 	factory ImageStorageFactory,
 	cfg *config.Config,
+	settingService *SettingService,
+	openAIGateway *OpenAIGatewayService,
 ) *ImageStorageSettingService {
 	if cfg.ImageStorage.Enabled && !cfg.ImageStorage.Active() {
 		// 列出具体缺失的键。若这些键其实已在环境变量里设过，说明它们没被读进来，
@@ -807,7 +809,17 @@ func ProvideImageStorageSettingService(
 		logger.L().Warn("image_storage.enabled is true in config but object storage is not fully configured; configure it in the admin UI or complete the config file",
 			zap.Strings("missing_keys", cfg.ImageStorage.MissingCredentialKeys()))
 	}
-	return NewImageStorageSettingService(settingRepo, encryptor, backup, factory, cfg.ImageStorage)
+	svc := NewImageStorageSettingService(settingRepo, encryptor, backup, factory, cfg.ImageStorage)
+	// 多副本：保存时广播，其他副本收到后丢弃缓存；url_mode 另有 30s TTL 兜底漏收的广播。
+	if settingService != nil {
+		svc.SetChangePublisher(settingService.PublishSettingsUpdated)
+		settingService.AddReplicaSettingsReloadHook(svc.Invalidate)
+	}
+	// 以 setter 注入而非改 NewOpenAIGatewayService 签名，避免大量测试构造跟着改。
+	if openAIGateway != nil {
+		openAIGateway.SetImageURLPolicyResolver(svc.URLPolicyResolver())
+	}
+	return svc
 }
 
 // ProvideImageTaskService 构造异步图片任务服务。

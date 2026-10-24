@@ -98,6 +98,9 @@ export async function testS3Connection(config: BackupS3Config): Promise<TestS3Re
 //
 // Shares the S3 client with backups, so `reuse_backup_s3` borrows the endpoint and
 // credentials configured above and only keeps its own bucket/prefix.
+// How synchronous image responses expose upstream image URLs.
+export type ImageURLMode = 'passthrough' | 'inline' | 'rehost'
+
 export interface ImageStorageConfig {
   enabled: boolean
   reuse_backup_s3: boolean
@@ -111,6 +114,9 @@ export interface ImageStorageConfig {
   access_key_id: string
   secret_access_key?: string
   force_path_style: boolean
+  url_mode: ImageURLMode
+  // Return 502 instead of the upstream URL when an image cannot be hidden.
+  url_rewrite_strict: boolean
 }
 
 export interface ImageStorageConfigResponse {

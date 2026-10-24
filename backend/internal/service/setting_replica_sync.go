@@ -32,6 +32,9 @@ type settingsReplicaSync struct {
 	cancel   context.CancelFunc
 	done     chan struct{}
 	reloadMu sync.Mutex
+	// reloadHooks 在收到其他副本的设置广播后调用，供不归 SettingService 管的缓存
+	// （如异步生图对象存储设置）一并失效。
+	reloadHooks []func()
 }
 
 // SetSettingsChangeNotifier injects the cross-replica broadcaster.
@@ -51,6 +54,32 @@ func (s *SettingService) settingsChangeNotifier() SettingsChangeNotifier {
 	s.replicaSync.mu.Lock()
 	defer s.replicaSync.mu.Unlock()
 	return s.replicaSync.notifier
+}
+
+// AddReplicaSettingsReloadHook registers fn to run whenever another replica
+// broadcasts a settings save.
+func (s *SettingService) AddReplicaSettingsReloadHook(fn func()) {
+	if s == nil || fn == nil {
+		return
+	}
+	s.replicaSync.mu.Lock()
+	s.replicaSync.reloadHooks = append(s.replicaSync.reloadHooks, fn)
+	s.replicaSync.mu.Unlock()
+}
+
+func (s *SettingService) runReplicaSettingsReloadHooks() {
+	s.replicaSync.mu.Lock()
+	hooks := append([]func(){}, s.replicaSync.reloadHooks...)
+	s.replicaSync.mu.Unlock()
+	for _, hook := range hooks {
+		hook()
+	}
+}
+
+// PublishSettingsUpdated broadcasts a settings save made outside SettingService
+// (e.g. image storage settings) to the other replicas.
+func (s *SettingService) PublishSettingsUpdated(ctx context.Context) {
+	s.publishSettingsUpdated(ctx)
 }
 
 func (s *SettingService) publishSettingsUpdated(ctx context.Context) {
@@ -156,6 +185,7 @@ func (s *SettingService) startReplicaSettingsSync(ctx context.Context, interval 
 			if err := s.ReloadCachedSettingsFromStore(reloadCtx); err != nil {
 				slog.Warn("reload settings after update from another replica failed", "error", err)
 			}
+			s.runReplicaSettingsReloadHooks()
 		}); err != nil {
 			slog.Warn("subscribe settings updates failed; relying on periodic refresh", "error", err)
 		}

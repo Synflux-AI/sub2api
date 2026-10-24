@@ -260,6 +260,9 @@ func (h *AsyncImageHandler) failTask(taskID string, statusCode int, taskErr json
 
 func newAsyncImageContext(c *gin.Context, body []byte, timeoutDuration time.Duration) (*gin.Context, *httptest.ResponseRecorder, context.CancelFunc) {
 	base := context.WithoutCancel(c.Request.Context())
+	// 任务完成时 ImageTaskService.Complete 统一转存对象存储；同步入口不再按 url_mode 改写，
+	// 避免重复下载/上传。
+	base = service.WithImageURLRewriteSkipped(base)
 	executionCtx, cancel := context.WithTimeout(base, timeoutDuration)
 	request := c.Request.Clone(executionCtx)
 	request.Body = io.NopCloser(bytes.NewReader(body))

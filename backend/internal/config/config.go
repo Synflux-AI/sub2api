@@ -287,6 +287,13 @@ type ImageStorageConfig struct {
 	PublicBaseURL   string `mapstructure:"public_base_url"`      // 配了则返回 public_base_url/key 直链；否则 presigned
 	PresignExpiry   int    `mapstructure:"presign_expiry_hours"` // public_base_url 为空时的 presigned 过期时长(小时)
 	MaxDownloadByte int64  `mapstructure:"max_download_bytes"`   // 下载上游 url 图片的字节上限
+	// URLMode 控制同步生图响应里上游图片 url 的处理：passthrough（默认，原样透传）、
+	// inline（内联为 data URL / b64_json）、rehost（转存对象存储后返回自己的直链）。
+	// 独立于 Enabled 解析：不开异步生图也能隐藏上游 url。
+	URLMode string `mapstructure:"url_mode"`
+	// URLRewriteStrict 为真时，url_mode 为 inline/rehost 而有图片仍会返回上游 url（下载失败等）
+	// 的响应整体改为 502；默认 false，即保留上游 url（尽力隐藏）。
+	URLRewriteStrict bool `mapstructure:"url_rewrite_strict"`
 }
 
 // IsConfigured 检查对象存储必要字段是否已配置
@@ -848,6 +855,9 @@ type URLAllowlistConfig struct {
 	AllowPrivateHosts bool     `mapstructure:"allow_private_hosts"`
 	// 关闭 URL 白名单校验时，是否允许 http URL（默认只允许 https）
 	AllowInsecureHTTP bool `mapstructure:"allow_insecure_http"`
+	// MediaHosts 限定 image_storage.url_mode 下载上游生图 url 的域名（支持 *.example.com）。
+	// 为空时只做公网校验；不复用 upstream_hosts，图片 CDN 通常不在其中。
+	MediaHosts []string `mapstructure:"media_hosts"`
 }
 
 type ResponseHeaderConfig struct {
@@ -2221,6 +2231,7 @@ func setDefaults() {
 		"raw.githubusercontent.com",
 	})
 	viper.SetDefault("security.url_allowlist.crs_hosts", []string{})
+	viper.SetDefault("security.url_allowlist.media_hosts", []string{})
 	viper.SetDefault("security.url_allowlist.allow_private_hosts", true)
 	viper.SetDefault("security.url_allowlist.allow_insecure_http", true)
 	viper.SetDefault("security.response_headers.enabled", true)
@@ -2408,6 +2419,8 @@ func setDefaults() {
 	viper.SetDefault("image_storage.force_path_style", false)
 	viper.SetDefault("image_storage.presign_expiry_hours", 24)
 	viper.SetDefault("image_storage.max_download_bytes", 33554432)
+	viper.SetDefault("image_storage.url_mode", "passthrough")
+	viper.SetDefault("image_storage.url_rewrite_strict", false)
 	// Registered with empty defaults so AutomaticEnv can reach them: viper only
 	// decodes keys present in AllKeys(), so a credential that is supplied purely
 	// via IMAGE_STORAGE_* and never appears in config.yaml would be dropped and

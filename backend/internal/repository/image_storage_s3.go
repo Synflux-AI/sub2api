@@ -14,6 +14,9 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
+// imageStoragePublicCacheControl 是公开桶对象的 Cache-Control。
+const imageStoragePublicCacheControl = "public, max-age=86400, immutable"
+
 // S3ImageStorage 用 S3 兼容对象存储实现 service.ImageStorage。
 type S3ImageStorage struct {
 	client        *s3.Client
@@ -52,13 +55,20 @@ func NewS3ImageStorage(ctx context.Context, cfg *config.ImageStorageConfig) (*S3
 
 // Save 上传图片字节，返回可访问 URL：配了 public_base_url 则返回公开直链，否则返回 presigned 临时链接。
 func (s *S3ImageStorage) Save(ctx context.Context, key, contentType string, data []byte) (string, error) {
-	finish := servertiming.ObserveDependency(ctx, "s3")
-	_, err := s.client.PutObject(ctx, &s3.PutObjectInput{
+	input := &s3.PutObjectInput{
 		Bucket:      &s.bucket,
 		Key:         &key,
 		Body:        bytes.NewReader(data),
 		ContentType: &contentType,
-	})
+	}
+	if s.publicBaseURL != "" {
+		// 公开直链经 CDN 分发：key 为一次性随机值、内容不会再变，允许长缓存；
+		// 实际寿命由桶的 lifecycle 规则控制。
+		cacheControl := imageStoragePublicCacheControl
+		input.CacheControl = &cacheControl
+	}
+	finish := servertiming.ObserveDependency(ctx, "s3")
+	_, err := s.client.PutObject(ctx, input)
 	finish()
 	if err != nil {
 		return "", fmt.Errorf("S3 PutObject: %w", err)
