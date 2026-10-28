@@ -133,6 +133,7 @@ vite.config.js
 docs/*
 !docs/ADMIN_DASHBOARD_TREND_API.md
 !docs/USAGE_FINISH_REASON.md
+!docs/admin-api-keys.md
 !docs/PAYMENT.md
 !docs/PAYMENT_CN.md
 !docs/ADMIN_PAYMENT_INTEGRATION_API.md
