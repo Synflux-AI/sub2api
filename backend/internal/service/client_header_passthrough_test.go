@@ -268,7 +268,7 @@ func newClientHeaderPassthroughGeminiService(settingService *SettingService) (*G
 		httpUpstream:   upstream,
 		tokenProvider:  NewGeminiTokenProvider(nil, nil, nil),
 		settingService: settingService,
-		cfg:            &config.Config{},
+		cfg:            &config.Config{Gateway: config.GatewayConfig{MaxSameAccountRetriesGemini: geminiDefaultSameAccountRetries}},
 	}, upstream
 }
 
