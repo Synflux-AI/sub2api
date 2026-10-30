@@ -385,6 +385,33 @@ func TestResponseOutcome_GeminiAggregatedUpstreamStreamKeepsTrailingFinishReason
 	}
 }
 
+// 上游流式聚合路径改为逐 chunk 观测后，模型观测（含 modelVersion 冲突标记）与客户端流式路径一致。
+func TestResponseOutcome_GeminiAggregatedModelObservationMatchesStreaming(t *testing.T) {
+	chunk := func(model, extra string) string {
+		return `data: {"response":{"candidates":[{"content":{"parts":[{"text":"x"}],"role":"model"}` + extra + `}],"modelVersion":"` + model + `"}}` + "\n\n"
+	}
+	cases := []struct {
+		name         string
+		sse          string
+		wantModel    string
+		wantConflict bool
+	}{
+		{"consistent", chunk("gemini-3.7-flash", "") + chunk("gemini-3.7-flash", `,"finishReason":"STOP"`), "gemini-3.7-flash", false},
+		{"mismatch", chunk("gemini-3.7-flash", "") + chunk("gemini-3.7-pro", `,"finishReason":"STOP"`), "gemini-3.7-pro", true},
+	}
+	for _, tc := range cases {
+		for _, stream := range []bool{true, false} {
+			action := map[bool]string{true: "streamGenerateContent", false: "generateContent"}[stream]
+			svc := newGeminiOutcomeService("text/event-stream", tc.sse)
+			c, _ := newGeminiNativeTestContext(t)
+			_, err := svc.ForwardNative(context.Background(), c, geminiOutcomeOAuthAccount(), "gemini-3.7-flash", action, stream, geminiSignalTestRequest())
+			require.NoError(t, err, "%s stream=%v", tc.name, stream)
+			require.Equal(t, tc.wantModel, observedUpstreamResponseModel(c), "%s stream=%v", tc.name, stream)
+			require.Equal(t, tc.wantConflict, observedUpstreamResponseModelConflict(c), "%s stream=%v", tc.name, stream)
+		}
+	}
+}
+
 func TestResponseOutcome_GeminiChatCompletionsCompat(t *testing.T) {
 	t.Run("stream", func(t *testing.T) {
 		sse := `data: {"candidates":[{"content":{"parts":[{"text":"hel"}]}}]}` + "\n\n" +

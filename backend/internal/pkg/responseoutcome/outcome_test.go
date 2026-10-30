@@ -623,6 +623,20 @@ func TestGeminiErrorEnvelopeIsFailed(t *testing.T) {
 	require.Equal(t, ReasonFailed, out.FinishReason())
 }
 
+// 错误信封在 finishReason 之后到达仍记为 failed：Gemini 账号路径的网关同样按上游失败处理，
+// 与 Responses「裸 error 之后有成功终态以终态为准」不同。
+func TestGeminiErrorEnvelopeAfterFinishIsFailed(t *testing.T) {
+	o := NewObserver("")
+	feedGemini(o,
+		`{"candidates":[{"content":{"parts":[{"text":"done"}],"role":"model"},"finishReason":"STOP"}]}`,
+		`{"error":{"code":500,"message":"Internal error encountered.","status":"INTERNAL"}}`,
+	)
+	out := o.Snapshot()
+	require.Equal(t, "STOP", out.StopReason)
+	require.Equal(t, "INTERNAL", out.ErrorType)
+	require.Equal(t, ReasonFailed, out.FinishReason())
+}
+
 func TestGeminiCodeAssistWrapperIsUnwrapped(t *testing.T) {
 	for _, payload := range []string{
 		`{"response":{"candidates":[{"content":{"parts":[{"text":"hi"}]},"finishReason":"MAX_TOKENS"}]},"traceId":"t"}`,
