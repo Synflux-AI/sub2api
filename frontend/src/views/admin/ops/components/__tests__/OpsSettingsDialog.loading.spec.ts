@@ -18,6 +18,7 @@ import OpsSettingsDialog from '../OpsSettingsDialog.vue'
 const { opsAPI, showError } = vi.hoisted(() => ({
   opsAPI: {
     getAlertRuntimeSettings: vi.fn(), getEmailNotificationConfig: vi.fn(),
+    getLarkNotificationConfig: vi.fn(), updateLarkNotificationConfig: vi.fn(),
     getAdvancedSettings: vi.fn(), getMetricThresholds: vi.fn(),
     updateAlertRuntimeSettings: vi.fn(), updateEmailNotificationConfig: vi.fn(),
     updateAdvancedSettings: vi.fn(), updateMetricThresholds: vi.fn(),
@@ -40,6 +41,7 @@ describe('ops settings load guard', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
     opsAPI.getAlertRuntimeSettings.mockResolvedValue({ evaluation_interval_seconds: 30 })
     opsAPI.getEmailNotificationConfig.mockResolvedValue({ alert: { enabled: false }, report: { enabled: false } })
+    opsAPI.getLarkNotificationConfig.mockResolvedValue({ alert: { enabled: false }, report: { enabled: false } })
     opsAPI.getAdvancedSettings.mockResolvedValue({ data_retention: { error_log_retention_days: 7, minute_metrics_retention_days: 7, hourly_metrics_retention_days: 7 } })
     opsAPI.getMetricThresholds.mockResolvedValue({ sla_percent_min: 98 })
   })
