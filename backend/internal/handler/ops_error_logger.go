@@ -497,6 +497,7 @@ func setOpsSelectedAccount(c *gin.Context, account *service.Account) {
 	}
 	service.ClearOpsUpstreamModel(c)
 	service.ClearOpsAttemptRequestAttributes(c)
+	service.SetOpsSelectedAccountConcurrency(c, account)
 	c.Set(opsAccountIDKey, account.ID)
 	if c.Request != nil {
 		ctx := context.WithValue(c.Request.Context(), ctxkey.AccountID, account.ID)
@@ -1103,6 +1104,7 @@ func (state *opsCaptureWriterState) shouldCapture() bool {
 func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Set(service.OpsRequestStartedAtKey, time.Now())
+		service.SetOpsAccountConcurrencyReader(c, ops.AccountConcurrencyReader())
 		originalWriter := c.Writer
 		w := acquireOpsCaptureWriter(originalWriter)
 		w.setContext(c)

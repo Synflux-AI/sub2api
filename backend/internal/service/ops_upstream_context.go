@@ -496,6 +496,13 @@ type OpsUpstreamErrorEvent struct {
 	Message string `json:"message,omitempty"`
 	Detail  string `json:"detail,omitempty"`
 
+	// OpenAI 过载（server_is_overloaded）时的账号并发快照：配置的并发上限/负载因子，
+	// 以及记录时刻 Redis 中的在途槽位数（含本请求）与排队数。其余事件不填。
+	AccountConcurrency *int `json:"account_concurrency,omitempty"`
+	AccountLoadFactor  *int `json:"account_load_factor,omitempty"`
+	AccountInflight    *int `json:"account_inflight,omitempty"`
+	AccountWaiting     *int `json:"account_waiting,omitempty"`
+
 	// SkipMonitoring is request-local rule state. It is intentionally excluded
 	// from persisted attempt JSON. The logger consults it only when this event is
 	// the final client-visible failure; recovered attempts remain provider-health
@@ -540,6 +547,7 @@ func appendOpsUpstreamError(c *gin.Context, ev OpsUpstreamErrorEvent) {
 	// MatchRule）要用未改写的原始上游文本，脱敏只作用于日志与 ops 落库字段
 	// （ev.Message / ev.Detail）。两者分离，之后不得互相回退。
 	rawMatchBody := upstreamRawMatchBody(ev.Detail, ev.Message)
+	attachOpsOverloadConcurrencySnapshot(c, &ev, rawMatchBody)
 
 	if ev.Message != "" {
 		ev.Message = sanitizeUpstreamErrorMessage(ev.Message)
