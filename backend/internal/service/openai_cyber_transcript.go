@@ -14,6 +14,12 @@ type openAICyberTranscriptBlockKeys struct {
 	lookupKeys          []string
 	preLatestUserKey    string
 	lookupKeysTruncated bool
+	// itemCount 是参与哈希的条目数；第 n 个前缀 key 的位置即 n。
+	itemCount int
+	// preLatestUserPos 是 preLatestUserKey 对应的前缀位置（0 表示无）。
+	preLatestUserPos int
+	// positionKeys 是调用方指定位置上、已滑出 lookupKeys 窗口的前缀 key。
+	positionKeys []string
 }
 
 // Bound the Redis lookup work for a single request while retaining the most
@@ -24,7 +30,10 @@ const maxOpenAICyberTranscriptLookupKeys = 256
 // hashes plus the context key immediately before the latest user turn. The
 // context key requires model-generated history so shared first-turn templates
 // cannot block unrelated conversations.
-func deriveOpenAICyberTranscriptBlockKeys(apiKeyID int64, body []byte) openAICyberTranscriptBlockKeys {
+//
+// positions 是命中时记录下来的被屏蔽前缀位置：对超出 lookupKeys 窗口的长对话，
+// 额外返回这些位置上的前缀 key，使续写会话无论追加多少条目都能精确匹配。
+func deriveOpenAICyberTranscriptBlockKeys(apiKeyID int64, body []byte, positions ...int) openAICyberTranscriptBlockKeys {
 	if len(body) == 0 {
 		return openAICyberTranscriptBlockKeys{}
 	}
@@ -63,6 +72,13 @@ func deriveOpenAICyberTranscriptBlockKeys(apiKeyID int64, body []byte) openAICyb
 		nextLookupKey := 0
 		lookupKeysRotated := false
 		lastLookupKey := ""
+		wanted := make(map[int]struct{}, len(positions))
+		for _, pos := range positions {
+			if pos > 0 {
+				wanted[pos] = struct{}{}
+			}
+		}
+		positionKeysByPos := make(map[int]string, len(wanted))
 		// This is an entropy heuristic, not provenance proof: authenticated
 		// server-side history would be required to distinguish fixed few-shot
 		// assistant items perfectly.
@@ -81,10 +97,15 @@ func deriveOpenAICyberTranscriptBlockKeys(apiKeyID int64, body []byte) openAICyb
 			}
 			if openAICyberTranscriptItemStartsUserTurn(item) && hasModelGeneratedItem && lastLookupKey != "" {
 				result.preLatestUserKey = lastLookupKey
+				result.preLatestUserPos = result.itemCount
 			}
 			_, _ = h.Write([]byte("|item="))
 			_, _ = h.Write([]byte(canonical))
 			lastLookupKey = hex.EncodeToString(h.Sum(nil))
+			result.itemCount++
+			if _, ok := wanted[result.itemCount]; ok {
+				positionKeysByPos[result.itemCount] = lastLookupKey
+			}
 			if len(result.lookupKeys) < maxOpenAICyberTranscriptLookupKeys {
 				result.lookupKeys = append(result.lookupKeys, lastLookupKey)
 			} else {
@@ -104,6 +125,14 @@ func deriveOpenAICyberTranscriptBlockKeys(apiKeyID int64, body []byte) openAICyb
 			ordered = append(ordered, result.lookupKeys[:nextLookupKey]...)
 			result.lookupKeys = ordered
 		}
+		// 窗口内的位置已由 lookupKeys 覆盖，只补窗口外的。
+		windowStart := result.itemCount - len(result.lookupKeys)
+		for _, pos := range positions {
+			if key, ok := positionKeysByPos[pos]; ok && pos <= windowStart {
+				result.positionKeys = append(result.positionKeys, key)
+				delete(positionKeysByPos, pos)
+			}
+		}
 		return result
 	}
 
@@ -118,7 +147,7 @@ func deriveOpenAICyberTranscriptBlockKeys(apiKeyID int64, body []byte) openAICyb
 		encoded, _ := json.Marshal(input.String())
 		_, _ = h.Write([]byte("|item="))
 		_, _ = h.Write(encoded)
-		return openAICyberTranscriptBlockKeys{lookupKeys: []string{hex.EncodeToString(h.Sum(nil))}}
+		return openAICyberTranscriptBlockKeys{lookupKeys: []string{hex.EncodeToString(h.Sum(nil))}, itemCount: 1}
 	}
 	return openAICyberTranscriptBlockKeys{}
 }
