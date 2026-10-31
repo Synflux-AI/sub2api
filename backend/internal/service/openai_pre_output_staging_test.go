@@ -275,7 +275,7 @@ func (r *preOutputStageTimedRecorder) firstVisible() time.Duration {
 // 修复前可见文字会被压在暂存区直到流结束。
 func TestOpenAIPreOutputStagingVisibleCommitFlushesBeforeLimits(t *testing.T) {
 	cfg := enabledPreOutputStaging()
-	cfg.MaxStageMs = 2000
+	cfg.MaxStageMs = 1000
 	cfg.MaxStagedEvents = 6
 	for _, path := range []string{"native", "passthrough"} {
 		for _, mode := range []string{OpenAITTFTModeSemantic, OpenAITTFTModeVisible} {
@@ -312,13 +312,35 @@ func TestOpenAIPreOutputStagingVisibleCommitFlushesBeforeLimits(t *testing.T) {
 				}
 				require.NoError(t, err)
 				require.Contains(t, rec.Body.String(), "response.completed")
-				// 上游 300ms 发首个文字、约 1.8s 结束；远低于 2s 时长上限即说明没被压到流结束。
+				// 上游 300ms 发首个文字、约 1.8s 结束（晚于时长上限）；被压到流结束时首字会超过上限。
 				first := rec.firstVisible()
 				require.NotZero(t, first)
-				require.Less(t, first, time.Second)
+				require.Less(t, first, cfg.stageDuration())
 			})
 		}
 	}
+}
+
+// #321：时长上限在不可见事件写到一半时到期不能作废，事件完成后补一次提交；
+// 之后上游静默再过载时交给客户端而不是换号。
+func TestOpenAIPreOutputStagingMaxStageMsDuringEventCommitsAfterEvent(t *testing.T) {
+	cfg := enabledPreOutputStaging()
+	cfg.MaxStageMs = 50
+	useOpenAIPreOutputStaging(t, cfg)
+	pr, pw := io.Pipe()
+	go func() {
+		defer func() { _ = pw.Close() }()
+		_, _ = io.WriteString(pw, preOutputStageSSE(preOutputStageCreated, preOutputStageInProgress))
+		// 推理条目只到 data 行，结尾空行在时长上限之后才到。
+		_, _ = io.WriteString(pw, strings.TrimSuffix(preOutputStageSSE(preOutputStageReasoning), "\n"))
+		time.Sleep(200 * time.Millisecond)
+		_, _ = io.WriteString(pw, "\n")
+		time.Sleep(200 * time.Millisecond)
+		_, _ = io.WriteString(pw, preOutputStageSSE(preOutputStageOverload, preOutputStageFailed))
+	}()
+	run := runPreOutputStageStream(t, "native", config.GatewayConfig{}, pr)
+	requirePreOutputDelivered(t, run)
+	require.Contains(t, run.body, "rs_1")
 }
 
 // 结构事件之后要提交的行放不进暂存区（含超过 8 MiB 暂存硬限）时不再暂缓：先提交暂存区，
