@@ -298,7 +298,10 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		completedCommitEvent := eventStartsClientOutput
 		completedProgressEvent := eventStartsProgress || completedCommitEvent
 		completedTTFTEvent := eventStartsTTFTOutput
-		shouldFlush := eventShouldFlush || (queueDrained && clientOutputStarted)
+		// 首个判定提交的事件在边界处立即写出，不等队列排空：semantic 口径下推理条目
+		// 已记首字，data 行的「首个 token 强制 flush」不生效，而暂存区尚未写出任何字节时
+		// clientOutputStarted 恒为 false，原条件会把可见输出压到流结束（#319）。
+		shouldFlush := eventShouldFlush || (completedCommitEvent && !clientOutputStarted) || (queueDrained && clientOutputStarted)
 		eventInProgress = false
 		if !clientDisconnected {
 			if completedCommitEvent {
