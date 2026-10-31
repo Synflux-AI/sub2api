@@ -1,11 +1,13 @@
 package service
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -243,6 +245,102 @@ func TestOpenAIPreOutputStagingMaxStageMsCommits(t *testing.T) {
 			require.Contains(t, run.body, "rs_1")
 		})
 	}
+}
+
+// preOutputStageTimedRecorder 记录首个可见文字事件真正写到客户端的时刻。
+type preOutputStageTimedRecorder struct {
+	*httptest.ResponseRecorder
+	mu    sync.Mutex
+	start time.Time
+	first time.Duration
+}
+
+func (r *preOutputStageTimedRecorder) Write(b []byte) (int, error) {
+	r.mu.Lock()
+	if r.first == 0 && strings.Contains(string(b), "response.output_text.delta") {
+		r.first = time.Since(r.start)
+	}
+	r.mu.Unlock()
+	return r.ResponseRecorder.Write(b)
+}
+
+func (r *preOutputStageTimedRecorder) firstVisible() time.Duration {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.first
+}
+
+// #319：首个可见输出在时长/事件数上限之前到达时必须立即写出。上游每个 SSE 事件一次
+// 到达，处理 data 行时同一事件的结尾空行已在队列里；semantic 口径下推理条目又已记过首字，
+// 修复前可见文字会被压在暂存区直到流结束。
+func TestOpenAIPreOutputStagingVisibleCommitFlushesBeforeLimits(t *testing.T) {
+	cfg := enabledPreOutputStaging()
+	cfg.MaxStageMs = 1000
+	cfg.MaxStagedEvents = 6
+	for _, path := range []string{"native", "passthrough"} {
+		for _, mode := range []string{OpenAITTFTModeSemantic, OpenAITTFTModeVisible} {
+			t.Run(path+"/"+mode, func(t *testing.T) {
+				useOpenAIPreOutputStaging(t, cfg)
+				gatewayForwardingCache.Store(&cachedGatewayForwardingSettings{
+					openAITTFTMode:         mode,
+					openAIPreOutputStaging: cfg,
+					expiresAt:              time.Now().Add(time.Minute).UnixNano(),
+				})
+				gin.SetMode(gin.TestMode)
+				svc := &OpenAIGatewayService{cfg: &config.Config{Gateway: config.GatewayConfig{MaxLineSize: defaultMaxLineSize, StreamKeepaliveInterval: 1}}}
+				rec := &preOutputStageTimedRecorder{ResponseRecorder: httptest.NewRecorder(), start: time.Now()}
+				c, _ := gin.CreateTestContext(rec)
+				c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+				pr, pw := io.Pipe()
+				go func() {
+					defer func() { _ = pw.Close() }()
+					_, _ = io.WriteString(pw, preOutputStageSSE(preOutputStageCreated, preOutputStageInProgress, preOutputStageReasoning))
+					time.Sleep(300 * time.Millisecond)
+					for i := 0; i < 30; i++ {
+						_, _ = io.WriteString(pw, preOutputStageSSE(fmt.Sprintf(`{"type":"response.output_text.delta","sequence_number":%d,"output_index":1,"content_index":0,"delta":"d%d"}`, i+3, i)))
+						time.Sleep(50 * time.Millisecond)
+					}
+					_, _ = io.WriteString(pw, preOutputStageSSE(preOutputStageCompleted))
+				}()
+				resp := &http.Response{StatusCode: http.StatusOK, Body: pr, Header: http.Header{}}
+				account := &Account{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Name: "acc"}
+				var err error
+				if path == "native" {
+					_, err = svc.handleStreamingResponse(c.Request.Context(), resp, c, account, time.Now(), "model", "model")
+				} else {
+					_, err = svc.handleStreamingResponsePassthrough(c.Request.Context(), resp, c, account, time.Now(), "model", "model")
+				}
+				require.NoError(t, err)
+				require.Contains(t, rec.Body.String(), "response.completed")
+				// 上游 300ms 发首个文字、约 1.8s 结束（晚于时长上限）；被压到流结束时首字会超过上限。
+				first := rec.firstVisible()
+				require.NotZero(t, first)
+				require.Less(t, first, cfg.stageDuration())
+			})
+		}
+	}
+}
+
+// #321：时长上限在不可见事件写到一半时到期不能作废，事件完成后补一次提交；
+// 之后上游静默再过载时交给客户端而不是换号。
+func TestOpenAIPreOutputStagingMaxStageMsDuringEventCommitsAfterEvent(t *testing.T) {
+	cfg := enabledPreOutputStaging()
+	cfg.MaxStageMs = 50
+	useOpenAIPreOutputStaging(t, cfg)
+	pr, pw := io.Pipe()
+	go func() {
+		defer func() { _ = pw.Close() }()
+		_, _ = io.WriteString(pw, preOutputStageSSE(preOutputStageCreated, preOutputStageInProgress))
+		// 推理条目只到 data 行，结尾空行在时长上限之后才到。
+		_, _ = io.WriteString(pw, strings.TrimSuffix(preOutputStageSSE(preOutputStageReasoning), "\n"))
+		time.Sleep(200 * time.Millisecond)
+		_, _ = io.WriteString(pw, "\n")
+		time.Sleep(200 * time.Millisecond)
+		_, _ = io.WriteString(pw, preOutputStageSSE(preOutputStageOverload, preOutputStageFailed))
+	}()
+	run := runPreOutputStageStream(t, "native", config.GatewayConfig{}, pr)
+	requirePreOutputDelivered(t, run)
+	require.Contains(t, run.body, "rs_1")
 }
 
 // 结构事件之后要提交的行放不进暂存区（含超过 8 MiB 暂存硬限）时不再暂缓：先提交暂存区，

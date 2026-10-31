@@ -129,6 +129,8 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	stagedEvents := 0
 	// stageCommitDecided：已有事件决定提交（可能因队列未排空尚未 flush），后续事件不再重新判定暂存。
 	stageCommitDecided := false
+	// stageDeadlinePending：时长上限在事件写到一半时到期，待当前事件完成后补提交（#321）。
+	stageDeadlinePending := false
 	// commitTrigger 记录首次提交的原因与事件类型，供 failover 被抑制时的诊断日志使用。
 	commitTrigger := ""
 	firstOutputProgressObserved := false
@@ -298,7 +300,10 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		completedCommitEvent := eventStartsClientOutput
 		completedProgressEvent := eventStartsProgress || completedCommitEvent
 		completedTTFTEvent := eventStartsTTFTOutput
-		shouldFlush := eventShouldFlush || (queueDrained && clientOutputStarted)
+		// 首个判定提交的事件在边界处立即写出，不等队列排空：semantic 口径下推理条目
+		// 已记首字，data 行的「首个 token 强制 flush」不生效，而暂存区尚未写出任何字节时
+		// clientOutputStarted 恒为 false，原条件会把可见输出压到流结束（#319）。
+		shouldFlush := eventShouldFlush || (completedCommitEvent && !clientOutputStarted) || (queueDrained && clientOutputStarted)
 		eventInProgress = false
 		if !clientDisconnected {
 			if completedCommitEvent {
@@ -1026,6 +1031,14 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			if streamEarlyErr != nil {
 				return resultWithUsage(), streamEarlyErr
 			}
+			if stageDeadlinePending && !eventInProgress {
+				stageDeadlinePending = false
+				// 完成的事件本身是失败事件时不补提交，保持换号。
+				if !stageCommitDecided && !sawFailedEvent && !sawBareError {
+					stageCommitDecided = true
+					commitStaged(openAIPreOutputCommitMaxTime, false)
+				}
+			}
 			// Terminal 事件（response.completed 等）已完整写出后不再等上游 EOF：
 			// 上游在 keep-alive/HTTP2 复用连接上可能拖延关闭连接，空等期间只能
 			// 靠 keepalive 维持，白白拉长尾延迟。usage 已在 terminal 事件中解析。
@@ -1100,11 +1113,16 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 
 		case <-stageDeadlineCh:
 			stageDeadlineCh = nil
-			// 事件写到一半时不拆分：下一个事件到达时按暂存时长上限一并提交。
-			if !eventInProgress && !stageCommitDecided {
-				stageCommitDecided = true
-				commitStaged(openAIPreOutputCommitMaxTime, false)
+			if stageCommitDecided {
+				continue
 			}
+			// 事件写到一半时不拆分：当前事件完成后再按暂存时长上限提交。
+			if eventInProgress {
+				stageDeadlinePending = true
+				continue
+			}
+			stageCommitDecided = true
+			commitStaged(openAIPreOutputCommitMaxTime, false)
 
 		case <-keepaliveCh:
 			if clientDisconnected || failureDelivered {
