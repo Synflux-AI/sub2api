@@ -272,6 +272,7 @@ func (c *gatewayCache) GetReasoningContent(ctx context.Context, itemID string) (
 const (
 	cyberSessionBlockPrefix         = "cyber_session_block:"
 	cyberSessionScopePrefix         = "cyber_session_scope:"
+	cyberSessionScopePosPrefix      = "cyber_session_scope_pos:"
 	cyberSessionRedisCommandMaxKeys = 128
 )
 
@@ -319,6 +320,48 @@ func (c *gatewayCache) IsCyberSessionScopeActive(ctx context.Context, scopeKey s
 		return false, err
 	}
 	return n > 0, nil
+}
+
+// AddCyberSessionScopePositions 把被屏蔽前缀位置加入作用域的位置集合并刷新 TTL。
+// 位置集合与作用域标记分开存放，旧版本写入的作用域（无位置）仍可读。
+func (c *gatewayCache) AddCyberSessionScopePositions(ctx context.Context, scopeKey string, positions []int, ttl time.Duration) error {
+	if scopeKey == "" || len(positions) == 0 {
+		return nil
+	}
+	members := make([]any, 0, len(positions))
+	for _, pos := range positions {
+		if pos > 0 {
+			members = append(members, pos)
+		}
+	}
+	if len(members) == 0 {
+		return nil
+	}
+	key := cyberSessionScopePosPrefix + scopeKey
+	pipe := c.rdb.TxPipeline()
+	pipe.SAdd(ctx, key, members...)
+	pipe.Expire(ctx, key, ttl)
+	_, err := pipe.Exec(ctx)
+	return err
+}
+
+// CyberSessionScopePositions 读取作用域记录的前缀位置，最多返回
+// MaxCyberSessionScopePositions 个，避免单次请求的查询量随命中次数增长。
+func (c *gatewayCache) CyberSessionScopePositions(ctx context.Context, scopeKey string) ([]int, error) {
+	if scopeKey == "" {
+		return nil, nil
+	}
+	members, err := c.rdb.SRandMemberN(ctx, cyberSessionScopePosPrefix+scopeKey, service.MaxCyberSessionScopePositions).Result()
+	if err != nil {
+		return nil, err
+	}
+	positions := make([]int, 0, len(members))
+	for _, member := range members {
+		if pos, convErr := strconv.Atoi(member); convErr == nil && pos > 0 {
+			positions = append(positions, pos)
+		}
+	}
+	return positions, nil
 }
 
 // FindCyberSessionBlocked checks bounded batches in caller order and stops at

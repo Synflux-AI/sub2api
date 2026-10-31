@@ -95,3 +95,37 @@ func TestGatewayCacheCyberBlockCommandsAreBoundedAndLookupShortCircuits(t *testi
 	require.Equal(t, keys[cyberSessionRedisCommandMaxKeys+3], matched)
 	require.Equal(t, []int{cyberSessionRedisCommandMaxKeys, cyberSessionRedisCommandMaxKeys}, hook.mgetKeyCounts)
 }
+
+func TestGatewayCacheCyberScopePositionsRoundTripAndBounded(t *testing.T) {
+	server := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	store, ok := NewGatewayCache(client).(service.CyberSessionBlockStore)
+	require.True(t, ok)
+	ctx := context.Background()
+
+	positions, err := store.CyberSessionScopePositions(ctx, "scope-1")
+	require.NoError(t, err)
+	require.Empty(t, positions)
+
+	require.NoError(t, store.AddCyberSessionScopePositions(ctx, "scope-1", []int{11, 10, 0, -1}, time.Minute))
+	require.NoError(t, store.AddCyberSessionScopePositions(ctx, "scope-1", []int{11, 42}, time.Minute))
+	positions, err = store.CyberSessionScopePositions(ctx, "scope-1")
+	require.NoError(t, err)
+	require.ElementsMatch(t, []int{10, 11, 42}, positions)
+	require.Greater(t, server.TTL(cyberSessionScopePosPrefix+"scope-1"), time.Duration(0))
+
+	// 位置集合不改变作用域标记本身。
+	active, err := store.IsCyberSessionScopeActive(ctx, "scope-1")
+	require.NoError(t, err)
+	require.False(t, active)
+
+	many := make([]int, service.MaxCyberSessionScopePositions*2)
+	for i := range many {
+		many[i] = i + 1
+	}
+	require.NoError(t, store.AddCyberSessionScopePositions(ctx, "scope-2", many, time.Minute))
+	positions, err = store.CyberSessionScopePositions(ctx, "scope-2")
+	require.NoError(t, err)
+	require.Len(t, positions, service.MaxCyberSessionScopePositions)
+}

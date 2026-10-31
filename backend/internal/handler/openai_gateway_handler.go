@@ -4376,8 +4376,9 @@ func (h *OpenAIGatewayHandler) rejectIfCyberSessionBlocked(c *gin.Context, apiKe
 }
 
 type cyberSessionBlockWritePlan struct {
-	scopeKey string
-	keys     []string
+	scopeKey  string
+	keys      []string
+	positions []int
 }
 
 func buildCyberSessionBlockWritePlan(apiKeyID int64, c *gin.Context, body []byte) cyberSessionBlockWritePlan {
@@ -4385,7 +4386,7 @@ func buildCyberSessionBlockWritePlan(apiKeyID int64, c *gin.Context, body []byte
 	if key := service.CyberSessionExplicitBlockKey(apiKeyID, c, body); key != "" {
 		plan.keys = append(plan.keys, key)
 	}
-	transcriptKeys := service.CyberSessionTranscriptBlockKeys(apiKeyID, body)
+	transcriptKeys, transcriptPositions := service.CyberSessionTranscriptBlockKeysWithPositions(apiKeyID, body)
 	for _, key := range transcriptKeys {
 		if len(plan.keys) == 0 || key != plan.keys[0] {
 			plan.keys = append(plan.keys, key)
@@ -4393,6 +4394,7 @@ func buildCyberSessionBlockWritePlan(apiKeyID int64, c *gin.Context, body []byte
 	}
 	if len(transcriptKeys) > 0 {
 		plan.scopeKey = cyberSessionScopeKey(apiKeyID, c)
+		plan.positions = transcriptPositions
 	}
 	return plan
 }
@@ -4552,7 +4554,7 @@ func (h *OpenAIGatewayHandler) recordCyberPolicyIfMarked(c *gin.Context, apiKey 
 		plan := buildCyberSessionBlockWritePlan(apiKey.ID, c, cyberBlockBody)
 		if len(plan.keys) > 0 {
 			blockCtx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
-			gwSvc.MarkCyberSessionBlocked(blockCtx, plan.scopeKey, plan.keys)
+			gwSvc.MarkCyberSessionBlocked(blockCtx, plan.scopeKey, plan.keys, plan.positions)
 			cancel()
 		}
 	}

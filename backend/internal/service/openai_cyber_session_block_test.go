@@ -102,7 +102,9 @@ func TestCyberTranscriptLookupKeysAreBoundedAndKeepNewestOrder(t *testing.T) {
 type fakeCyberBlockStore struct {
 	blocked   map[string]bool
 	scopes    map[string]bool
+	positions map[string][]int
 	findCalls int
+	findKeys  [][]string
 }
 
 var _ CyberSessionBlockStore = (*fakeCyberBlockStore)(nil)
@@ -127,8 +129,21 @@ func (f *fakeCyberBlockStore) IsCyberSessionScopeActive(_ context.Context, scope
 	return f.scopes[scopeKey], nil
 }
 
+func (f *fakeCyberBlockStore) AddCyberSessionScopePositions(_ context.Context, scopeKey string, positions []int, _ time.Duration) error {
+	if f.positions == nil {
+		f.positions = map[string][]int{}
+	}
+	f.positions[scopeKey] = append(f.positions[scopeKey], positions...)
+	return nil
+}
+
+func (f *fakeCyberBlockStore) CyberSessionScopePositions(_ context.Context, scopeKey string) ([]int, error) {
+	return f.positions[scopeKey], nil
+}
+
 func (f *fakeCyberBlockStore) FindCyberSessionBlocked(_ context.Context, keys []string) (string, error) {
 	f.findCalls++
+	f.findKeys = append(f.findKeys, append([]string(nil), keys...))
 	for _, key := range keys {
 		if f.blocked[key] {
 			return key, nil
@@ -222,6 +237,12 @@ func (c *comboCacheAndStore) SetCyberSessionBlocked(ctx context.Context, scopeKe
 func (c *comboCacheAndStore) IsCyberSessionScopeActive(ctx context.Context, scopeKey string) (bool, error) {
 	return c.store.IsCyberSessionScopeActive(ctx, scopeKey)
 }
+func (c *comboCacheAndStore) AddCyberSessionScopePositions(ctx context.Context, scopeKey string, positions []int, ttl time.Duration) error {
+	return c.store.AddCyberSessionScopePositions(ctx, scopeKey, positions, ttl)
+}
+func (c *comboCacheAndStore) CyberSessionScopePositions(ctx context.Context, scopeKey string) ([]int, error) {
+	return c.store.CyberSessionScopePositions(ctx, scopeKey)
+}
 func (c *comboCacheAndStore) FindCyberSessionBlocked(ctx context.Context, keys []string) (string, error) {
 	return c.store.FindCyberSessionBlocked(ctx, keys)
 }
@@ -233,7 +254,7 @@ func (c *comboCacheAndStore) FindCyberSessionBlocked(ctx context.Context, keys [
 func TestFindCyberSessionBlocked_EmptyAndNilService(t *testing.T) {
 	var nilSvc *OpenAIGatewayService
 	require.Empty(t, nilSvc.FindCyberSessionBlockedForRequest(context.Background(), 1, nil, nil, "", ""))
-	require.NotPanics(t, func() { nilSvc.MarkCyberSessionBlocked(context.Background(), "", []string{"k"}) })
+	require.NotPanics(t, func() { nilSvc.MarkCyberSessionBlocked(context.Background(), "", []string{"k"}, nil) })
 
 	svc := &OpenAIGatewayService{}
 	require.Empty(t, svc.FindCyberSessionBlockedForRequest(context.Background(), 1, nil, nil, "", ""))
@@ -267,7 +288,7 @@ func TestCyberSessionBlock_RoundTrip(t *testing.T) {
 	explicitKey := CyberSessionExplicitBlockKey(1, c, body)
 	require.Empty(t, svc.FindCyberSessionBlockedForRequest(ctx, 1, c, body, "203.0.113.1", "client/1.0"))
 
-	svc.MarkCyberSessionBlocked(ctx, "", []string{explicitKey, testKey})
+	svc.MarkCyberSessionBlocked(ctx, "", []string{explicitKey, testKey}, nil)
 
 	require.Equal(t, explicitKey, svc.FindCyberSessionBlockedForRequest(ctx, 1, c, body, "203.0.113.1", "client/1.0"))
 }
@@ -291,36 +312,110 @@ func TestFindCyberSessionBlockedForRequestUsesScopeForTranscript(t *testing.T) {
 	// Without an active source scope, transcript candidates are never blocks.
 	require.Empty(t, svc.FindCyberSessionBlockedForRequest(ctx, 9, nextCtx, nextBody, clientIP, userAgent))
 	scopeKey := CyberSessionScopeKey(9, clientIP, userAgent)
-	svc.MarkCyberSessionBlocked(ctx, scopeKey, []string{blockKey})
+	svc.MarkCyberSessionBlocked(ctx, scopeKey, []string{blockKey}, nil)
 	require.Equal(t, blockKey, svc.FindCyberSessionBlockedForRequest(ctx, 9, nextCtx, nextBody, clientIP, "Codex CLI 1.2.4"))
 }
 
-func TestFindCyberSessionBlockedForRequestFailsClosedOnScopedTranscriptOverflow(t *testing.T) {
+func newCyberOverflowTestService() (*OpenAIGatewayService, *comboCacheAndStore) {
 	settingSvc := &SettingService{settingRepo: &fakeSettingRepo{vals: map[string]string{
 		SettingKeyCyberSessionBlockEnabled:    "true",
 		SettingKeyCyberSessionBlockTTLSeconds: "60",
 	}}}
 	combo := &comboCacheAndStore{}
-	svc := &OpenAIGatewayService{cache: combo, settingService: settingSvc}
+	return &OpenAIGatewayService{cache: combo, settingService: settingSvc}, combo
+}
+
+// cyberLongTranscript 生成 n 条交替的 user/assistant 消息，tag 区分不同会话。
+func cyberLongTranscript(t *testing.T, tag string, n int) []map[string]string {
+	t.Helper()
+	messages := make([]map[string]string, n)
+	for i := range messages {
+		role := "user"
+		if i%2 == 1 {
+			role = "assistant"
+		}
+		messages[i] = map[string]string{"role": role, "content": tag + "-" + strconv.Itoa(i)}
+	}
+	return messages
+}
+
+func cyberMessagesBody(t *testing.T, messages []map[string]string) []byte {
+	t.Helper()
+	body, err := json.Marshal(map[string]any{"messages": messages})
+	require.NoError(t, err)
+	return body
+}
+
+// 共享粗作用域（同 Key、同出口 IP、同款客户端）下，会话 A 命中后，不相关的
+// 超长会话 B 不应被拦截（#323）。
+func TestFindCyberSessionBlockedForRequestDoesNotBlockUnrelatedOverflowTranscript(t *testing.T) {
+	svc, combo := newCyberOverflowTestService()
 	ctx := context.Background()
 	const apiKeyID = int64(9)
 	const clientIP = "203.0.113.20"
 	const userAgent = "Codex CLI 1.2.3"
+	scopeKey := CyberSessionScopeKey(apiKeyID, clientIP, userAgent)
 
-	messages := make([]map[string]string, maxOpenAICyberTranscriptLookupKeys+1)
-	for i := range messages {
-		messages[i] = map[string]string{"role": "user", "content": "message-" + strconv.Itoa(i)}
-	}
-	body, err := json.Marshal(map[string]any{"messages": messages})
-	require.NoError(t, err)
-	c, _ := newCyberBlockTestCtx(nil, string(body))
-	require.Empty(t, svc.FindCyberSessionBlockedForRequest(ctx, apiKeyID, c, body, clientIP, userAgent),
-		"overflow alone must not bypass the scope gate")
+	hitBody := cyberMessagesBody(t, cyberLongTranscript(t, "session-a", 11))
+	keys, positions := CyberSessionTranscriptBlockKeysWithPositions(apiKeyID, hitBody)
+	svc.MarkCyberSessionBlocked(ctx, scopeKey, keys, positions)
+
+	otherBody := cyberMessagesBody(t, cyberLongTranscript(t, "session-b", maxOpenAICyberTranscriptLookupKeys+40))
+	c, _ := newCyberBlockTestCtx(nil, string(otherBody))
+	require.Empty(t, svc.FindCyberSessionBlockedForRequest(ctx, apiKeyID, c, otherBody, clientIP, userAgent))
+	require.Equal(t, 1, combo.store.findCalls)
+	require.Len(t, combo.store.findKeys[0], maxOpenAICyberTranscriptLookupKeys+len(positions),
+		"overflow lookup stays bounded: window plus recorded positions")
+}
+
+// 被屏蔽的会话追加任意多条目（超出窗口）后仍应被拦截。
+func TestFindCyberSessionBlockedForRequestBlocksOverflowContinuationByPosition(t *testing.T) {
+	svc, _ := newCyberOverflowTestService()
+	ctx := context.Background()
+	const apiKeyID = int64(9)
+	const clientIP = "203.0.113.20"
+	const userAgent = "Codex CLI 1.2.3"
+	scopeKey := CyberSessionScopeKey(apiKeyID, clientIP, userAgent)
+
+	transcript := cyberLongTranscript(t, "session-a", maxOpenAICyberTranscriptLookupKeys*3)
+	hitBody := cyberMessagesBody(t, transcript[:11])
+	keys, positions := CyberSessionTranscriptBlockKeysWithPositions(apiKeyID, hitBody)
+	require.Equal(t, []int{11, 10}, positions)
+	svc.MarkCyberSessionBlocked(ctx, scopeKey, keys, positions)
+
+	continuation := cyberMessagesBody(t, transcript)
+	c, _ := newCyberBlockTestCtx(nil, string(continuation))
+	matched := svc.FindCyberSessionBlockedForRequest(ctx, apiKeyID, c, continuation, clientIP, userAgent)
+	require.Contains(t, keys, matched)
+
+	// 没有激活作用域时，超长对话不做 transcript 匹配。
+	require.Empty(t, svc.FindCyberSessionBlockedForRequest(ctx, apiKeyID, c, continuation, "203.0.113.21", userAgent))
+}
+
+// 旧版本写入的作用域没有位置记录：超长对话只按窗口匹配，不再整体拦截。
+func TestFindCyberSessionBlockedForRequestOverflowWithoutPositionsUsesWindow(t *testing.T) {
+	svc, combo := newCyberOverflowTestService()
+	ctx := context.Background()
+	const apiKeyID = int64(9)
+	const clientIP = "203.0.113.20"
+	const userAgent = "Codex CLI 1.2.3"
 	combo.store.scopes = map[string]bool{CyberSessionScopeKey(apiKeyID, clientIP, userAgent): true}
 
-	require.Equal(t, cyberSessionTranscriptLookupOverflowBlockKey,
-		svc.FindCyberSessionBlockedForRequest(ctx, apiKeyID, c, body, clientIP, userAgent))
-	require.Zero(t, combo.store.findCalls, "overflow must not issue an unbounded Redis lookup")
+	body := cyberMessagesBody(t, cyberLongTranscript(t, "session-b", maxOpenAICyberTranscriptLookupKeys+1))
+	c, _ := newCyberBlockTestCtx(nil, string(body))
+	require.Empty(t, svc.FindCyberSessionBlockedForRequest(ctx, apiKeyID, c, body, clientIP, userAgent))
+	require.Len(t, combo.store.findKeys[0], maxOpenAICyberTranscriptLookupKeys)
+}
+
+func TestCyberTranscriptPositionKeysOnlyCoverPositionsOutsideWindow(t *testing.T) {
+	messages := cyberLongTranscript(t, "s", maxOpenAICyberTranscriptLookupKeys+20)
+	body := cyberMessagesBody(t, messages)
+	derived := deriveOpenAICyberTranscriptBlockKeys(5, body, 3, 3, 21, 200, len(messages)+5)
+	require.Equal(t, len(messages), derived.itemCount)
+	// 窗口覆盖位置 21..276：只有位置 3 需要补查，重复位置去重，越界位置忽略。
+	require.Len(t, derived.positionKeys, 1)
+	prefix := CyberSessionTranscriptLookupKeys(5, cyberMessagesBody(t, messages[:3]))
+	require.Equal(t, prefix[len(prefix)-1], derived.positionKeys[0])
 }
 
 func TestCyberSessionScopeKeyNormalizesUserAgentVersion(t *testing.T) {
