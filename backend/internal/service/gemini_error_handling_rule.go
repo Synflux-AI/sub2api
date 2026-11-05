@@ -37,11 +37,12 @@ import (
 // geminiBuiltinOwnsError 判断这条上游错误是否归内置逻辑独占，规则不得抢走。
 //
 // 三条转发链在这一点上的状况并不对称，逐条核对（#228 task-7 fix round 1）：
-//   - Forward / ForwardNative：CheckErrorPolicy 的 switch（ErrorPolicySkipped /
-//     ErrorPolicyMatched / ErrorPolicyTempUnscheduled）与 isGoogleProjectConfigError
-//     的 400 特判，都已经在接线点之前物理 return，规则引擎压根碰不到这两类错误。
-//     这里对这两条链而言是双重保险——就算判了 true，也不会改变已经在更早处 return
-//     的结果。
+//   - Forward / ForwardNative：CheckErrorPolicy 的 switch（ErrorPolicyMatched /
+//     ErrorPolicyTempUnscheduled）与 isGoogleProjectConfigError 的 400 特判，都已经
+//     在接线点之前物理 return，规则引擎压根碰不到这两类错误。ErrorPolicySkipped
+//     （池模式 / 自定义错误码未命中）例外：#325 起它在透传/换号之前会经
+//     skippedErrorPolicyRuleOverride 问一次规则，而 Skipped 分支不做 Google 项目配置
+//     400 特判，所以在那个接线点上本判断是**承重的**，与 ForwardAsChatCompletions 同理。
 //   - ForwardAsChatCompletions：没有上述任何一类早退分支。它唯一涉及的
 //     checkErrorPolicyInLoop 只决定同号重试循环要不要 break，从不短路错误处理路径，
 //     所以该链会带着未经拦截的 400 一路走到这个判断点。这里如果恒为 false，一条形如
