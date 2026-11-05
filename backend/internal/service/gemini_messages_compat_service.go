@@ -928,6 +928,9 @@ func (s *GeminiMessagesCompatService) Forward(ctx context.Context, c *gin.Contex
 				if upstreamReqID == "" {
 					upstreamReqID = resp.Header.Get("x-goog-request-id")
 				}
+				if failoverErr, handled := s.skippedErrorPolicyRuleOverride(ctx, c, account, resp.StatusCode, resp.Header, respBody, mappedModel); handled {
+					return nil, failoverErr
+				}
 				if failoverErr := s.skippedErrorPolicyFailoverError(c, account, resp.StatusCode, respBody, upstreamReqID); failoverErr != nil {
 					return nil, failoverErr
 				}
@@ -1561,6 +1564,9 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 			policy := s.finalErrorPolicy(ctx, account, resp.StatusCode, respBody, mappedModel, checkedPolicy)
 			switch policy {
 			case ErrorPolicySkipped:
+				if failoverErr, handled := s.skippedErrorPolicyRuleOverride(ctx, c, account, resp.StatusCode, resp.Header, unwrapIfNeeded(isOAuth, respBody), mappedModel); handled {
+					return nil, failoverErr
+				}
 				if failoverErr := s.skippedErrorPolicyFailoverError(c, account, resp.StatusCode, respBody, requestID); failoverErr != nil {
 					return nil, failoverErr
 				}
@@ -1851,6 +1857,32 @@ func (s *GeminiMessagesCompatService) shouldFailoverGeminiUpstreamError(statusCo
 	default:
 		return statusCode >= 500
 	}
+}
+
+// skippedErrorPolicyRuleOverride 在 ErrorPolicySkipped 分支透传/换号之前问一次错误处理规则（#325）。
+//
+// Skipped 有两种来源：池模式账号未命中临时不可调度规则，或自定义错误码开启但未命中。
+// 两者都只豁免「账号状态标记」，不豁免管理员配置的错误处理规则——与 Anthropic / OpenAI
+// 侧口径一致（那两侧的规则接线点都在自定义错误码/池模式判断之前），也与本服务的
+// ForwardAsChatCompletions 一致（该链的规则接线点本来就在策略判定之后、按策略写出之前）。
+// 之前 Forward / ForwardNative 在这里直接 return，规则引擎压根没被调用，ops 里只能看到
+// kind=http_error 而没有 error_handling_rule_*。
+//
+// 记账：Skipped 本来就不跑 handleGeminiUpstreamError，规则接管时也不补（执行层
+// AccountAccounting 恒为 nil），池模式「不做账号状态标记」的语义保持不变。
+// Google 项目配置类 400 仍由 geminiBuiltinOwnsError 挡住，规则抢不走。
+// handled == false 时调用方必须原样走原有 Skipped 路径，未命中的请求行为逐字不变。
+func (s *GeminiMessagesCompatService) skippedErrorPolicyRuleOverride(
+	ctx context.Context, c *gin.Context, account *Account, statusCode int, header http.Header, body []byte, mappedModel string,
+) (*UpstreamFailoverError, bool) {
+	return s.geminiErrorHandlingRuleOverride(ctx, c, geminiErrorHandlingRuleInput{
+		Account:             account,
+		StatusCode:          statusCode,
+		Header:              header,
+		Body:                body,
+		ReqModel:            mappedModel,
+		BuiltinWillFailover: s.shouldFailoverGeminiUpstreamError(statusCode),
+	})
 }
 
 // skippedErrorPolicyFailoverError 命中 ErrorPolicySkipped（池模式、或自定义错误码未命中）
