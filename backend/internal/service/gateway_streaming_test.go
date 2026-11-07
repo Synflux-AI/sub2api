@@ -418,7 +418,10 @@ func TestHandleStreamingResponse_SSEErrorEvent_ReturnsTypedErrorWithRawData(t *t
 	_ = pr.Close()
 
 	require.Error(t, err)
-	require.Nil(t, result)
+	// 结果必须带回 keepaliveBytes，调用方据此扣除心跳判断能否换号（#327）。
+	require.NotNil(t, result)
+	require.Zero(t, result.keepaliveBytes)
+	require.Nil(t, result.firstTokenMs, "error 帧不是首 token")
 
 	// typed error 必须可被 errors.As 匹配，RawData 必须保留上游 dataLine 原文
 	var sseErr *sseStreamErrorEventError

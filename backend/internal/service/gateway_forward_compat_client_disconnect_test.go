@@ -508,9 +508,10 @@ func TestForwardAsCompatStreaming_UpstreamErrorEventFailsOver(t *testing.T) {
 			name       string
 			stream     string
 			wantStatus int
+			wantSafe   bool
 		}{
-			{name: "before_output", stream: beforeOutput, wantStatus: 529},
-			{name: "after_output", stream: anthropicStreamWithInBandError("Overloaded", ""), wantStatus: http.StatusForbidden},
+			{name: "before_output", stream: beforeOutput, wantStatus: 529, wantSafe: true},
+			{name: "after_output", stream: anthropicStreamWithInBandError("Overloaded", ""), wantStatus: http.StatusForbidden, wantSafe: false},
 		} {
 			t.Run(endpoint+"/"+tc.name, func(t *testing.T) {
 				gin.SetMode(gin.TestMode)
@@ -542,6 +543,10 @@ func TestForwardAsCompatStreaming_UpstreamErrorEventFailsOver(t *testing.T) {
 				var failoverErr *UpstreamFailoverError
 				require.ErrorAs(t, err, &failoverErr)
 				require.Equal(t, tc.wantStatus, failoverErr.StatusCode)
+				// 已交付语义内容（并写出终止错误帧）后绝不能放行换号，否则下一账号的
+				// 输出会拼在同一条客户端流里（#327）。
+				require.Equal(t, tc.wantSafe, failoverErr.SafeToFailoverAfterWrite)
+				require.Equal(t, !tc.wantSafe, IsResponseCommitted(c))
 				require.Nil(t, result)
 			})
 		}
