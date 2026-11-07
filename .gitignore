@@ -133,7 +133,10 @@ vite.config.js
 docs/*
 !docs/ADMIN_DASHBOARD_TREND_API.md
 !docs/USAGE_FINISH_REASON.md
+!docs/agent-resource-safety.md
+!docs/moego-json-batching.md
 !docs/admin-api-keys.md
+!docs/mcp.md
 !docs/PAYMENT.md
 !docs/PAYMENT_CN.md
 !docs/ADMIN_PAYMENT_INTEGRATION_API.md

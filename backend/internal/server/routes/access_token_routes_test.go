@@ -25,9 +25,8 @@ import (
 // accessTokenRouteSettingRepo 内存版 SettingRepository。
 //
 // 注意：service.IsBackendModeEnabled 走**进程级**缓存（60s TTL），本测试二进制里
-// 第一次读到的值会被后续所有测试复用。因此这里恒定返回
-// backend_mode_enabled=true——本文件的每个用例都要求「后台模式开启」，保持一致
-// 就不会因执行顺序而互相污染。
+// 读到的值会被后续测试复用。这里默认返回 backend_mode_enabled=true（本文件每个用例
+// 都要求「后台模式开启」），harness 另外显式写缓存并在 Cleanup 里复位。
 type accessTokenRouteSettingRepo struct {
 	mu     sync.Mutex
 	values map[string]string
@@ -123,6 +122,12 @@ func newAccessTokenRouteHarness(t *testing.T, role string, openAPIRPM string) *a
 	t.Cleanup(func() { _ = redisClient.Close() })
 
 	settingService := service.NewSettingService(newAccessTokenRouteSettingRepo(openAPIRPM), &config.Config{})
+	// 后台模式是进程级缓存：显式写入 true，并在用例结束后复位为 false，
+	// 避免把「后台模式开启」泄漏给同一测试二进制里假定默认关闭的用例（如 MCP 路由测试）。
+	require.NoError(t, settingService.UpdateSettings(context.Background(), &service.SystemSettings{BackendModeEnabled: true}))
+	t.Cleanup(func() {
+		require.NoError(t, settingService.UpdateSettings(context.Background(), &service.SystemSettings{BackendModeEnabled: false}))
+	})
 	panelRateLimiter := middleware.NewPanelRateLimiter(redisClient, settingService)
 
 	harness := &accessTokenRouteHarness{settingService: settingService}

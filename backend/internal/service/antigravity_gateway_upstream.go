@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -153,7 +152,7 @@ func (s *AntigravityGatewayService) ForwardUpstream(ctx context.Context, c *gin.
 		clientDisconnect = streamRes.clientDisconnect
 	} else {
 		// 非流式响应：直接透传
-		respBody, err := io.ReadAll(resp.Body)
+		respBody, err := ReadUpstreamResponseBody(resp.Body, s.antigravitySSEConfig(), c, anthropicTooLargeError)
 		if err != nil {
 			return nil, fmt.Errorf("read upstream response: %w", err)
 		}
@@ -207,11 +206,13 @@ func (s *AntigravityGatewayService) streamUpstreamResponseWithRules(ctx context.
 	pendingEventLine := ""
 
 	scanner := bufio.NewScanner(resp.Body)
+	cfg := s.antigravitySSEConfig()
 	maxLineSize := defaultMaxLineSize
-	if s.settingService != nil && s.settingService.cfg != nil && s.settingService.cfg.Gateway.MaxLineSize > 0 {
-		maxLineSize = s.settingService.cfg.Gateway.MaxLineSize
+	if cfg != nil && cfg.Gateway.MaxLineSize > 0 {
+		maxLineSize = cfg.Gateway.MaxLineSize
 	}
 	scanner.Buffer(make([]byte, 64*1024), maxLineSize)
+	scanner.Split(newBoundedSSESplit(cfg, maxLineSize, nil))
 
 	type scanEvent struct {
 		line string
@@ -219,11 +220,16 @@ func (s *AntigravityGatewayService) streamUpstreamResponseWithRules(ctx context.
 	}
 	events := make(chan scanEvent, 16)
 	done := make(chan struct{})
+	queueBudget := newSSEQueueBudget(cfg)
 	sendEvent := func(ev scanEvent) bool {
+		if !queueBudget.acquire(len(ev.line), done) {
+			return false
+		}
 		select {
 		case events <- ev:
 			return true
 		case <-done:
+			queueBudget.release(len(ev.line))
 			return false
 		}
 	}
@@ -300,6 +306,9 @@ func (s *AntigravityGatewayService) streamUpstreamResponseWithRules(ctx context.
 	for {
 		select {
 		case ev, ok := <-events:
+			if ok {
+				queueBudget.release(len(ev.line))
+			}
 			if !ok {
 				if !sawTerminalEvent && ctx.Err() == nil && !cw.Disconnected() {
 					message := "Antigravity upstream stream ended before a terminal event"
