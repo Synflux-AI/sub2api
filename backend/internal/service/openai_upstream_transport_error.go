@@ -235,6 +235,10 @@ func (s *OpenAIGatewayService) tempUnscheduleOpenAITransportError(ctx context.Co
 	if s == nil || account == nil {
 		return
 	}
+	// 上游配置开关：完全关闭 OpenAI 传输错误冷却。
+	if s.cfg != nil && s.cfg.Gateway.DisableOpenAITransportErrorCooldown {
+		return
+	}
 	// 全局"禁止临时停止调度"开关（仅 Anthropic/OpenAI 账号生效；本路径上的
 	// Grok 等其他平台账号由 guard 内的平台判断放行，保持原有行为）
 	if tempUnschedDisabledSkip(ctx, account.Platform, account.ID, "openai_transport_error") {
