@@ -1098,7 +1098,9 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 					if clientDisconnected {
 						return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: true, keepaliveBytes: keepaliveBytes}, nil
 					}
-					return nil, err
+					// 流内 event:error 也要带回 keepaliveBytes：调用方据此判断
+					// 「只写过心跳、可以换号」，丢掉它会让心跳把换号挡住（#327）。
+					return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, keepaliveBytes: keepaliveBytes}, err
 				}
 
 				for _, block := range outputBlocks {

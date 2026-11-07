@@ -13,6 +13,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 	"github.com/tidwall/gjson"
 
 	"github.com/gin-gonic/gin"
@@ -915,6 +916,8 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 
 	// 处理正常响应
 
+	// 流内签名整流（#327）需要从未改写的请求体重新派生，先留一份。
+	requestBodyBeforeWire := body
 	if !bytes.Equal(lastWireBody, body) {
 		// 成功后再同步最终 wire body，避免失败重试从已签名 CCH 的 body 继续派生。
 		if err := replaceBody(lastWireBody); err != nil {
@@ -933,11 +936,58 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 	if reqStream {
 		writerSizeBeforeStream := c.Writer.Size()
 		streamResult, err := s.handleStreamingResponse(ctx, resp, c, account, startTime, originalModel, reqModel, shouldMimicClaudeCode)
-		if err != nil {
-			var sseErr *sseStreamErrorEventError
-			if errors.As(err, &sseErr) {
-				return nil, s.sseStreamErrorEventFailover(ctx, c, account, resp, sseErr.RawData, reqModel, c.Writer.Size() != writerSizeBeforeStream)
+		var sseErr *sseStreamErrorEventError
+		if err != nil && errors.As(err, &sseErr) {
+			keepaliveBytes := 0
+			if streamResult != nil {
+				keepaliveBytes = streamResult.keepaliveBytes
 			}
+			semanticOutputDelivered := streamErrorEventSemanticOutputDelivered(c, writerSizeBeforeStream, keepaliveBytes)
+			// 部分上游把 thinking 签名错误放在「HTTP 200 + 流内 event:error」里返回，
+			// 绕过了 HTTP 400 分支的签名整流。尚未交付语义内容时同号去 thinking 重试
+			// 一次；仍失败（含重试流再次出现 error 帧）则按 stream_error 换号（#327）。
+			if !semanticOutputDelivered && ctx.Err() == nil &&
+				s.shouldRectifySignatureError(ctx, account, []byte(sseErr.RawData), reqModel) {
+				appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+					ProxyID:            opsUpstreamProxyID(account),
+					ProxyName:          opsUpstreamProxyName(account),
+					Platform:           account.Platform,
+					AccountID:          account.ID,
+					AccountName:        account.Name,
+					UpstreamStatusCode: resp.StatusCode,
+					UpstreamRequestID:  resp.Header.Get("x-request-id"),
+					Kind:               "stream_signature_error",
+					Message:            sanitizeUpstreamErrorMessage(strings.TrimSpace(extractUpstreamErrorMessage([]byte(sseErr.RawData)))),
+				})
+				retryResp, retryWireBody := s.retryStreamSignatureErrorWithoutThinking(ctx, c, account, streamSignatureRetryRequest{
+					body: requestBodyBeforeWire, model: reqModel, token: token, tokenType: tokenType,
+					proxyURL: proxyURL, tlsProfile: tlsProfile, mimicClaudeCode: shouldMimicClaudeCode,
+				})
+				if retryResp != nil {
+					if err := replaceBody(retryWireBody); err != nil {
+						_ = retryResp.Body.Close()
+						return nil, err
+					}
+					// 外层 defer 关闭的是 resp 变量当前指向的 body，换成重试响应前先关掉旧的。
+					_ = resp.Body.Close()
+					resp = retryResp
+					writerSizeBeforeStream = c.Writer.Size()
+					streamResult, err = s.handleStreamingResponse(ctx, resp, c, account, startTime, originalModel, reqModel, shouldMimicClaudeCode)
+					sseErr = nil
+					if err != nil && errors.As(err, &sseErr) {
+						keepaliveBytes = 0
+						if streamResult != nil {
+							keepaliveBytes = streamResult.keepaliveBytes
+						}
+						semanticOutputDelivered = streamErrorEventSemanticOutputDelivered(c, writerSizeBeforeStream, keepaliveBytes)
+					}
+				}
+			}
+			if sseErr != nil {
+				return nil, s.sseStreamErrorEventFailover(ctx, c, account, resp, sseErr.RawData, reqModel, semanticOutputDelivered)
+			}
+		}
+		if err != nil {
 			// 转换路径的流处理发生在 HTTP 重试循环之后，不能安全地原账号重放。
 			// 仅在本次流尚未向客户端交付语义内容、客户端仍连接时，把流中断合成为
 			// 虚拟 502 交给规则引擎；retry 会按已到最大 attempt 的语义降级为换号。
@@ -1183,12 +1233,18 @@ func (s *GatewayService) isStickyAccountUpstreamRestricted(ctx context.Context, 
 }
 
 // sseStreamErrorEventFailover 把上游 HTTP 200 + SSE 流体内的 event:error 帧转为
-// UpstreamFailoverError：尚未向客户端写出内容且错误类型为 overloaded_error 时按 529
+// UpstreamFailoverError：尚未向客户端交付语义内容且错误类型为 overloaded_error 时按 529
 // 处理并触发账号侧副作用，其余按 403；同时登记 stream_error 运维记录。
-func (s *GatewayService) sseStreamErrorEventFailover(ctx context.Context, c *gin.Context, account *Account, resp *http.Response, rawData, model string, outputStarted bool) *UpstreamFailoverError {
+//
+// semanticOutputDelivered 必须是「扣掉本机 keepalive 心跳后」的口径（见
+// streamOnlyWroteKeepalive）。尚未交付语义内容时显式设置 SafeToFailoverAfterWrite：
+// 心跳会把 Writer.Size() 推离 handler 的 writerSizeBeforeForward 基线，令
+// gatewayForwardMayFailover 的第一道闸门失效；心跳是非语义帧，下一账号的
+// message_start 拼在它之后仍协议合规（#327，与流中断合成 502 分支一致）。
+func (s *GatewayService) sseStreamErrorEventFailover(ctx context.Context, c *gin.Context, account *Account, resp *http.Response, rawData, model string, semanticOutputDelivered bool) *UpstreamFailoverError {
 	body := []byte(rawData)
 	semanticStatus := http.StatusForbidden
-	if !outputStarted && gjson.GetBytes(body, "error.type").String() == "overloaded_error" {
+	if !semanticOutputDelivered && gjson.GetBytes(body, "error.type").String() == "overloaded_error" {
 		semanticStatus = 529
 		syntheticResp := &http.Response{
 			StatusCode: semanticStatus,
@@ -1231,7 +1287,95 @@ func (s *GatewayService) sseStreamErrorEventFailover(ctx context.Context, c *gin
 	)
 
 	return &UpstreamFailoverError{
-		StatusCode:   semanticStatus,
-		ResponseBody: body,
+		StatusCode:               semanticStatus,
+		ResponseBody:             body,
+		SafeToFailoverAfterWrite: !semanticOutputDelivered,
 	}
+}
+
+// streamErrorEventSemanticOutputDelivered 报告流内 event:error 出现时，本次流是否
+// 已向客户端交付过语义内容。只写过本机 keepalive 心跳不算交付；响应已被标记提交
+// （写过终止错误帧等）一律算交付。
+func streamErrorEventSemanticOutputDelivered(c *gin.Context, writerSizeBeforeStream, keepaliveBytes int) bool {
+	return IsResponseCommitted(c) || !streamOnlyWroteKeepalive(c, writerSizeBeforeStream, keepaliveBytes)
+}
+
+// retryStreamSignatureErrorWithoutThinking 处理「HTTP 200 + 流内 event:error」形态的
+// thinking 签名错误：同账号去掉 thinking 块重发一次。上游接受（<400）时返回新的
+// 响应与实际发送的 wire body；否则登记运维记录并返回 nil，调用方按原 stream_error
+// 换号。只在尚未向客户端交付语义内容时调用。
+//
+// 不受 maxRetryElapsed 约束：流内错误往往在开流几十秒后才出现，那时 HTTP 重试
+// 循环的预算早已耗尽，而这里只额外发一次请求。
+func (s *GatewayService) retryStreamSignatureErrorWithoutThinking(ctx context.Context, c *gin.Context, account *Account, req streamSignatureRetryRequest) (*http.Response, []byte) {
+	filteredBody := FilterThinkingBlocksForRetry(req.body, req.model)
+	if bytes.Equal(filteredBody, req.body) {
+		return nil, nil
+	}
+	logger.CtxPrintf(ctx, "service.gateway", "[warn] Account %d: in-stream thinking signature error, retrying with filtered blocks", account.ID)
+
+	retryCtx, releaseRetryCtx := detachStreamUpstreamContext(ctx, true)
+	retryReq, retryWireBody, buildErr := s.buildUpstreamRequest(retryCtx, c, account, filteredBody, req.token, req.tokenType, req.model, true, req.mimicClaudeCode)
+	releaseRetryCtx()
+	if buildErr != nil {
+		logger.CtxPrintf(ctx, "service.gateway", "Account %d: in-stream signature retry build request failed: %v", account.ID, buildErr)
+		return nil, nil
+	}
+	account.ApplyCustomHeaders(retryReq)
+	retryResp, retryErr := s.timedGatewayUpstreamDoWithTLS(c, retryReq, req.proxyURL, account.ID, account.Concurrency, req.tlsProfile)
+	if retryErr != nil {
+		if retryResp != nil && retryResp.Body != nil {
+			_ = retryResp.Body.Close()
+		}
+		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+			ProxyID:     opsUpstreamProxyID(account),
+			ProxyName:   opsUpstreamProxyName(account),
+			Platform:    account.Platform,
+			AccountID:   account.ID,
+			AccountName: account.Name,
+			UpstreamURL: safeUpstreamURL(retryReq.URL.String()),
+			Kind:        "signature_retry_request_error",
+			Message:     sanitizeUpstreamErrorMessage(retryErr.Error()),
+		})
+		logger.CtxPrintf(ctx, "service.gateway", "Account %d: in-stream signature retry failed: %v", account.ID, retryErr)
+		return nil, nil
+	}
+	if retryResp.StatusCode < 400 {
+		logger.CtxPrintf(ctx, "service.gateway", "Account %d: in-stream signature retry accepted (blocks downgraded)", account.ID)
+		return retryResp, retryWireBody
+	}
+
+	retryRespBody, _ := s.readUpstreamErrorBody(retryResp)
+	_ = retryResp.Body.Close()
+	appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+		ProxyID:            opsUpstreamProxyID(account),
+		ProxyName:          opsUpstreamProxyName(account),
+		Platform:           account.Platform,
+		AccountID:          account.ID,
+		AccountName:        account.Name,
+		UpstreamStatusCode: retryResp.StatusCode,
+		UpstreamRequestID:  retryResp.Header.Get("x-request-id"),
+		UpstreamURL:        safeUpstreamURL(retryReq.URL.String()),
+		Kind:               "signature_retry_thinking",
+		Message:            sanitizeUpstreamErrorMessage(strings.TrimSpace(extractUpstreamErrorMessage(retryRespBody))),
+		Detail: func() string {
+			if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
+				return truncateString(string(retryRespBody), s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes)
+			}
+			return ""
+		}(),
+	})
+	return nil, nil
+}
+
+// streamSignatureRetryRequest 是流内签名整流重发所需的请求上下文。body 必须是
+// 未经 buildUpstreamRequest 改写的请求体，避免在已签名 CCH 的 wire body 上再派生。
+type streamSignatureRetryRequest struct {
+	body            []byte
+	model           string
+	token           string
+	tokenType       string
+	proxyURL        string
+	tlsProfile      *tlsfingerprint.Profile
+	mimicClaudeCode bool
 }
