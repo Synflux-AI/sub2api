@@ -59,9 +59,9 @@ func TestPrepareUsageLogInsert_FinishReasonArgWiring(t *testing.T) {
 	})
 	require.Len(t, prepared.args, len(usageLogInsertArgTypes))
 
-	// 尾序：..., image_response_format, finish_reason, response_outcome, native_compaction_v2, created_at。
-	finishIdx := len(prepared.args) - 4
-	outcomeIdx := len(prepared.args) - 3
+	// 尾序：..., image_response_format, finish_reason, response_outcome, native_compaction_v2, cache_creation_30m_tokens, cache_creation_12h_tokens, created_at。
+	finishIdx := len(prepared.args) - 6
+	outcomeIdx := len(prepared.args) - 5
 	require.Equal(t, "text", usageLogInsertArgTypes[finishIdx])
 	require.Equal(t, "jsonb", usageLogInsertArgTypes[outcomeIdx])
 	require.Equal(t, sql.NullString{String: "refusal", Valid: true}, prepared.args[finishIdx])
