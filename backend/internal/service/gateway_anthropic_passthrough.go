@@ -504,6 +504,23 @@ type anthropicPassthroughStreamState struct {
 	semanticEventForwarded bool
 }
 
+// rewriteAnthropicPassthroughMessageStartModel 在组合路由改写过模型时，把
+// message_start 里的 message.model 换回客户端请求的公开模型名。只改对客写出的
+// 字节；event.data 保持上游原文，上游响应模型观测（observer）仍记录真实上游模型。
+func rewriteAnthropicPassthroughMessageStartModel(event anthropicPassthroughSSEEvent, clientModel string) []byte {
+	if clientModel == "" || !event.hasDataLine || bytes.IndexByte(event.data, '\n') >= 0 {
+		return event.raw
+	}
+	if gjson.GetBytes(event.data, "type").String() != "message_start" || !gjson.GetBytes(event.data, "message.model").Exists() {
+		return event.raw
+	}
+	rewritten, err := sjson.SetBytes(append([]byte(nil), event.data...), "message.model", clientModel)
+	if err != nil {
+		return event.raw
+	}
+	return bytes.Replace(event.raw, event.data, rewritten, 1)
+}
+
 func buildAnthropicPassthroughSSEEvent(lines []string, terminated bool) anthropicPassthroughSSEEvent {
 	var raw strings.Builder
 	dataLines := make([]string, 0, 1)
@@ -794,6 +811,7 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthroughWithRu
 		}
 		keepaliveTimer.Reset(keepaliveInterval)
 	}
+	clientModel := compositeClientModel(ctx, "")
 	pendingEventLines := make([]string, 0, 4)
 	pendingEventSize := 0
 	resultWithUsage := func() *streamingResult {
@@ -806,7 +824,7 @@ func (s *GatewayService) handleStreamingResponseAnthropicAPIKeyPassthroughWithRu
 		if semantic {
 			applyAttemptHeaders()
 		}
-		restored := reverseToolNamesIfPresent(c, event.raw)
+		restored := reverseToolNamesIfPresent(c, rewriteAnthropicPassthroughMessageStartModel(event, clientModel))
 		n, err := w.Write(restored)
 		if semantic && n > 0 {
 			semanticEventForwarded = true
@@ -1456,6 +1474,7 @@ func (s *GatewayService) handleNonStreamingResponseAnthropicAPIKeyPassthrough(
 	if contentType == "" {
 		contentType = "application/json"
 	}
+	body = restoreCompositeClientModel(ctx, body)
 	body = reverseToolNamesIfPresent(c, body)
 	c.Data(resp.StatusCode, contentType, body)
 	return usage, nil
