@@ -49,6 +49,14 @@ func TestGetErrorTrendByDim_RequestTotals_Invariants_Integration(t *testing.T) {
 		_, _ = integrationDB.ExecContext(ctx, `DELETE FROM usage_logs WHERE created_at >= $1 AND created_at < $2`, start, end)
 	}
 	cleanup()
+	// 实体必须硬删：这些行建在共享库里且不在事务内，残留的 active+schedulable 账号会被
+	// 其它按平台列全量账号的测试（如 TestSchedulerSnapshotConfiguredMembership 的 simple
+	// 模式）当成自己的候选。t.Cleanup 后进先出，先注册的这条在日志清理之后执行，避开外键。
+	t.Cleanup(func() {
+		_, _ = integrationDB.ExecContext(ctx, `DELETE FROM api_keys WHERE id IN ($1, $2)`, k1.ID, k2.ID)
+		_, _ = integrationDB.ExecContext(ctx, `DELETE FROM accounts WHERE id IN ($1, $2)`, a1.ID, a2.ID)
+		_, _ = integrationDB.ExecContext(ctx, `DELETE FROM users WHERE id IN ($1, $2)`, u1.ID, u2.ID)
+	})
 	t.Cleanup(cleanup)
 
 	insertUsage := func(userID, apiKeyID, accountID int64, model string) {

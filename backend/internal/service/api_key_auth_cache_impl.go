@@ -40,7 +40,9 @@ import (
 // v27: 上游 v27(group require_privacy_set，OpenAI 调度从 ctx 读取)。
 // v28: 再次撞号——上游 v27(group require_privacy_set + user UserGroupRPMOverrideGroupID)与本仓库 v26
 // 字段集不同,合并后快照同时含上游新字段与本仓库扩展字段,与任一方旧版本均不兼容,升 28 强制失效。
-const apiKeyAuthSnapshotVersion = 28
+// v29: 再次撞号——上游 v28(group force_openai_ultrafast)与本仓库 v28 字段集不同,
+// 合并后快照同时含上游 force_openai_ultrafast 与本仓库扩展字段,与任一方旧版本均不兼容,升 29 强制失效。
+const apiKeyAuthSnapshotVersion = 29
 
 type apiKeyAuthCacheConfig struct {
 	l1Size        int
@@ -453,6 +455,7 @@ func (s *APIKeyService) snapshotFromAPIKey(ctx context.Context, apiKey *APIKey) 
 			AllowMessagesDispatch:           apiKey.Group.AllowMessagesDispatch,
 			AllowLive:                       apiKey.Group.AllowLive,
 			ForceOpenAIFast:                 apiKey.Group.ForceOpenAIFast,
+			ForceOpenAIUltrafast:            apiKey.Group.ForceOpenAIUltrafast,
 			FreeOpenAIFast:                  apiKey.Group.FreeOpenAIFast,
 			DefaultMappedModel:              apiKey.Group.DefaultMappedModel,
 			MessagesDispatchModelConfig:     apiKey.Group.MessagesDispatchModelConfig,
@@ -564,6 +567,7 @@ func (s *APIKeyService) snapshotToAPIKey(key string, snapshot *APIKeyAuthSnapsho
 			AllowMessagesDispatch:           snapshot.Group.AllowMessagesDispatch,
 			AllowLive:                       snapshot.Group.AllowLive,
 			ForceOpenAIFast:                 snapshot.Group.ForceOpenAIFast,
+			ForceOpenAIUltrafast:            snapshot.Group.ForceOpenAIUltrafast,
 			FreeOpenAIFast:                  snapshot.Group.FreeOpenAIFast,
 			DefaultMappedModel:              snapshot.Group.DefaultMappedModel,
 			MessagesDispatchModelConfig:     snapshot.Group.MessagesDispatchModelConfig,
