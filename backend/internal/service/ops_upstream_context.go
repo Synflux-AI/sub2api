@@ -434,6 +434,19 @@ func SetOpsUpstreamError(c *gin.Context, upstreamStatusCode int, upstreamMessage
 	setOpsUpstreamError(c, upstreamStatusCode, upstreamMessage, upstreamDetail)
 }
 
+// ClearOpsUpstreamError resets the attempt-scoped upstream_* fields. Handlers
+// call it (via setOpsSelectedAccount) whenever a new account is selected, so
+// the top-level upstream fields always describe the current attempt; the
+// cross-attempt history stays in OpsUpstreamErrorsKey.
+func ClearOpsUpstreamError(c *gin.Context) {
+	if c == nil {
+		return
+	}
+	c.Set(OpsUpstreamStatusCodeKey, 0)
+	c.Set(OpsUpstreamErrorMessageKey, "")
+	c.Set(OpsUpstreamErrorDetailKey, "")
+}
+
 func setOpsUpstreamError(c *gin.Context, upstreamStatusCode int, upstreamMessage, upstreamDetail string) {
 	if c == nil {
 		return
