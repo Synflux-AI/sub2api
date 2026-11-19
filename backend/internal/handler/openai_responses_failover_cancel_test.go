@@ -222,8 +222,10 @@ func TestOpenAIGatewayHandlerResponses_FailoverAbortsWhenClientDisconnected(t *t
 	require.Equal(t, statusClientClosedRequest, c.Writer.Status(), "应按 499 归类")
 	require.Zero(t, rec.Body.Len(), "不应写入 502 错误响应体")
 
-	_, hasFinalUpstreamErr := c.Get(service.OpsUpstreamStatusCodeKey)
-	require.False(t, hasFinalUpstreamErr, "不应记录 failover 耗尽的上游错误终态")
+	// 选号时会把 upstream_* 重置为零值（#334），这里断言没有写入非零终态。
+	finalUpstreamStatus, _ := c.Get(service.OpsUpstreamStatusCodeKey)
+	finalStatus, _ := finalUpstreamStatus.(int)
+	require.Zero(t, finalStatus, "不应记录 failover 耗尽的上游错误终态")
 
 	// 真实发生过的 520 应保留 failover 事件（service 层在返回 failover 错误前记录）
 	rawEvents, ok := c.Get(service.OpsUpstreamErrorsKey)

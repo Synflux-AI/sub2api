@@ -496,6 +496,7 @@ func setOpsSelectedAccount(c *gin.Context, account *service.Account) {
 		return
 	}
 	service.ClearOpsUpstreamModel(c)
+	service.ClearOpsUpstreamError(c)
 	service.ClearOpsAttemptRequestAttributes(c)
 	service.SetOpsSelectedAccountConcurrency(c, account)
 	c.Set(opsAccountIDKey, account.ID)
@@ -1794,6 +1795,12 @@ func applyOpsRequestAttributesFromContext(c *gin.Context, entry *service.OpsInse
 // applyOpsUpstreamFieldsFromContext captures attempt-level upstream context.
 // A final account_auth event owns the top-level status and forces it to zero;
 // prior inference statuses remain available in UpstreamErrors.
+//
+// The top-level upstream_* fields must describe the same attempt as account_id.
+// When the last upstream event belongs to a previous account and nothing was
+// recorded after the current account was selected (e.g. the request was then
+// rejected locally by the wait queue or slot gate), the event is kept in
+// UpstreamErrors only and is not promoted to the top-level fields.
 func applyOpsUpstreamFieldsFromContext(c *gin.Context, entry *service.OpsInsertErrorLogInput) {
 	if c == nil || entry == nil {
 		return
@@ -1828,9 +1835,31 @@ func applyOpsUpstreamFieldsFromContext(c *gin.Context, entry *service.OpsInsertE
 	}
 	if v, ok := c.Get(service.OpsUpstreamErrorsKey); ok {
 		if events, ok := v.([]*service.OpsUpstreamErrorEvent); ok && len(events) > 0 {
+			currentAttemptRecorded := entry.UpstreamStatusCode != nil || entry.UpstreamErrorMessage != nil || entry.UpstreamErrorDetail != nil
+			if !currentAttemptRecorded && lastOpsUpstreamEventFromOtherAccount(c, events) {
+				entry.UpstreamErrors = events
+				return
+			}
 			applyOpsUpstreamErrorEvents(entry, events)
 		}
 	}
+}
+
+// lastOpsUpstreamEventFromOtherAccount reports whether the last upstream event
+// was produced by an account other than the currently selected one. Unknown
+// account IDs on either side are treated as the same attempt.
+func lastOpsUpstreamEventFromOtherAccount(c *gin.Context, events []*service.OpsUpstreamErrorEvent) bool {
+	selectedV, _ := c.Get(opsAccountIDKey)
+	selected, _ := selectedV.(int64)
+	if selected <= 0 {
+		return false
+	}
+	for i := len(events) - 1; i >= 0; i-- {
+		if events[i] != nil {
+			return events[i].AccountID > 0 && events[i].AccountID != selected
+		}
+	}
+	return false
 }
 
 func applyOpsUpstreamErrorEvents(entry *service.OpsInsertErrorLogInput, events []*service.OpsUpstreamErrorEvent) {
