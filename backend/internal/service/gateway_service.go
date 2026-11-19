@@ -669,6 +669,11 @@ type ClaudeUsage struct {
 	// 事件里那个裸 input_tokens 不再覆盖已还原的净输入。仅进程内使用，
 	// json:"-" 保证不出现在任何回给客户端的响应里。
 	OpenAISemanticDeclared bool `json:"-"`
+
+	cacheCreationInputTokensPresent     bool
+	cacheCreationInputTokensFromDetails bool
+	promptTotalTokens                   int
+	promptTotalPresent                  bool
 }
 
 // ForwardResult 转发结果
