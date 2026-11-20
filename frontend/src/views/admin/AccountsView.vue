@@ -549,7 +549,7 @@ import Icon from '@/components/icons/Icon.vue'
 import ErrorPassthroughRulesModal from '@/components/admin/ErrorPassthroughRulesModal.vue'
 import TLSFingerprintProfilesModal from '@/components/admin/TLSFingerprintProfilesModal.vue'
 import { fetchAllAccountIds } from '@/utils/accountSelection'
-import { buildGrokUsageRefreshKey, buildOpenAIUsageRefreshKey } from '@/utils/accountUsageRefresh'
+import { buildGrokUsageRefreshKey, buildAccountUsageRefreshKey } from '@/utils/accountUsageRefresh'
 import { formatDateTime, formatRelativeTime } from '@/utils/format'
 import { proxyExpiryBadgeClass, proxyExpiryLabelKey } from '@/utils/proxyExpiry'
 import { extractApiErrorMessage } from '@/utils/apiError'
@@ -765,7 +765,7 @@ const usageBatchByAccountId = ref<Record<string, AccountUsageInfo | null>>({})
 const usageBatchErrorByAccountId = ref<Record<string, string | null>>({})
 const usageBatchLoadingByAccountId = ref<Record<string, boolean>>({})
 const usageBatchRequestTokenByAccountId = ref<Record<string, number>>({})
-const usageBatchCache = new Map<number, { data: AccountUsageInfo; ts: number }>()
+const usageBatchCache = new Map<number, { data: AccountUsageInfo; ts: number; refreshKey: string }>()
 const USAGE_BATCH_CACHE_TTL = 5 * 60 * 1000
 const pendingUsageBatchIds = new Set<number>()
 let usageBatchFlushTimer: ReturnType<typeof setTimeout> | null = null
@@ -819,6 +819,7 @@ const flushQueuedUsageBatch = async () => {
   usageBatchFlushTimer = null
   const accountIDs = Array.from(pendingUsageBatchIds)
   const force = queuedUsageBatchForce
+  const refreshKeys = new Map(accounts.value.map(account => [account.id, buildAccountUsageRefreshKey(account)]))
   pendingUsageBatchIds.clear()
   queuedUsageBatchForce = false
 
@@ -849,7 +850,7 @@ const flushQueuedUsageBatch = async () => {
       nextErrors[key] = errorMap[key] ?? null
       nextLoading[key] = false
       if (usage) {
-        usageBatchCache.set(accountID, { data: usage, ts: now })
+        usageBatchCache.set(accountID, { data: usage, ts: now, refreshKey: refreshKeys.get(accountID) ?? '' })
       } else {
         usageBatchCache.delete(accountID)
       }
@@ -887,7 +888,7 @@ const queueBatchedUsage = (account: Account, options?: { force?: boolean }) => {
     usageBatchCache.delete(cacheKey)
   } else {
     const cached = usageBatchCache.get(cacheKey)
-    if (cached && Date.now() - cached.ts < USAGE_BATCH_CACHE_TTL) {
+    if (cached && cached.refreshKey === buildAccountUsageRefreshKey(account) && Date.now() - cached.ts < USAGE_BATCH_CACHE_TTL) {
       setUsageBatchState(cacheKey, cached.data, null)
       setUsageBatchLoading(cacheKey, false)
       return
@@ -1480,7 +1481,7 @@ const shouldReplaceAutoRefreshRow = (current: Account, next: Account) => {
     // 每轮巡检都变，纳入比对会让整表每次自动刷新全量重建，故不比对。
     current.health_score !== next.health_score ||
     current.health_tier !== next.health_tier ||
-    buildOpenAIUsageRefreshKey(current) !== buildOpenAIUsageRefreshKey(next) ||
+    buildAccountUsageRefreshKey(current) !== buildAccountUsageRefreshKey(next) ||
     buildGrokUsageRefreshKey(current) !== buildGrokUsageRefreshKey(next)
   )
 }
@@ -2438,7 +2439,16 @@ const handleDuplicateAccount = async (a: Account) => {
     duplicatingAccountIDs.delete(a.id)
   }
 }
+const lastManualRefreshAt = new Map<number, number>()
+const MANUAL_REFRESH_WARN_INTERVAL_MS = 60_000
+
 const handleRefresh = async (a: Account) => {
+  // 只提醒不阻拦：短时间内反复手动刷新可能与后台自动刷新竞争同一份轮换令牌
+  const lastAt = lastManualRefreshAt.get(a.id) ?? 0
+  if (Date.now() - lastAt < MANUAL_REFRESH_WARN_INTERVAL_MS) {
+    appStore.showWarning(t('admin.accounts.refreshTokenFrequentWarning'))
+  }
+  lastManualRefreshAt.set(a.id, Date.now())
   try {
     const result = await adminAPI.accounts.refreshCredentials(a.id)
     patchAccountInList(result.account)
