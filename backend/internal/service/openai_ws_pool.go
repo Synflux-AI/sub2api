@@ -91,6 +91,9 @@ type openAIWSHandshakeCompatibilityKey struct {
 	threadID            string
 	clientRequestID     string
 	codexWindowID       string
+	// endUser 是账号开启终端用户 ID 头时握手头携带的值（#342）。握手头只在建连时发送，
+	// 不同终端用户必须落进不同分桶，不能复用彼此的连接。
+	endUser string
 }
 
 type openAIWSConnLease struct {
@@ -2370,6 +2373,9 @@ func normalizeOpenAIWSBetaFeatures(headers http.Header) string {
 func normalizeOpenAIWSHandshakeCompatibility(account *Account, headers http.Header) openAIWSHandshakeCompatibilityKey {
 	key := openAIWSHandshakeCompatibilityKey{
 		betaFeatures: normalizeOpenAIWSBetaFeatures(headers),
+	}
+	if account.IsEndUserHeaderEnabled() {
+		key.endUser = normalizeOpenAIWSStableIdentityHeader(headers, account.EndUserHeaderName())
 	}
 	mode := activeCodexFingerprintMode(account)
 	if mode == codexFingerprintOff {

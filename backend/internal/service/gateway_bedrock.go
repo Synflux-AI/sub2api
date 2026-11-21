@@ -373,6 +373,7 @@ func (s *GatewayService) buildUpstreamRequestBedrock(
 	// SignedHeaders 不一致（AWS 侧签名校验失败）。
 	// 反之，签名前注入即被签名覆盖；开关关闭时不写头，签名内容与今天完全一致。
 	injectTraceHeader(ctx, req, account)
+	injectEndUserHeader(ctx, req, account)
 
 	// SigV4 签名
 	if err := signer.SignRequest(ctx, req, body); err != nil {
@@ -406,6 +407,7 @@ func (s *GatewayService) buildUpstreamRequestBedrockAPIKey(
 	// 链路关联 ID（账号开启 trace_id_passthrough 时才注入）。
 	// Bearer Token 路径不做 SigV4 签名，顺序无签名约束。
 	injectTraceHeader(ctx, req, account)
+	injectEndUserHeader(ctx, req, account)
 
 	return req, nil
 }

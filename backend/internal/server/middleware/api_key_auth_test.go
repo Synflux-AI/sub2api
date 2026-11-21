@@ -1856,3 +1856,24 @@ func (r *stubUserSubscriptionRepo) IncrementUsage(ctx context.Context, id int64,
 func (r *stubUserSubscriptionRepo) BatchUpdateExpiredStatus(ctx context.Context) (int64, error) {
 	return 0, errors.New("not implemented")
 }
+
+func TestSetEndUserContext(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	run := func(apiKey *service.APIKey, inbound string) string {
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+		if inbound != "" {
+			c.Request.Header.Set(service.EndUserForwardHeader, inbound)
+		}
+		setEndUserContext(c, apiKey)
+		id, _ := c.Request.Context().Value(ctxkey.EndUserID).(string)
+		return id
+	}
+
+	member := &service.User{ID: 2, Role: service.RoleUser}
+	admin := &service.User{ID: 1, Role: service.RoleAdmin}
+	require.Equal(t, "345", run(&service.APIKey{ID: 345, User: member}, ""))
+	require.Equal(t, "345", run(&service.APIKey{ID: 345, User: member}, "999"), "非管理员 key 不得伪造终端用户 ID")
+	require.Equal(t, "999", run(&service.APIKey{ID: 7, User: admin}, "999"), "管理员 key 原样沿用入站终端用户 ID")
+	require.Equal(t, "7", run(&service.APIKey{ID: 7, User: admin}, "bad value"))
+}

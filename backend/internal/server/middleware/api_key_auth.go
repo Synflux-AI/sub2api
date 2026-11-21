@@ -173,6 +173,7 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 		}
 		ctx := context.WithValue(c.Request.Context(), ctxkey.UserID, apiKey.User.ID)
 		c.Request = c.Request.WithContext(ctx)
+		setEndUserContext(c, apiKey)
 		billingInfoRequest := c.Request.URL.Path == "/v1/sub2api/billing"
 		// Async image task polling only reads data that already belongs to the
 		// authenticated key and must remain available after the completed
@@ -397,6 +398,20 @@ func GetSubscriptionFromContext(c *gin.Context) (*service.UserSubscription, bool
 	}
 	subscription, ok := value.(*service.UserSubscription)
 	return subscription, ok
+}
+
+// setEndUserContext 按 service.ResolveEndUserID 计算终端用户 ID（#342）并写入请求 context，
+// 供开启「终端用户 ID 头」的账号在出站时注入。必须在 API key 与用户校验通过之后调用：
+// 是否信任入站 X-Sub2api-End-User 取决于调用方 key 是否属于管理员用户。
+func setEndUserContext(c *gin.Context, apiKey *service.APIKey) {
+	if c == nil || c.Request == nil {
+		return
+	}
+	id := service.ResolveEndUserID(apiKey, c.Request.Header.Get(service.EndUserForwardHeader))
+	if id == "" {
+		return
+	}
+	c.Request = c.Request.WithContext(service.WithEndUserID(c.Request.Context(), id))
 }
 
 func setGroupContext(c *gin.Context, group *service.Group) {

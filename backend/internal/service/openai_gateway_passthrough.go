@@ -604,6 +604,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 
 	// 链路关联 ID（账号开启 trace_id_passthrough 时才注入）
 	injectTraceHeader(ctx, req, account)
+	injectEndUserHeader(ctx, req, account)
 
 	// 覆盖入站鉴权残留，并注入上游认证
 	req.Header.Del("authorization")

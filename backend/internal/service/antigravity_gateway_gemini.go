@@ -229,6 +229,7 @@ func (s *AntigravityGatewayService) ForwardGemini(ctx context.Context, c *gin.Co
 					if err == nil {
 						// 模型兜底重试重建了 req，需单独注入链路 ID
 						injectTraceHeader(ctx, fallbackReq, account)
+						injectEndUserHeader(ctx, fallbackReq, account)
 						account.ApplyCustomHeaders(fallbackReq)
 						fallbackResp, err := timedUpstreamDo(c, s.httpUpstream, fallbackReq, proxyURL, account.ID, account.Concurrency)
 						if err == nil && fallbackResp.StatusCode < 400 {

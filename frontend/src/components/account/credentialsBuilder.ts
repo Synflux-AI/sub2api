@@ -86,7 +86,8 @@ const HEADER_OVERRIDE_BLOCKED_NAMES = new Set([
   'x-claude-code-session-id',
   'x-client-request-id',
   'x-trace-id',
-  'x-grok-conv-id'
+  'x-grok-conv-id',
+  'x-sub2api-end-user'
 ])
 
 /** RFC 7230 token：合法的 HTTP header 名称字符集 */

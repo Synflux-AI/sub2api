@@ -2058,6 +2058,9 @@
         </div>
       </div>
 
+      <!-- 终端用户 ID 头（#342，所有账号类型可用，默认关闭） -->
+      <EndUserHeaderField v-model="endUserHeader" id-prefix="edit-account" />
+
       <!-- 上游 usage 口径按 OpenAI 语义还原（Anthropic 兼容中转，默认关闭） -->
       <div
         v-if="supportsUpstreamUsageSemantic"
@@ -3539,6 +3542,13 @@ import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import Select from '@/components/common/Select.vue'
 import HelpTooltip from '@/components/common/HelpTooltip.vue'
 import UpstreamRequestIdHeaderField from '@/components/account/UpstreamRequestIdHeaderField.vue'
+import EndUserHeaderField from '@/components/account/EndUserHeaderField.vue'
+import {
+  applyEndUserHeaderExtra,
+  emptyEndUserHeaderState,
+  readEndUserHeaderState,
+  type EndUserHeaderState
+} from '@/components/account/endUserHeader'
 import ClientHeaderPassthroughBlocklistField from '@/components/account/ClientHeaderPassthroughBlocklistField.vue'
 import {
   CLIENT_HEADER_PASSTHROUGH_PLATFORMS,
@@ -4326,6 +4336,7 @@ type AnthropicAPIKeyAuthScheme = 'x_api_key' | 'authorization_bearer'
 const anthropicPassthroughEnabled = ref(false)
 // 出站注入 X-Trace-Id：对所有平台/类型生效，默认关闭
 const traceIdPassthroughEnabled = ref(false)
+const endUserHeader = ref<EndUserHeaderState>(emptyEndUserHeaderState())
 // 上游 usage 口径标注：只在会走 Anthropic usage 解析的平台上有意义
 const upstreamUsageOpenAISemantic = ref(false)
 const supportsUpstreamUsageSemantic = computed(() =>
@@ -4839,6 +4850,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   webSearchEmulationMode.value = 'default'
   // 出站注入 X-Trace-Id：对所有平台/类型生效，直接按 extra 回填（无平台分支）
   traceIdPassthroughEnabled.value = extra?.trace_id_passthrough === true
+  endUserHeader.value = readEndUserHeaderState(extra)
   upstreamUsageOpenAISemantic.value = extra?.upstream_usage_openai_semantic === true
   if (newAccount.platform === 'openai' && (newAccount.type === 'oauth' || newAccount.type === 'setup-token' || newAccount.type === 'apikey')) {
     openaiPassthroughEnabled.value = extra?.openai_passthrough === true || extra?.openai_oauth_passthrough === true
@@ -6597,6 +6609,14 @@ const handleSubmit = async () => {
         delete newExtra.trace_id_passthrough
         updatePayload.extra = newExtra
       }
+    }
+
+    // 终端用户 ID 头（#342）：与 X-Trace-Id 同理复用已组装的 extra；关闭时删除相关 key。
+    {
+      const currentExtra = (updatePayload.extra as Record<string, unknown>) ||
+        (props.account.extra as Record<string, unknown>) || {}
+      const nextExtra = applyEndUserHeaderExtra(currentExtra, endUserHeader.value)
+      if (nextExtra) updatePayload.extra = nextExtra
     }
 
     // 上游 usage 口径标注：与 X-Trace-Id 同理放在平台专属 extra 块之后复用已组装的

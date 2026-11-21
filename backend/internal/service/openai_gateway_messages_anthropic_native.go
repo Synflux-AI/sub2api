@@ -213,6 +213,7 @@ func (s *OpenAIGatewayService) buildNativeAnthropicUpstreamRequest(
 	// 此处 ctx 是 detachStreamUpstreamContext 派生的 context.WithoutCancel，
 	// 只切断取消传播、value 仍可读，与 sendCCUpstreamRequest 的既有先例一致。
 	injectTraceHeader(ctx, req, account)
+	injectEndUserHeader(ctx, req, account)
 
 	// 覆盖入站鉴权残留，注入上游认证（默认 x-api-key；可经 extra
 	// anthropic_apikey_auth_scheme 切换 Authorization: Bearer；Ollama Cloud

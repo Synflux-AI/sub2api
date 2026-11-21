@@ -76,6 +76,7 @@ func (s *AntigravityGatewayService) ForwardUpstream(ctx context.Context, c *gin.
 	// 链路关联 ID（账号开启 trace_id_passthrough 时才注入）。
 	// 该路径账号类型恒为中转实例，但仍受开关约束，不硬编码注入。
 	injectTraceHeader(ctx, req, account)
+	injectEndUserHeader(ctx, req, account)
 
 	// 代理 URL
 	proxyURL := ""
