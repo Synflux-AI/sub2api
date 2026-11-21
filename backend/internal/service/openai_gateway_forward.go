@@ -1514,6 +1514,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 
 	// 链路关联 ID（账号开启 trace_id_passthrough 时才注入）
 	injectTraceHeader(ctx, req, account)
+	injectEndUserHeader(ctx, req, account)
 
 	if account.UsesOpenAICodexProtocol() {
 		compatMessagesBridge := isOpenAICompatMessagesBridgeContext(c) || isOpenAICompatMessagesBridgeBody(body)

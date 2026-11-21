@@ -180,6 +180,11 @@ func (s *OpenAIGatewayService) buildOpenAIWSHeaders(
 		enforceCodexIdentityHeadersWithUA(headers, s.codexIdentityOverrideUA(account))
 	}
 
+	// 终端用户 ID 头（#342，账号开启时才写出）。握手头在连接建立时一次性发送，
+	// 连接池按该值分桶复用（见 normalizeOpenAIWSHandshakeCompatibility），
+	// 避免不同终端用户的请求复用同一条已握手连接。
+	applyEndUserHeader(ctx, headers, account)
+
 	// 账号级请求头覆写（仅 openai api_key 账号启用时生效；OAuth 路径 no-op）。
 	// 覆盖所有 WS 模式（ctx_pool/dedicated/passthrough）的握手头。
 	account.ApplyHeaderOverrides(headers)

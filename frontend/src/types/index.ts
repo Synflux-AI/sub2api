@@ -1326,6 +1326,10 @@ export interface Account {
     upstream_billing_probe?: UpstreamBillingProbeSnapshot
     // 出站注入 X-Trace-Id（账号级开关，对所有平台/类型生效，默认关闭）
     trace_id_passthrough?: boolean
+    // 终端用户 ID 头（#342，账号级开关，默认关闭）
+    end_user_header_enabled?: boolean
+    end_user_header_name?: string
+    end_user_header_prefix?: string
     codex_reset_credit_snapshot?: {
       available_count?: number
       credits?: { expires_at?: string }[]

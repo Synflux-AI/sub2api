@@ -64,6 +64,8 @@ var headerOverrideBlockedNames = map[string]struct{}{
 	"x-client-request-id":      {},
 	"x-trace-id":               {},
 	"x-grok-conv-id":           {},
+	// 终端用户 ID 内部转发头（#342）：逐请求值，静态覆写会把所有用户钉成同一个 ID。
+	"x-sub2api-end-user": {},
 }
 
 func isHeaderOverrideBlockedName(lowerName string) bool {

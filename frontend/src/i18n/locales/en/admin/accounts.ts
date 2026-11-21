@@ -855,6 +855,15 @@ export default {
         passthroughDesc:
           "When enabled, upstream requests for this account carry the current request's X-Trace-Id, so logs can be correlated across a multi-hop relay chain. Disabled by default; enable it only when the upstream is your own relay instance. Enabling it for a real vendor (api.anthropic.com, api.x.ai, etc.) sends one extra custom header to them and breaks Claude Code / Grok CLI request-header fingerprint parity."
       },
+      endUserHeader: {
+        label: 'Send end-user ID upstream',
+        hint: "When enabled, upstream requests for this account carry the end-user ID (the user's API key ID on the entry instance; an X-Sub2api-End-User value forwarded by an admin key is kept as-is), so the upstream can attribute violations to a single user instead of suspending the whole key. Disabled by default; enable it only for channels or downstream sub2api instances that support the header.",
+        name: 'Header name',
+        nameHint: 'Defaults to X-End-User. Use X-Sub2api-End-User when the upstream is another sub2api instance.',
+        prefix: 'ID prefix (optional)',
+        prefixPlaceholder: 'e.g. a:',
+        prefixHint: 'Distinguishes sources that share one channel so key IDs from different instances do not collide. Letters, digits and _ . : - only.'
+      },
       upstreamUsageSemantic: {
         label: 'Restore upstream usage as OpenAI semantics',
         hint: "Some Anthropic-compatible relays report input_tokens as the cache-inclusive prompt total (OpenAI semantics) rather than Anthropic's net input, so cached tokens get billed once at the input rate and again at the cache-read rate. When enabled, net input is restored as input_tokens − cache read − cache creation. Disabled by default; relays that declare their semantics in usage.billing_usage are detected automatically and need no toggle. Enabling it for a real vendor (api.anthropic.com, api.moonshot.cn, etc.) under-counts input."

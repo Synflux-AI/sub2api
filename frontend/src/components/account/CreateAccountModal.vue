@@ -3329,6 +3329,9 @@
         </div>
       </div>
 
+      <!-- 终端用户 ID 头（#342，所有账号类型可用，默认关闭） -->
+      <EndUserHeaderField v-model="endUserHeader" id-prefix="create-account" />
+
       <!-- OpenAI 自动透传开关（OAuth/API Key） -->
       <div
         v-if="form.platform === 'openai'"
@@ -4254,6 +4257,12 @@ import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import Select from '@/components/common/Select.vue'
 import HelpTooltip from '@/components/common/HelpTooltip.vue'
 import UpstreamRequestIdHeaderField from '@/components/account/UpstreamRequestIdHeaderField.vue'
+import EndUserHeaderField from '@/components/account/EndUserHeaderField.vue'
+import {
+  applyEndUserHeaderExtra,
+  emptyEndUserHeaderState,
+  type EndUserHeaderState
+} from '@/components/account/endUserHeader'
 import ClientHeaderPassthroughBlocklistField from '@/components/account/ClientHeaderPassthroughBlocklistField.vue'
 import {
   CLIENT_HEADER_PASSTHROUGH_PLATFORMS,
@@ -4857,6 +4866,7 @@ type AnthropicAPIKeyAuthScheme = 'x_api_key' | 'authorization_bearer'
 const anthropicPassthroughEnabled = ref(false)
 // 出站注入 X-Trace-Id：对所有平台/类型生效，默认关闭
 const traceIdPassthroughEnabled = ref(false)
+const endUserHeader = ref<EndUserHeaderState>(emptyEndUserHeaderState())
 const anthropicAPIKeyAuthScheme = ref<AnthropicAPIKeyAuthScheme>('x_api_key')
 const webSearchEmulationMode = ref('default')
 const webSearchGlobalEnabled = ref(false)
@@ -5696,9 +5706,15 @@ const withStripNoneReasoningEffortExtra = (payload: CreateAccountRequest): Creat
   }
 }
 
+// 终端用户 ID 头（#342）：与 X-Trace-Id 同理在提交前的通用出口补写；关闭时不写 key。
+const withEndUserHeaderExtra = (payload: CreateAccountRequest): CreateAccountRequest => {
+  const extra = applyEndUserHeaderExtra(payload.extra as Record<string, unknown> | undefined, endUserHeader.value)
+  return extra ? { ...payload, extra } : payload
+}
+
 // 提交前的通用 extra 出口：跨平台开关统一在此补写。
 const withSharedExtraFlags = (payload: CreateAccountRequest): CreateAccountRequest =>
-  withStripNoneReasoningEffortExtra(withTraceIdExtra(payload))
+  withStripNoneReasoningEffortExtra(withEndUserHeaderExtra(withTraceIdExtra(payload)))
 
 const ensureAntigravityMixedChannelConfirmed = async (onConfirm: () => Promise<void>): Promise<boolean> => {
   if (!needsMixedChannelCheck(form.platform)) {
@@ -5862,6 +5878,7 @@ const resetForm = () => {
   codexFingerprintMode.value = 'off'
   anthropicPassthroughEnabled.value = false
   traceIdPassthroughEnabled.value = false
+  endUserHeader.value = emptyEndUserHeaderState()
   anthropicAPIKeyAuthScheme.value = 'x_api_key'
   webSearchEmulationMode.value = 'default'
   // Reset quota control state

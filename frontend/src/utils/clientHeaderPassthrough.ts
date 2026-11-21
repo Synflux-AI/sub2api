@@ -33,7 +33,8 @@ export const CLIENT_HEADER_PASSTHROUGH_PROTECTED_NAMES: ReadonlySet<string> = ne
   'sec-websocket-extensions',
   'sec-websocket-protocol',
   'sec-websocket-accept',
-  'x-trace-id'
+  'x-trace-id',
+  'x-sub2api-end-user'
 ])
 
 // RFC 7230 token

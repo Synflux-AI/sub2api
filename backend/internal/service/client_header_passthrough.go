@@ -43,7 +43,8 @@ const (
 //   - 认证头：上游凭据由账号统一注入，禁止客户端凭据混进上游请求；
 //   - accept-encoding：强制压缩会破坏网关对上游流式响应的解析；
 //   - sec-websocket-*：握手头由拨号器管理；
-//   - x-trace-id：由网关按请求注入（见 trace_header.go）。
+//   - x-trace-id：由网关按请求注入（见 trace_header.go）；
+//   - x-sub2api-end-user：由网关按账号配置注入（见 end_user_header.go）。
 //
 // 与 headerOverrideBlockedNames 不同，这里**不**拉黑 session_id 等会话头：覆写拉黑它们
 // 是因为静态值会造成会话串扰，而透传复制的正是每个请求自己的值。
@@ -74,6 +75,9 @@ var clientHeaderPassthroughBlockedNames = map[string]struct{}{
 	"sec-websocket-protocol":   {},
 	"sec-websocket-accept":     {},
 	"x-trace-id":               {},
+	// x-sub2api-end-user：实例间传递终端用户 ID 的内部头（#342），只由网关按
+	// 「终端用户 ID 头」配置写出，不能被客户端原样透传。
+	"x-sub2api-end-user": {},
 }
 
 // IsClientHeaderPassthroughBlockedName 报告请求头（不区分大小写）是否禁止透传。

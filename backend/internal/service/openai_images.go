@@ -967,6 +967,7 @@ func (s *OpenAIGatewayService) buildOpenAIImagesRequest(
 
 	// 链路关联 ID（账号开启 trace_id_passthrough 时才注入）
 	injectTraceHeader(ctx, req, account)
+	injectEndUserHeader(ctx, req, account)
 
 	customUA := account.GetOpenAIUserAgent()
 	if customUA != "" {
