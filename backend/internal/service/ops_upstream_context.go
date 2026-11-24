@@ -515,6 +515,11 @@ type OpsUpstreamErrorEvent struct {
 	AccountLoadFactor  *int `json:"account_load_factor,omitempty"`
 	AccountInflight    *int `json:"account_inflight,omitempty"`
 	AccountWaiting     *int `json:"account_waiting,omitempty"`
+	// ReportedHeaders are the request headers this attempt sent upstream that
+	// were produced by header-override variables ({{user_id}} etc.), keyed by
+	// lowercase header name. Only variable-driven headers are captured: static
+	// override values may hold relay secrets and must never be logged here.
+	ReportedHeaders map[string]string `json:"reported_headers,omitempty"`
 
 	// SkipMonitoring is request-local rule state. It is intentionally excluded
 	// from persisted attempt JSON. The logger consults it only when this event is
@@ -569,6 +574,9 @@ func appendOpsUpstreamError(c *gin.Context, ev OpsUpstreamErrorEvent) {
 	// 这里是所有调用点的唯一汇聚处，作为兜底脱敏。
 	if ev.Detail != "" {
 		ev.Detail = sanitizeUpstreamErrorPayload(ev.Detail)
+	}
+	if ev.ReportedHeaders == nil && c.Request != nil {
+		ev.ReportedHeaders = headerOverrideReportedHeaders(c.Request.Context(), ev.AccountID)
 	}
 
 	var existing []*OpsUpstreamErrorEvent
