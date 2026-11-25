@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/httputil"
 )
 
 func TestFilterHeadersDisabledUsesDefaultAllowlist(t *testing.T) {
@@ -86,5 +87,23 @@ func TestFilterHeadersEnabledUsesAllowlist(t *testing.T) {
 	}
 	if filtered.Get("X-Blocked") != "" {
 		t.Fatalf("expected X-Blocked removed, got %q", filtered.Get("X-Blocked"))
+	}
+}
+
+func TestFilterHeadersAlwaysDropsLocalErrorSource(t *testing.T) {
+	src := http.Header{}
+	src.Set(httputil.ErrorSourceHeader, httputil.ErrorSourceLocal)
+	src.Set("Content-Type", "application/json")
+
+	filter := CompileHeaderFilter(config.ResponseHeaderConfig{
+		Enabled:           true,
+		AdditionalAllowed: []string{httputil.ErrorSourceHeader},
+	})
+	filtered := FilterHeaders(src, filter)
+	if got := filtered.Get(httputil.ErrorSourceHeader); got != "" {
+		t.Fatalf("upstream error source header leaked: %q", got)
+	}
+	if filtered.Get("Content-Type") != "application/json" {
+		t.Fatalf("content-type should still pass")
 	}
 }

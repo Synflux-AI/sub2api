@@ -439,6 +439,7 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 	if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey)); err != nil {
 		reqLog.Info("gemini.billing_eligibility_check_failed", zap.Error(err))
 		status, code, message, retryAfter := billingErrorDetails(err)
+		markLocalGatewayError(c)
 		if retryAfter > 0 {
 			c.Header("Retry-After", strconv.Itoa(retryAfter))
 		}
@@ -451,6 +452,7 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 	if err != nil {
 		reqLog.Info("gemini.inflight_reservation_rejected", zap.Error(err))
 		status, code, message, retryAfter := billingErrorDetails(err)
+		markLocalGatewayError(c)
 		if retryAfter > 0 {
 			c.Header("Retry-After", strconv.Itoa(retryAfter))
 		}
@@ -1019,6 +1021,7 @@ func googleClientErrorType(status int) string {
 // 沿用 concurrencyErrorResponse 的统一映射（客户端断开为 499）。
 func googleConcurrencyError(c *gin.Context, err error, slotType string) {
 	status, errType, code, message := concurrencyErrorResponse(err, slotType)
+	markLocalUserSlotError(c, err, slotType)
 	googleErrorWithType(c, status, errType, code, message)
 }
 
@@ -1030,6 +1033,10 @@ func writeUpstreamResponse(c *gin.Context, res *service.UpstreamHTTPResult) {
 	for k, vv := range res.Headers {
 		// Avoid overriding content-length and hop-by-hop headers.
 		if strings.EqualFold(k, "Content-Length") || strings.EqualFold(k, "Transfer-Encoding") || strings.EqualFold(k, "Connection") {
+			continue
+		}
+		// 上游带来的本地错误标记不能透传，否则前置代理会把上游错误体当作本地错误放行。
+		if strings.EqualFold(k, pkghttputil.ErrorSourceHeader) {
 			continue
 		}
 		for _, v := range vv {

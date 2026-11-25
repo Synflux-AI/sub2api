@@ -284,6 +284,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 	if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey)); err != nil {
 		reqLog.Info("gateway.billing_eligibility_check_failed", zap.Error(err))
 		status, code, message, retryAfter := billingErrorDetails(err)
+		markLocalGatewayError(c)
 		if retryAfter > 0 {
 			c.Header("Retry-After", strconv.Itoa(retryAfter))
 		}
@@ -296,6 +297,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 	if err != nil {
 		reqLog.Info("gateway.inflight_reservation_rejected", zap.Error(err))
 		status, code, message, retryAfter := billingErrorDetails(err)
+		markLocalGatewayError(c)
 		if retryAfter > 0 {
 			c.Header("Retry-After", strconv.Itoa(retryAfter))
 		}
@@ -1065,6 +1067,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 						fallbackBillingCtx := service.WithoutModelRPMLimit(c.Request.Context())
 						if err := h.billingCacheService.CheckBillingEligibility(fallbackBillingCtx, fallbackAPIKey.User, fallbackAPIKey, fallbackGroup, nil, service.PlatformFromAPIKey(fallbackAPIKey)); err != nil {
 							status, code, message, retryAfter := billingErrorDetails(err)
+							markLocalGatewayError(c)
 							if retryAfter > 0 {
 								c.Header("Retry-After", strconv.Itoa(retryAfter))
 							}
@@ -1977,6 +1980,7 @@ func (h *GatewayHandler) calculateSubscriptionRemaining(group *service.Group, su
 // handleConcurrencyError handles concurrency-related acquire errors.
 func (h *GatewayHandler) handleConcurrencyError(c *gin.Context, err error, slotType string, streamStarted bool) {
 	status, errType, code, message := concurrencyErrorResponse(err, slotType)
+	markLocalUserSlotError(c, err, slotType)
 	h.handleStreamingAwareErrorWithCode(c, status, errType, code, message, streamStarted)
 }
 
@@ -2305,6 +2309,7 @@ func (h *GatewayHandler) CountTokens(c *gin.Context) {
 	// 【注意】不计算并发，但需要校验订阅/余额
 	if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription, service.QuotaPlatform(c.Request.Context(), apiKey)); err != nil {
 		status, code, message, retryAfter := billingErrorDetails(err)
+		markLocalGatewayError(c)
 		if retryAfter > 0 {
 			c.Header("Retry-After", strconv.Itoa(retryAfter))
 		}
