@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/httputil"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
@@ -137,4 +139,48 @@ func TestGoogleConcurrencyError(t *testing.T) {
 			require.Equal(t, tt.wantMessage, body.Error.Message)
 		})
 	}
+}
+
+func TestMarkLocalUserSlotError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	tests := []struct {
+		name     string
+		err      error
+		slotType string
+		want     string
+	}{
+		{name: "user wait queue full", err: &WaitQueueFullError{SlotType: "user"}, slotType: "account", want: httputil.ErrorSourceLocal},
+		{name: "user concurrency timeout", err: &ConcurrencyError{SlotType: "user", IsTimeout: true}, slotType: "account", want: httputil.ErrorSourceLocal},
+		{name: "empty slot falls back to caller slot", err: &ConcurrencyError{IsTimeout: true}, slotType: "user", want: httputil.ErrorSourceLocal},
+		{name: "account concurrency is platform capacity", err: &ConcurrencyError{SlotType: "account", IsTimeout: true}, slotType: "user", want: ""},
+		{name: "account wait queue is platform capacity", err: &WaitQueueFullError{SlotType: "account"}, slotType: "user", want: ""},
+		{name: "backend error is not marked", err: errors.New("redis down"), slotType: "user", want: ""},
+		{name: "client cancellation is not marked", err: context.Canceled, slotType: "user", want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			markLocalUserSlotError(c, tt.err, tt.slotType)
+			require.Equal(t, tt.want, rec.Header().Get(httputil.ErrorSourceHeader))
+		})
+	}
+}
+
+func TestWriteUpstreamResponseDropsUpstreamErrorSource(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	headers := http.Header{}
+	headers.Set(httputil.ErrorSourceHeader, httputil.ErrorSourceLocal)
+	headers.Set("Content-Type", "application/json")
+
+	writeUpstreamResponse(c, &service.UpstreamHTTPResult{
+		StatusCode: http.StatusTooManyRequests,
+		Headers:    headers,
+		Body:       []byte(`{"error":{"message":"upstream"}}`),
+	})
+
+	require.Equal(t, http.StatusTooManyRequests, rec.Code)
+	require.Empty(t, rec.Header().Get(httputil.ErrorSourceHeader))
 }

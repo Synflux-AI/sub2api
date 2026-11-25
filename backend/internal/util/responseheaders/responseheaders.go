@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/httputil"
 )
 
 // defaultAllowed 定义允许透传的响应头白名单
@@ -93,6 +94,12 @@ func FilterHeaders(src http.Header, filter *CompiledHeaderFilter) http.Header {
 	filtered := make(http.Header, len(src))
 	for key, values := range src {
 		lower := strings.ToLower(key)
+		// 本地错误标记只能由本网关自己设置；上游（可能也是 sub2api）带来的同名头
+		// 一律丢弃，即使管理员把它加进 additional_allowed，避免前置代理把上游错误
+		// 体当作本地错误放行。
+		if strings.EqualFold(key, httputil.ErrorSourceHeader) {
+			continue
+		}
 		if _, blocked := filter.forceRemove[lower]; blocked {
 			continue
 		}
