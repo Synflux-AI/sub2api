@@ -1,0 +1,83 @@
+# GitHub 只在 PR 合并进默认分支（main）时才按 "Closes #N" 自动关闭 Issue。
+# 本仓 main 是上游镜像，项目 PR 全部合并进 release，所以在这里补上同样的行为。
+name: Close linked issues on release
+
+on:
+  pull_request_target:
+    types: [closed]
+    branches: [release]
+
+permissions:
+  issues: write
+  pull-requests: read
+
+jobs:
+  close-linked-issues:
+    # 不检出 PR 代码，只读取 PR 元数据，pull_request_target 在这里是安全的。
+    if: github.repository == 'Synflux-AI/sub2api' && github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Close issues referenced by closing keywords
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const pr = context.payload.pull_request;
+            const text = `${pr.title}\n${pr.body || ''}`;
+            const fullName = `${owner}/${repo}`.toLowerCase();
+
+            // 与 GitHub 原生关键字一致：close(s/d) / fix(es/ed) / resolve(s/d)，
+            // 支持 #N、owner/repo#N、完整 Issue URL；只处理本仓库。
+            const re = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?):?\s+(?:([\w.-]+\/[\w.-]+)#|https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/issues\/|#)(\d+)\b/gi;
+            const numbers = new Set();
+            for (const m of text.matchAll(re)) {
+              const ref = m[1] || m[2];
+              if (ref && ref.toLowerCase() !== fullName) continue;
+              numbers.add(Number(m[3]));
+            }
+
+            // 在 PR 侧边栏 Development 里手动关联的 Issue。
+            const { repository } = await github.graphql(
+              `query($owner: String!, $repo: String!, $number: Int!) {
+                repository(owner: $owner, name: $repo) {
+                  pullRequest(number: $number) {
+                    closingIssuesReferences(first: 50) { nodes { number repository { nameWithOwner } } }
+                  }
+                }
+              }`,
+              { owner, repo, number: pr.number },
+            );
+            for (const n of repository.pullRequest.closingIssuesReferences.nodes) {
+              if (n.repository.nameWithOwner.toLowerCase() === fullName) numbers.add(n.number);
+            }
+
+            if (numbers.size === 0) {
+              core.info('No linked issues.');
+              return;
+            }
+
+            for (const number of numbers) {
+              let issue;
+              try {
+                ({ data: issue } = await github.rest.issues.get({ owner, repo, issue_number: number }));
+              } catch (err) {
+                core.warning(`#${number}: ${err.message}`);
+                continue;
+              }
+              if (issue.pull_request) {
+                core.info(`#${number} is a pull request, skipped.`);
+                continue;
+              }
+              if (issue.state === 'closed') {
+                core.info(`#${number} already closed.`);
+                continue;
+              }
+              await github.rest.issues.createComment({
+                owner, repo, issue_number: number,
+                body: `已由 #${pr.number} 合并进 \`${pr.base.ref}\` 自动关闭（${pr.merge_commit_sha}）。`,
+              });
+              await github.rest.issues.update({
+                owner, repo, issue_number: number, state: 'closed', state_reason: 'completed',
+              });
+              core.info(`Closed #${number}.`);
+            }
