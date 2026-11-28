@@ -747,6 +747,11 @@ const (
 	SettingKeyEnableClientDatelineNormalization = "enable_client_dateline_normalization"
 	// SettingKeyRewriteMessageCacheControl 是否改写 messages[*].content[*].cache_control（默认 false）
 	SettingKeyRewriteMessageCacheControl = "rewrite_message_cache_control"
+	// SettingKeyAnthropicStickyAnchorEnabled Anthropic /v1/messages 无 metadata.user_id 时
+	// 是否按「定深锚点」匹配粘性会话（#347，默认 true）。关闭后完全回退 GenerateSessionHash。
+	SettingKeyAnthropicStickyAnchorEnabled = "anthropic_sticky_anchor_enabled"
+	// SettingKeyAnthropicStickyAnchorDepth 定深锚点的深度 K（前 K 条消息，取值 1–8，默认 3）。
+	SettingKeyAnthropicStickyAnchorDepth = "anthropic_sticky_anchor_depth"
 	// SettingKeyAntigravityUserAgentVersion Antigravity 上游 User-Agent 版本号（空值使用环境变量/默认值）
 	SettingKeyAntigravityUserAgentVersion = "antigravity_user_agent_version"
 	// SettingKeyOpenAICodexUserAgent OpenAI Codex 完整 User-Agent（空值使用内置默认）

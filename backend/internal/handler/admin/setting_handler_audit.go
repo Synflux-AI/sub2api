@@ -497,6 +497,12 @@ func diffSettings(before *service.SystemSettings, after *service.SystemSettings,
 	if before.EnableClientDatelineNormalization != after.EnableClientDatelineNormalization {
 		changed = append(changed, "enable_client_dateline_normalization")
 	}
+	if before.AnthropicStickyAnchorEnabled != after.AnthropicStickyAnchorEnabled {
+		changed = append(changed, "anthropic_sticky_anchor_enabled")
+	}
+	if before.AnthropicStickyAnchorDepth != after.AnthropicStickyAnchorDepth {
+		changed = append(changed, "anthropic_sticky_anchor_depth")
+	}
 	if before.AntigravityUserAgentVersion != after.AntigravityUserAgentVersion {
 		changed = append(changed, "antigravity_user_agent_version")
 	}

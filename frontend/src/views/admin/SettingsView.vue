@@ -6043,6 +6043,61 @@
                 />
               </div>
 
+              <!-- Anthropic 粘性会话定深锚点（#347） -->
+              <div class="space-y-3">
+                <div class="flex items-center justify-between">
+                  <div>
+                    <label
+                      class="text-sm font-medium text-gray-700 dark:text-gray-300"
+                    >
+                      {{
+                        t(
+                          "admin.settings.gatewayForwarding.anthropicStickyAnchor",
+                        )
+                      }}
+                    </label>
+                    <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                      {{
+                        t(
+                          "admin.settings.gatewayForwarding.anthropicStickyAnchorHint",
+                        )
+                      }}
+                    </p>
+                  </div>
+                  <Toggle
+                    v-model="form.anthropic_sticky_anchor_enabled"
+                    data-testid="anthropic-sticky-anchor-enabled"
+                  />
+                </div>
+                <div v-if="form.anthropic_sticky_anchor_enabled">
+                  <label
+                    class="mb-1 block text-xs font-medium text-gray-700 dark:text-gray-300"
+                  >
+                    {{
+                      t(
+                        "admin.settings.gatewayForwarding.anthropicStickyAnchorDepth",
+                      )
+                    }}
+                  </label>
+                  <input
+                    v-model.number="form.anthropic_sticky_anchor_depth"
+                    type="number"
+                    min="1"
+                    max="8"
+                    step="1"
+                    class="input w-32"
+                    data-testid="anthropic-sticky-anchor-depth"
+                  />
+                  <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    {{
+                      t(
+                        "admin.settings.gatewayForwarding.anthropicStickyAnchorDepthHint",
+                      )
+                    }}
+                  </p>
+                </div>
+              </div>
+
               <!-- Antigravity UA 版本 -->
               <div>
                 <label
@@ -10370,6 +10425,8 @@ const form = reactive<SettingsForm>({
   enable_anthropic_cache_ttl_1h_injection: false,
   rewrite_message_cache_control: false,
   enable_client_dateline_normalization: true,
+  anthropic_sticky_anchor_enabled: true,
+  anthropic_sticky_anchor_depth: 3,
   antigravity_user_agent_version: "",
   openai_codex_user_agent: "",
   openai_codex_client_version: "",
@@ -10926,6 +10983,15 @@ const forwardedClientIpHeaderTokenPattern = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
 const maxForwardedClientIpHeaders = 16;
 
 type ForwardedClientIpHeaderResult = "added" | "duplicate" | "invalid" | "full";
+
+// 定深锚点深度：1–8 的整数，越界或非法回落默认 3（与后端一致）。
+function normalizeStickyAnchorDepth(value: unknown): number {
+  const depth = Number(value);
+  if (!Number.isInteger(depth) || depth < 1 || depth > 8) {
+    return 3;
+  }
+  return depth;
+}
 
 function normalizeForwardedClientIpHeader(raw: string): string {
   const header = raw.trim();
@@ -12063,6 +12129,10 @@ async function saveSettings() {
       rewrite_message_cache_control: form.rewrite_message_cache_control,
       enable_client_dateline_normalization:
         form.enable_client_dateline_normalization,
+      anthropic_sticky_anchor_enabled: form.anthropic_sticky_anchor_enabled,
+      anthropic_sticky_anchor_depth: normalizeStickyAnchorDepth(
+        form.anthropic_sticky_anchor_depth,
+      ),
       antigravity_user_agent_version:
         form.antigravity_user_agent_version?.trim() || "",
       openai_codex_user_agent:

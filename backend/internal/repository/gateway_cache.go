@@ -48,6 +48,36 @@ func (c *gatewayCache) GetSessionAccountID(ctx context.Context, groupID int64, s
 	return accountID, nil
 }
 
+// GetSessionAccountIDs 用一次 MGET 批量读取粘性会话绑定（#347 定深锚点查找）。
+// 返回值与 sessionHashes 一一对应；未绑定或值损坏为 0。
+func (c *gatewayCache) GetSessionAccountIDs(ctx context.Context, groupID int64, sessionHashes []string) ([]int64, error) {
+	ids := make([]int64, len(sessionHashes))
+	if len(sessionHashes) == 0 {
+		return ids, nil
+	}
+	keys := make([]string, len(sessionHashes))
+	for i, sessionHash := range sessionHashes {
+		keys[i] = buildSessionKey(groupID, sessionHash)
+	}
+	values, err := c.rdb.MGet(ctx, keys...).Result()
+	if err != nil {
+		return nil, err
+	}
+	for i, value := range values {
+		if i >= len(ids) {
+			break
+		}
+		str, ok := value.(string)
+		if !ok {
+			continue
+		}
+		if accountID, parseErr := strconv.ParseInt(str, 10, 64); parseErr == nil && accountID > 0 {
+			ids[i] = accountID
+		}
+	}
+	return ids, nil
+}
+
 func (c *gatewayCache) SetSessionAccountID(ctx context.Context, groupID int64, sessionHash string, accountID int64, ttl time.Duration) error {
 	key := buildSessionKey(groupID, sessionHash)
 	return c.rdb.Set(ctx, key, accountID, ttl).Err()

@@ -483,6 +483,8 @@ const baseSettingsResponse = {
   enable_anthropic_cache_ttl_1h_injection: false,
   rewrite_message_cache_control: false,
   enable_client_dateline_normalization: true,
+  anthropic_sticky_anchor_enabled: true,
+  anthropic_sticky_anchor_depth: 3,
   openai_immediate_lifecycle_events: false,
   openai_pre_output_staging_enabled: false,
   openai_pre_output_max_staged_events: 16,
@@ -1468,6 +1470,47 @@ describe("admin SettingsView payment visible method controls", () => {
     expect(updateSettings).toHaveBeenCalledWith(
       expect.objectContaining({
         rewrite_message_cache_control: true,
+      }),
+    );
+  });
+
+  it("submits Anthropic sticky anchor gateway settings", async () => {
+    getSettings.mockResolvedValueOnce({
+      ...baseSettingsResponse,
+      anthropic_sticky_anchor_enabled: false,
+      anthropic_sticky_anchor_depth: 5,
+    });
+
+    const wrapper = mountView();
+
+    await flushPromises();
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+
+    expect(updateSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        anthropic_sticky_anchor_enabled: false,
+        anthropic_sticky_anchor_depth: 5,
+      }),
+    );
+  });
+
+  it("normalizes out-of-range Anthropic sticky anchor depth to 3", async () => {
+    getSettings.mockResolvedValueOnce({
+      ...baseSettingsResponse,
+      anthropic_sticky_anchor_depth: 12,
+    });
+
+    const wrapper = mountView();
+
+    await flushPromises();
+    await wrapper.find("form").trigger("submit.prevent");
+    await flushPromises();
+
+    expect(updateSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        anthropic_sticky_anchor_enabled: true,
+        anthropic_sticky_anchor_depth: 3,
       }),
     );
   });

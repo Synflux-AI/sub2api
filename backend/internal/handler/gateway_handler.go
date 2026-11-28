@@ -315,14 +315,6 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 		UserAgent: c.GetHeader("User-Agent"),
 		APIKeyID:  apiKey.ID,
 	}
-	sessionHash := h.gatewayService.GenerateSessionHash(parsedReq)
-
-	// [DEBUG-STICKY] 打印会话 hash 生成结果
-	reqLog.Info("sticky.session_hash_generated",
-		zap.String("session_hash", sessionHash),
-		zap.String("metadata_user_id_raw", parsedReq.MetadataUserID),
-	)
-
 	// 获取平台：优先使用强制平台（/antigravity 路由），其次使用 composite 解析出的目标平台，否则使用分组平台
 	platform := ""
 	if forcePlatform, ok := middleware2.GetForcePlatformFromContext(c); ok {
@@ -332,6 +324,28 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 	} else if apiKey.Group != nil {
 		platform = apiKey.Group.Platform
 	}
+
+	// 无 metadata.user_id 会话时按定深锚点匹配（#347）；开关关闭、无消息或 Redis
+	// 读取失败时 ok=false，回退原 GenerateSessionHash。Gemini 平台保持原逻辑。
+	var anchorSession service.AnthropicStickyResolution
+	stickyAnchorUsed := false
+	if platform != service.PlatformGemini {
+		anchorSession, stickyAnchorUsed = h.gatewayService.ResolveAnthropicStickyAnchor(c.Request.Context(), apiKey.GroupID, parsedReq)
+	}
+	var sessionHash string
+	if stickyAnchorUsed {
+		sessionHash = anchorSession.SessionHash
+	} else {
+		sessionHash = h.gatewayService.GenerateSessionHash(parsedReq)
+	}
+
+	// [DEBUG-STICKY] 打印会话 hash 生成结果
+	reqLog.Info("sticky.session_hash_generated",
+		zap.String("session_hash", sessionHash),
+		zap.String("metadata_user_id_raw", parsedReq.MetadataUserID),
+		zap.Bool("sticky_anchor", stickyAnchorUsed),
+	)
+
 	sessionKey := sessionHash
 	if platform == service.PlatformGemini && sessionHash != "" {
 		sessionKey = "gemini:" + sessionHash
@@ -340,7 +354,12 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 	// 查询粘性会话绑定的账号 ID
 	var sessionBoundAccountID int64
 	if sessionKey != "" {
-		sessionBoundAccountID, _ = h.gatewayService.GetCachedSessionAccountID(c.Request.Context(), apiKey.GroupID, sessionKey)
+		if stickyAnchorUsed {
+			// 锚点查找已用一次批量读取取到从深到浅第一个命中的账号
+			sessionBoundAccountID = anchorSession.BoundAccountID
+		} else {
+			sessionBoundAccountID, _ = h.gatewayService.GetCachedSessionAccountID(c.Request.Context(), apiKey.GroupID, sessionKey)
+		}
 		// [DEBUG-STICKY] 打印粘性会话查询结果
 		reqLog.Info("sticky.cache_lookup",
 			zap.String("session_key", sessionKey),
@@ -1171,7 +1190,9 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			// - 选中账号与粘性账号一致：刷新 TTL
 			// - 粘性账号因负载/RPM 被跳过、选中了其他账号：不覆盖原绑定，
 			//   下次请求粘性账号恢复后仍可命中
-			if sessionKey != "" && (sessionBoundAccountID == 0 || sessionBoundAccountID == account.ID) {
+			// - 定深锚点（#347）：始终把最深锚点写成实际服务的账号，缓存跟随账号；
+			//   命中的较浅锚点不改动，靠 TTL 过期
+			if sessionKey != "" && (stickyAnchorUsed || sessionBoundAccountID == 0 || sessionBoundAccountID == account.ID) {
 				// Forward has completed; finish the bounded write even if the client disconnects.
 				bindCtx, cancelBind := context.WithTimeout(context.WithoutCancel(c.Request.Context()), 5*time.Second)
 				bindErr := h.gatewayService.BindStickySession(bindCtx, currentAPIKey.GroupID, sessionKey, account.ID)
