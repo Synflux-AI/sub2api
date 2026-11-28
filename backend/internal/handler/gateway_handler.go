@@ -693,6 +693,9 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 	// 受限的账号被失败请求的 session hash 卡满整个空闲窗口，后续新会话全部被拒。
 	// 成功请求保持既有空闲超时语义（会话按最后活动时间过期）。
 	sessionSlotAccounts := make(map[int64]*service.Account)
+	// 本请求在利润门下实际尝试转发的账号。终值写回只覆盖其中除最终服务账号以外的 ID；
+	// fs.FailedAccountIDs 会被退避重试重置，不能用作这个集合。
+	var attemptedAccountIDs []int64
 	upstreamServedSession := false
 	defer func() {
 		if upstreamServedSession {
@@ -966,6 +969,11 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 				// 选号按客户端模型，转发按渠道映射后的模型：模型级账号状态按选号模型记录。
 				requestCtx = service.WithGatewaySchedulingModel(requestCtx, reqModel)
 			}
+			// 只记利润门准入的账号：准入时本请求自己写过绑定，failover 后可能留在键里；
+			// 不开门时每次转发前选号都已把键写成当前账号，键里的失败账号只能是别的请求写的
+			if selection.ProfitGateActive() {
+				attemptedAccountIDs = append(attemptedAccountIDs, account.ID)
+			}
 			// 记录 Forward 前已写入字节数，Forward 后若增加则说明 SSE 内容已发，禁止 failover
 			writerSizeBeforeForward := c.Writer.Size()
 			// 路由阶段收口于最后一次 Forward 之前：failover 换号会重跑这一段，
@@ -1192,13 +1200,26 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			//   下次请求粘性账号恢复后仍可命中
 			// - 定深锚点（#347）：始终把最深锚点写成实际服务的账号，缓存跟随账号；
 			//   命中的较浅锚点不改动，靠 TTL 过期
+			// - 非锚点会话：写入只覆盖缺失的键与本请求在利润门下 failover 掉的账号
+			//   （准入时本请求自己写过它），转发期间别的请求改绑的值不动。
+			failedOverAccountIDs := make([]int64, 0, len(attemptedAccountIDs))
+			for _, attemptedAccountID := range attemptedAccountIDs {
+				if attemptedAccountID != account.ID {
+					failedOverAccountIDs = append(failedOverAccountIDs, attemptedAccountID)
+				}
+			}
 			if sessionKey != "" && (stickyAnchorUsed || sessionBoundAccountID == 0 || sessionBoundAccountID == account.ID) {
 				// Forward has completed; finish the bounded write even if the client disconnects.
 				bindCtx, cancelBind := context.WithTimeout(context.WithoutCancel(c.Request.Context()), 5*time.Second)
-				bindErr := h.gatewayService.BindStickySession(bindCtx, currentAPIKey.GroupID, sessionKey, account.ID)
+				var bindErr error
+				if stickyAnchorUsed {
+					bindErr = h.gatewayService.BindStickySession(bindCtx, currentAPIKey.GroupID, sessionKey, account.ID)
+				} else {
+					bindErr = h.gatewayService.BindStickySessionUnlessRebound(bindCtx, currentAPIKey.GroupID, sessionKey, account.ID, failedOverAccountIDs)
+				}
 				cancelBind()
 				if bindErr != nil {
-					reqLog.Warn("gateway.bind_sticky_session_failed", zap.Int64("account_id", account.ID), zap.Error(bindErr))
+					reqLog.Warn("gateway.bind_sticky_session_failed", zap.Int64("account_id", account.ID), zap.Int("failed_over_account_count", len(failedOverAccountIDs)), zap.Error(bindErr))
 				}
 			}
 

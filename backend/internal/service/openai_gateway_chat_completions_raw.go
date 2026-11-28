@@ -182,7 +182,7 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletionsWithStartTime(
 			return nil, fmt.Errorf("sanitize Grok unsupported fields: %w", err)
 		}
 	}
-	upstreamBody = applyOllamaCloudRawChatCompletionsRequest(account, upstreamBody)
+	upstreamBody = applyRawChatCompletionsReasoningCompatRequest(account, upstreamBody)
 	upstreamBody = clampOllamaCloudUpstreamMaxTokens(account, upstreamBody)
 
 	openaiGatewayLog(ctx).Debug("openai chat_completions raw: forwarding without protocol conversion",
@@ -415,7 +415,7 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 				}
 			}
 		}
-		line = applyOllamaCloudRawChatCompletionsSSELine(account, line)
+		line = applyRawChatCompletionsReasoningCompatSSELine(account, line)
 		line = stripEmptyChatToolCallIdentityFromSSELine(line)
 		// 必须排在上面的 observer.ObserveOpenAI 之后：observer 要观测上游原值，
 		// 否则 upstream_response_model / upstream_model_mismatch 以及依赖
@@ -605,7 +605,7 @@ func (s *OpenAIGatewayService) bufferRawChatCompletions(
 		upstreamRequestID := firstNonEmpty(requestID, resp.Header.Get("xai-request-id"))
 		return nil, newGrokMissingUsageFailoverError(c, account, upstreamRequestID)
 	}
-	respBody = applyOllamaCloudRawChatCompletionsResponse(account, respBody)
+	respBody = applyRawChatCompletionsReasoningCompatResponse(account, respBody)
 	// 账号 model_mapping 的反向回写。必须排在 observer.ObserveOpenAI 与
 	// responseModel 提取之后：两者都要看上游原值。
 	respBody = s.replaceModelInResponseBody(respBody, upstreamModel, originalModel)

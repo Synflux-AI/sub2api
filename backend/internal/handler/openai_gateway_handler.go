@@ -3704,6 +3704,12 @@ func (h *OpenAIGatewayHandler) handleFailoverExhausted(c *gin.Context, failoverE
 		h.handleFailoverExhaustedSimple(c, http.StatusBadGateway, streamStarted)
 		return
 	}
+	if failoverErr.Reason == service.OpenAIResponsesToolsUnsupportedReason {
+		// No upstream request was sent for this local capability mismatch. Keep
+		// the original client error without attributing it to upstream health.
+		h.handleStreamingAwareError(c, failoverErr.ClientStatusCode, "invalid_request_error", failoverErr.ClientMessage, streamStarted)
+		return
+	}
 	copyFailoverRetryAfter(c, failoverErr.ResponseHeaders)
 	// 错误处理规则的终态策略优先于下面所有内置特判：管理员显式配了「耗尽后把上游
 	// 错误原样返回」，就不该被 body-too-large / 凭据失败 / 限流映射改写。
