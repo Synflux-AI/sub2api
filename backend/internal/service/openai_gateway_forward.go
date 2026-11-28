@@ -433,8 +433,30 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	}
 	instructions := gjson.GetBytes(body, "instructions")
 	instructionsEmpty := !instructions.Exists() || instructions.Type != gjson.String || strings.TrimSpace(instructions.String()) == ""
-	if instructionsEmpty && account.UsesOpenAICodexProtocol() && !compatMessagesBridge && !nativeCNResponses {
-		markPatchSet("instructions", defaultCodexSynthInstructions(upstreamModel))
+	// Codex 自带的 base instructions 以 input 首条 developer 消息发送、顶层不带
+	// instructions。此时两轮默认指令注入都应跳过，避免重复补约 5k tokens 的默认 prompt。
+	preserveCodexPrefix := instructionsEmpty && (!instructions.Exists() || instructions.Type == gjson.String) &&
+		isCodexCLI && account.IsOpenAIOAuth() && GetOpenAIClientTransport(c) == OpenAIClientTransportHTTP &&
+		!isCompactRequest && !compatMessagesBridge && !nativeCNResponses && hasCodexDeveloperPrefix(body)
+	if instructionsEmpty && !preserveCodexPrefix && account.UsesOpenAICodexProtocol() && !compatMessagesBridge && !nativeCNResponses {
+		// GPT-6.2 会把顶层 instructions 追加到 input 之后并按未缓存计费，
+		// 默认指令改放到 input 首条 developer 消息以参与前缀缓存。
+		if !isCompactRequest && openai.GPT62ModelID(upstreamModel) != "" {
+			decoded, decodeErr := ensureReqBody()
+			if decodeErr != nil {
+				return nil, decodeErr
+			}
+			// Resolve legacy prompt/input aliases before inserting a prefix, so
+			// the later OAuth pass cannot mistake our default for caller input.
+			if normalizeOpenAIOAuthResponsesCompatibilityFields(decoded) {
+				markDecodedModified()
+			}
+			if applyGPT62DefaultInstructions(decoded, upstreamModel) {
+				markDecodedModified()
+			}
+		} else {
+			markPatchSet("instructions", defaultCodexSynthInstructions(upstreamModel))
+		}
 	}
 	if billingModel != requestedModel {
 		logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Model mapping applied: %s -> %s (account: %s, isCodexCLI: %v)", requestedModel, billingModel, account.Name, isCodexCLI)
@@ -571,6 +593,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			codexResult = applyCodexOAuthTransformWithOptions(decoded, codexOAuthTransformOptions{
 				IsCodexCLI:                          isCodexCLI,
 				IsCompact:                           isCompactRequest,
+				SkipDefaultInstructions:             preserveCodexPrefix,
 				OmitPromotedSystemMessagesFromInput: omitPromotedSystemMessages,
 				ResponsesLite:                       responsesLite,
 			})
