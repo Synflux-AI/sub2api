@@ -3,6 +3,7 @@
 package repository
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -105,4 +106,21 @@ func (s *GatewayCacheSuite) TestGetSessionAccountID_CorruptedValue() {
 
 func TestGatewayCacheSuite(t *testing.T) {
 	suite.Run(t, new(GatewayCacheSuite))
+}
+
+func (s *GatewayCacheSuite) TestGetSessionAccountIDs_BatchOrderAndMisses() {
+	groupID := int64(7)
+	require.NoError(s.T(), s.cache.SetSessionAccountID(s.ctx, groupID, "anchor:deep", 11, time.Minute))
+	require.NoError(s.T(), s.cache.SetSessionAccountID(s.ctx, groupID, "anchor:shallow", 22, time.Minute))
+	// 其他分组的同名 key 不得被读到
+	require.NoError(s.T(), s.cache.SetSessionAccountID(s.ctx, groupID+1, "anchor:mid", 33, time.Minute))
+	require.NoError(s.T(), s.rdb.Set(s.ctx, buildSessionKey(groupID, "anchor:bad"), "oops", time.Minute).Err())
+
+	reader, ok := s.cache.(interface {
+		GetSessionAccountIDs(ctx context.Context, groupID int64, sessionHashes []string) ([]int64, error)
+	})
+	require.True(s.T(), ok, "gateway cache must support batch sticky reads")
+	ids, err := reader.GetSessionAccountIDs(s.ctx, groupID, []string{"anchor:deep", "anchor:mid", "anchor:bad", "anchor:shallow"})
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), []int64{11, 0, 0, 22}, ids)
 }

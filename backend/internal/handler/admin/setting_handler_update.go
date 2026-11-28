@@ -261,6 +261,8 @@ type UpdateSettingsRequest struct {
 	EnableAnthropicCacheTTL1hInjection     *bool   `json:"enable_anthropic_cache_ttl_1h_injection"`
 	RewriteMessageCacheControl             *bool   `json:"rewrite_message_cache_control"`
 	EnableClientDatelineNormalization      *bool   `json:"enable_client_dateline_normalization"`
+	AnthropicStickyAnchorEnabled           *bool   `json:"anthropic_sticky_anchor_enabled"`
+	AnthropicStickyAnchorDepth             *int    `json:"anthropic_sticky_anchor_depth"`
 	AntigravityUserAgentVersion            *string `json:"antigravity_user_agent_version"`
 	OpenAICodexUserAgent                   *string `json:"openai_codex_user_agent"`
 	OpenAICodexClientVersion               *string `json:"openai_codex_client_version"`
@@ -682,6 +684,10 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 	}
 	if enabledCaptchaProviders > 1 {
 		response.BadRequest(c, "Multiple captcha providers (Cloudflare Turnstile / Tencent Captcha / Aliyun Captcha) cannot be enabled at the same time")
+		return
+	}
+	if req.AnthropicStickyAnchorDepth != nil && (*req.AnthropicStickyAnchorDepth < 1 || *req.AnthropicStickyAnchorDepth > 8) {
+		response.BadRequest(c, "anthropic_sticky_anchor_depth must be between 1 and 8")
 		return
 	}
 	// 阿里云地域 normalize：未发送保留已存值，非法值一律按中国内地落库
@@ -1816,6 +1822,18 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			}
 			return previousSettings.EnableClientDatelineNormalization
 		}(),
+		AnthropicStickyAnchorEnabled: func() bool {
+			if req.AnthropicStickyAnchorEnabled != nil {
+				return *req.AnthropicStickyAnchorEnabled
+			}
+			return previousSettings.AnthropicStickyAnchorEnabled
+		}(),
+		AnthropicStickyAnchorDepth: func() int {
+			if req.AnthropicStickyAnchorDepth != nil {
+				return *req.AnthropicStickyAnchorDepth
+			}
+			return previousSettings.AnthropicStickyAnchorDepth
+		}(),
 		AntigravityUserAgentVersion: func() string {
 			if req.AntigravityUserAgentVersion != nil {
 				return *req.AntigravityUserAgentVersion
@@ -2449,6 +2467,8 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		EnableAnthropicCacheTTL1hInjection:                     updatedSettings.EnableAnthropicCacheTTL1hInjection,
 		RewriteMessageCacheControl:                             updatedSettings.RewriteMessageCacheControl,
 		EnableClientDatelineNormalization:                      updatedSettings.EnableClientDatelineNormalization,
+		AnthropicStickyAnchorEnabled:                           updatedSettings.AnthropicStickyAnchorEnabled,
+		AnthropicStickyAnchorDepth:                             updatedSettings.AnthropicStickyAnchorDepth,
 		OpenAIImmediateLifecycleEvents:                         updatedSettings.OpenAIImmediateLifecycleEvents,
 		OpenAIPreOutputStagingEnabled:                          updatedSettings.OpenAIPreOutputStagingEnabled,
 		OpenAIPreOutputMaxStagedEvents:                         updatedSettings.OpenAIPreOutputMaxStagedEvents,

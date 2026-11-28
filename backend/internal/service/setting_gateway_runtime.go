@@ -67,6 +67,7 @@ type cachedGatewayForwardingSettings struct {
 	anthropicCacheTTL1hInjection     bool
 	rewriteMessageCacheControl       bool
 	clientDatelineNormalization      bool
+	anthropicStickyAnchor            AnthropicStickyAnchorSettings
 	expiresAt                        int64 // unix nano
 }
 
@@ -874,6 +875,7 @@ type gatewayForwardingSettingsResult struct {
 	openAITTFTMode                                                                        string
 	fp, mp, cch, claudeOAuthSystemPromptInjection, cacheTTL1h, rewriteMessageCacheControl bool
 	clientDatelineNormalization                                                           bool
+	anthropicStickyAnchor                                                                 AnthropicStickyAnchorSettings
 	openAIImmediateLifecycleEvents                                                        bool
 	openAIPreOutputStaging                                                                OpenAIPreOutputStagingSettings
 	clientHeaderPassthroughAllowlist                                                      []string
@@ -894,6 +896,7 @@ func (s *SettingService) getGatewayForwardingSettingsCached(ctx context.Context)
 				cacheTTL1h:                       cached.anthropicCacheTTL1hInjection,
 				rewriteMessageCacheControl:       cached.rewriteMessageCacheControl,
 				clientDatelineNormalization:      cached.clientDatelineNormalization,
+				anthropicStickyAnchor:            cached.anthropicStickyAnchor,
 				openAIImmediateLifecycleEvents:   cached.openAIImmediateLifecycleEvents,
 				openAIPreOutputStaging:           cached.openAIPreOutputStaging,
 				clientHeaderPassthroughAllowlist: cached.clientHeaderPassthroughAllowlist,
@@ -914,6 +917,7 @@ func (s *SettingService) getGatewayForwardingSettingsCached(ctx context.Context)
 					cacheTTL1h:                       cached.anthropicCacheTTL1hInjection,
 					rewriteMessageCacheControl:       cached.rewriteMessageCacheControl,
 					clientDatelineNormalization:      cached.clientDatelineNormalization,
+					anthropicStickyAnchor:            cached.anthropicStickyAnchor,
 					openAIImmediateLifecycleEvents:   cached.openAIImmediateLifecycleEvents,
 					openAIPreOutputStaging:           cached.openAIPreOutputStaging,
 					clientHeaderPassthroughAllowlist: cached.clientHeaderPassthroughAllowlist,
@@ -933,6 +937,8 @@ func (s *SettingService) getGatewayForwardingSettingsCached(ctx context.Context)
 			SettingKeyEnableAnthropicCacheTTL1hInjection,
 			SettingKeyRewriteMessageCacheControl,
 			SettingKeyEnableClientDatelineNormalization,
+			SettingKeyAnthropicStickyAnchorEnabled,
+			SettingKeyAnthropicStickyAnchorDepth,
 			SettingKeyOpenAIImmediateLifecycleEvents,
 			SettingKeyOpenAIPreOutputStagingEnabled,
 			SettingKeyOpenAIPreOutputMaxStagedEvents,
@@ -951,10 +957,11 @@ func (s *SettingService) getGatewayForwardingSettingsCached(ctx context.Context)
 				anthropicCacheTTL1hInjection:     false,
 				rewriteMessageCacheControl:       s.defaultRewriteMessageCacheControl(),
 				clientDatelineNormalization:      true,
+				anthropicStickyAnchor:            defaultAnthropicStickyAnchorSettings(),
 				openAIPreOutputStaging:           defaultOpenAIPreOutputStagingSettings(),
 				expiresAt:                        time.Now().Add(gatewayForwardingErrorTTL).UnixNano(),
 			})
-			return gatewayForwardingSettingsResult{openAITTFTMode: OpenAITTFTModeSemantic, fp: true, claudeOAuthSystemPromptInjection: true, rewriteMessageCacheControl: s.defaultRewriteMessageCacheControl(), clientDatelineNormalization: true, openAIPreOutputStaging: defaultOpenAIPreOutputStagingSettings()}, nil
+			return gatewayForwardingSettingsResult{openAITTFTMode: OpenAITTFTModeSemantic, fp: true, claudeOAuthSystemPromptInjection: true, rewriteMessageCacheControl: s.defaultRewriteMessageCacheControl(), clientDatelineNormalization: true, anthropicStickyAnchor: defaultAnthropicStickyAnchorSettings(), openAIPreOutputStaging: defaultOpenAIPreOutputStagingSettings()}, nil
 		}
 		ttftMode := normalizeOpenAITTFTMode(values[SettingKeyOpenAITTFTMode])
 		fp := true
@@ -978,6 +985,7 @@ func (s *SettingService) getGatewayForwardingSettingsCached(ctx context.Context)
 		if v, ok := values[SettingKeyEnableClientDatelineNormalization]; ok && v != "" {
 			clientDatelineNormalization = v == "true"
 		}
+		stickyAnchor := parseAnthropicStickyAnchorSettings(values)
 		immediateLifecycleEvents := values[SettingKeyOpenAIImmediateLifecycleEvents] == "true"
 		preOutputStaging := parseOpenAIPreOutputStagingSettings(values)
 		clientHeaderPassthroughAllowlist := parseClientHeaderPassthroughAllowlistSetting(values[SettingKeyClientHeaderPassthroughAllowlist])
@@ -995,6 +1003,7 @@ func (s *SettingService) getGatewayForwardingSettingsCached(ctx context.Context)
 			anthropicCacheTTL1hInjection:     cacheTTL1h,
 			rewriteMessageCacheControl:       rewriteMessageCacheControl,
 			clientDatelineNormalization:      clientDatelineNormalization,
+			anthropicStickyAnchor:            stickyAnchor,
 			expiresAt:                        time.Now().Add(gatewayForwardingCacheTTL).UnixNano(),
 		})
 		return gatewayForwardingSettingsResult{
@@ -1008,6 +1017,7 @@ func (s *SettingService) getGatewayForwardingSettingsCached(ctx context.Context)
 			cacheTTL1h:                       cacheTTL1h,
 			rewriteMessageCacheControl:       rewriteMessageCacheControl,
 			clientDatelineNormalization:      clientDatelineNormalization,
+			anthropicStickyAnchor:            stickyAnchor,
 			openAIImmediateLifecycleEvents:   immediateLifecycleEvents,
 			openAIPreOutputStaging:           preOutputStaging,
 			clientHeaderPassthroughAllowlist: clientHeaderPassthroughAllowlist,
@@ -1016,7 +1026,16 @@ func (s *SettingService) getGatewayForwardingSettingsCached(ctx context.Context)
 	if r, ok := val.(gatewayForwardingSettingsResult); ok {
 		return r
 	}
-	return gatewayForwardingSettingsResult{fp: true, claudeOAuthSystemPromptInjection: true, clientDatelineNormalization: true}
+	return gatewayForwardingSettingsResult{fp: true, claudeOAuthSystemPromptInjection: true, clientDatelineNormalization: true, anthropicStickyAnchor: defaultAnthropicStickyAnchorSettings()}
+}
+
+// GetAnthropicStickyAnchorSettings 返回 Anthropic 粘性会话定深锚点设置（#347）。
+// 默认开启、深度 3；读设置失败时同样返回默认值。
+func (s *SettingService) GetAnthropicStickyAnchorSettings(ctx context.Context) AnthropicStickyAnchorSettings {
+	if s == nil || s.settingRepo == nil {
+		return defaultAnthropicStickyAnchorSettings()
+	}
+	return s.getGatewayForwardingSettingsCached(ctx).anthropicStickyAnchor
 }
 
 // GetOpenAITTFTMode 返回 Responses first_token_ms 的统计口径。
